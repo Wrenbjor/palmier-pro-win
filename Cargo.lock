@@ -2647,7 +2647,9 @@ dependencies = [
 name = "palmier-edit"
 version = "0.1.0"
 dependencies = [
+ "palmier-history",
  "palmier-model",
+ "uuid",
 ]
 
 [[package]]
