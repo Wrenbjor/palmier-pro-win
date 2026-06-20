@@ -39,7 +39,7 @@ compile + test green, `src-ui` builds (independently verified). Toolchain via `s
 
 _(Per-wave history → `## Timeline` below. This block = concise current state.)_
 
-**M1 build — ~29 stories + 2 spikes merged & green on main (`c76f22d`).** What's in:
+**M1 build — ~33 stories + 3 spikes merged & green on main (`199ba03`).** What's in:
 - **Epic 2 (model + project I/O): COMPLETE** — Timeline/Track/Clip/keyframes/MediaAsset/dates; save/load
   (atomic), registry, autosave, 3 golden `.palmier` bundles (SM-7/SM-1b gates). `f64::round` parity locked.
 - **Epic 3 (edit): COMPLETE** — pure engines (ripple/overwrite/split/snap) + orchestration (atomic apply,
@@ -53,13 +53,16 @@ _(Per-wave history → `## Timeline` below. This block = concise current state.)
 
 **Open carry-forward:** palmier-auth Convex HTTP paths inferred — confirm vs the live deployment (S-2 window).
 
-**Wave 6: IN PROGRESS** — **E5-S2** (ffmpeg decode/frame source — preview-pipeline root) · spike
-**E5-S8 WRY-integration** (prove the wgpu-composited-surface mechanism) · **E1-S7+E1-S8** (Recent/registry
-+ sample materialization). 
+**Epic 5 (preview):** decode/frame source (E5-S2) in; audio mixer (E5-S6) in; **GPU-present mechanism proven**
+(E5-S8 sub-spike — Plan A1, [[phase0-reconciliation]] #23).
 
-**Remaining for M1:** the preview stack — E5-S3/S4/S5 (composition layers) → E5-S7 (transport) → E5-S8 (GPU
-present) → E5-S9/S10/S11 — then E6-S5 (video export, HW encoders), then the hand-edit e2e gate → **M1 EXIT → M2**
-(Epics 7-8: MCP server + agent).
+**Wave 7: IN PROGRESS** — **E5-S3+E5-S4** (palmier-engine composition graph + per-frame sampling) · **E4-S8..S11**
+(media-panel UI, src-ui) · **E4-S6+E4-S7** (folder model + import orchestration, Rust; re-dispatched after a
+worker stalled at 0 tool-uses).
+
+**Remaining for M1:** E5-S5 → E5-S7 (transport) → **E5-S8** (GPU present, build on the proven A1 mechanism) →
+E5-S9/S10/S11; E4-S12..S14 (panel polish); **E6-S5** (video export, HW encoders); then the hand-edit e2e gate
+→ **M1 EXIT → M2** (Epics 7-8: MCP server [30 tools] + agent).
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -107,3 +110,5 @@ present) → E5-S9/S10/S11 — then E6-S5 (video export, HW encoders), then the 
 2026-06-20 | E4-S3/S4/S5 merged (c76f22d) — ffmpeg sprite thumbnails + waveform (150/s cap 20000) + image thumbnails; ffmpeg-next 7.1 linked first-try via the wrapper (toolchain validated); E4-S1 fps backfilled; 56 tests. Wave 5 COMPLETE (~29 stories). Dispatching Wave 6 (E5-S2 decode, E5-S8 WRY sub-spike, E1-S7/S8 home/registry/samples).
 2026-06-20 | E5-S8 WRY sub-spike SUCCEEDED + merged (04e921d) — composited frame ACTUALLY APPEARED (wgpu 27 behind transparent WRY WebView2 child, D3D12/AMD, zero-copy, screenshot-proven). E5-S8 mechanism = Plan A1 (WRY build_as_child); pinned wgpu 27.0.1/winit 0.30.13/wry 0.55.1/rwh 0.6.2 + clip_children(false). [[phase0-reconciliation]] #23 updated. Last rendering unknown closed.
 2026-06-20 | E5-S2 merged (ab1b947) — palmier-media decode/frame source (FrameSource/FrameCache distance-from-playhead/512MB ceiling/SeekMode; HW decode d3d11va/dxva2/vaapi + CPU fallback; CPU planes, GPU upload deferred to engine); 80 tests. Preview-pipeline ROOT in. Wave-6 remaining: E1-S7/S8.
+2026-06-20 | E1-S7/S8 merged (199ba03) — Home registry lifecycle (create/open/delete-to-trash, autosave-on-switch) + sample materialization (offline-safe, reference filenames #3); 67 tests, pnpm green. Wave 6 COMPLETE; Epic 1 done (~33 stories). Dispatching Wave 7 (E5-S3/S4 composition, E4-S8..S11 panel UI, E4-S6/S7 folders+import).
+2026-06-20 | ops — E4-S6/S7 worker stalled at 0 tool-uses (read CLAUDE.md worker-note, stopped); SendMessage unavailable in harness → re-dispatched fresh (aea08a8a). No stray worktree/branch left.
