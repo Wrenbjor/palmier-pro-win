@@ -4114,6 +4114,7 @@ version = "0.1.0"
 dependencies = [
  "cosmic-text",
  "palmier-model",
+ "unicode-segmentation",
 ]
 
 [[package]]

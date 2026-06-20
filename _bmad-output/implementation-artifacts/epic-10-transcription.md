@@ -214,6 +214,10 @@ full transcripts and filters windowed requests, so repeated transcribe calls are
 
 ### E10-S5 — CaptionBuilder phrase algorithm in `palmier-text` — port 14 tests verbatim (SM-13)
 
+> **Status:** DONE (story/E10-S5-captionbuilder) — 14/14 CaptionBuilder tests pass
+> (8 phrase-algorithm oracles ported into `crates/palmier-text/src/caption.rs`;
+> the 6 `specs(...)` tests are E10-S6 scope per this story's own boundary).
+
 **Intent:** As a dev agent, I want the entire CaptionBuilder phrase split/distribute/min-duration
 algorithm ported byte-exact with the 14 reference unit tests, because CaptionBuilder is the parity oracle
 and any off-by-one breaks visible caption timing.
