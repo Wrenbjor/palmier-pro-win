@@ -1,0 +1,16 @@
+[package]
+name = "palmier-prompt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# `palmier-prompt` is the SINGLE source of the verbatim agent system prompt
+# (ruling #2 — one string, both consumers). It is deliberately dependency-free:
+# nothing but an `include_str!` of a LF-pinned `.txt` plus a byte-fidelity test.
+# Both `palmier-mcp` (the MCP `initialize` `instructions` field) and
+# `palmier-agent` (the in-app Anthropic `system` field) import
+# `palmier_prompt::AGENT_INSTRUCTIONS` so the two injection sites can never drift.
+
+[dependencies]
