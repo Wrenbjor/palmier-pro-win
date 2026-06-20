@@ -62,3 +62,12 @@ mandatory spike before Phase 2.
 Refs: [phase0-reconciliation](docs/phase0-reconciliation.md) (new), docs/reference/*.md (15 new), FOUNDATION.md
 (corrected), [signal](signals/gpl-cleanroom-contradiction.md) (new), [build loop](domains/build-orchestration/README.md) (updated).
 Next: Phase 1 — drive BMAD to produce docs/PRD.md from FOUNDATION + reconciliation + reference docs.
+
+## 2026-06-20 · Phase 1 complete — PRD validated · #product #prd #planning
+What: docs/PRD.md (1,008 lines, status: validated) produced via a BMAD-aligned pipeline — PM author draft →
+3 adversarial critics (PM pass / architect pass / QA revise) → reviser. Majors fixed: crate count 16→17 core
+(+tauri=18), restored the dropped "open 30-clip 1080p <1s" perf target (SM-1b), decoupled the Convex
+Date-encoding lock into Spike S-1b (M1) ahead of the Epic 2 serde commit. 12 dependency-ordered epics each
+with crates + acceptance + governing reference doc; milestones M1–M5; spikes S-1 (wgpu→WebView, gates Epic 5).
+Refs: [PRD](docs/PRD.md) (new), [build loop](domains/build-orchestration/README.md) (updated). Next: Phase 3 —
+decompose the 12 epics into story files in _bmad-output/implementation-artifacts/.

@@ -25,9 +25,16 @@ center-based; bundle files `project.json`/`media.json`/`chat/`; visual model **S
 Slip/Slide deferred (don't exist in reference). Top risk surfaced: **wgpu→WebView texture presentation
 is unspecified — mandatory spike before Phase 2 architecture commit.**
 
-**Phase 1 — PRD: NEXT.** Drive BMAD (party-mode / `bmad-prd`) to produce `docs/PRD.md` from
-FOUNDATION + the reconciliation rulings + `docs/reference/*`. Decide the remaining §13 open questions.
-Gate: PRD validated; all open questions decided.
+**Phase 1 — PRD: COMPLETE.** `docs/PRD.md` (1,008 lines, `status: validated`) produced via BMAD-aligned
+draft → 3 adversarial critics (PM/architect/QA) → revise. 12 dependency-ordered epics, each with crates +
+acceptance + governing reference doc; milestones M1–M5; spikes S-1 (wgpu→WebView, gates Epic 5) + S-1b
+(Convex Date encoding, M1). All §13 open questions decided.
+
+**Phase 3 — Epics + Stories: NEXT.** Decompose the 12 epics into implementable story files in
+`_bmad-output/implementation-artifacts/`, grounded in PRD + FOUNDATION + reconciliation + the governing
+`docs/reference/*`. Then sprint-plan into M1–M5 with the dependency DAG. Gate: every epic decomposed;
+independent stories identifiable for parallel dev. (Phase 2 architecture is folded in via the spike gates;
+S-1 must resolve before Epic 5 build.)
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -51,3 +58,4 @@ Gate: PRD validated; all open questions decided.
 2026-06-20 | kickoff-input — macOS reference located + verified at `../palmier-pro/`; Foundation Spec filed as `docs/FOUNDATION.md` (source of truth). Both Phase 0 inputs in hand. Ready to launch on `go`.
 2026-06-20 | launch — repo attached to github.com/Wrenbjor/palmier-pro-win; orchestrator machinery written; Phase 0 docs workflow launched (after fixing a burst rate-limit via throttled batches).
 2026-06-20 | Phase 0 COMPLETE — 15/15 reference docs written; [[phase0-reconciliation]] rules 24 discrepancies; FOUNDATION corrected (30 tools). Advancing to Phase 1 (PRD). Top risk: wgpu→WebView spike.
+2026-06-20 | Phase 1 COMPLETE — docs/PRD.md validated (draft→3 adversarial critics→revise; majors fixed: 17 crates, open-30-clip perf, Convex Date sequencing S-1b). 12 epics, M1–M5, spikes S-1/S-1b. Advancing to Phase 3 (epics+stories).
