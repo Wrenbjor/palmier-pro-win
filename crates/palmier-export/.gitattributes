@@ -1,0 +1,6 @@
+# The XMEML emitter only ever produces LF. Force the golden fixtures to stay LF
+# in the working tree on every platform so the byte-exact diff gate is stable
+# (the emitter output is LF; a CRLF checkout would mask real diffs were the test
+# not LF-normalizing). Keep the test sources LF too for the same reason.
+tests/fixtures/*.xml text eol=lf
+tests/golden_xmeml.rs text eol=lf

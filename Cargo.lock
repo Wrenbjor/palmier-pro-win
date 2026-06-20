@@ -2667,6 +2667,9 @@ version = "0.1.0"
 dependencies = [
  "palmier-engine",
  "palmier-model",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]
