@@ -39,7 +39,7 @@ compile + test green, `src-ui` builds (independently verified). Toolchain via `s
 
 _(Per-wave history → `## Timeline` below. This block = concise current state.)_
 
-**M1 build — ~33 stories + 3 spikes merged & green on main (`199ba03`).** What's in:
+**M1 build — ~36 stories + 3 spikes merged & green on main (`a4c7ae3`).** What's in:
 - **Epic 2 (model + project I/O): COMPLETE** — Timeline/Track/Clip/keyframes/MediaAsset/dates; save/load
   (atomic), registry, autosave, 3 golden `.palmier` bundles (SM-7/SM-1b gates). `f64::round` parity locked.
 - **Epic 3 (edit): COMPLETE** — pure engines (ripple/overwrite/split/snap) + orchestration (atomic apply,
@@ -56,13 +56,15 @@ _(Per-wave history → `## Timeline` below. This block = concise current state.)
 **Epic 5 (preview):** decode/frame source (E5-S2) in; audio mixer (E5-S6) in; **GPU-present mechanism proven**
 (E5-S8 sub-spike — Plan A1, [[phase0-reconciliation]] #23).
 
-**Wave 7: IN PROGRESS** — **E5-S3+E5-S4** (palmier-engine composition graph + per-frame sampling) · **E4-S8..S11**
-(media-panel UI, src-ui) · **E4-S6+E4-S7** (folder model + import orchestration, Rust; re-dispatched after a
-worker stalled at 0 tool-uses).
+**Wave 7: COMPLETE** — E5-S3/S4 (composition graph + sampling), E4-S8..S11 (media-panel UI), E4-S6/S7 (folder
+model + import; re-dispatched after a stall). All green.
 
-**Remaining for M1:** E5-S5 → E5-S7 (transport) → **E5-S8** (GPU present, build on the proven A1 mechanism) →
-E5-S9/S10/S11; E4-S12..S14 (panel polish); **E6-S5** (video export, HW encoders); then the hand-edit e2e gate
-→ **M1 EXIT → M2** (Epics 7-8: MCP server [30 tools] + agent).
+**Wave 8: IN PROGRESS** — **E5-S5+E5-S7** (palmier-engine: composited-frame finalize + transport: play/pause/
+seek/step/current_frame) · **E4-S12..S14** (media-panel polish: drag-out/reveal/relink/clipboard + Captions/Music forms).
+
+**Remaining for M1:** **E5-S8** (GPU compositor present — build on the proven A1 mechanism, after E5-S5) →
+E5-S9/S10/S11; **E6-S5** (video export, HW encoders); then the hand-edit e2e gate → **M1 EXIT → M2** (Epics 7-8:
+MCP server [30 tools] + agent).
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -114,3 +116,4 @@ E5-S9/S10/S11; E4-S12..S14 (panel polish); **E6-S5** (video export, HW encoders)
 2026-06-20 | ops — E4-S6/S7 worker stalled at 0 tool-uses (read CLAUDE.md worker-note, stopped); SendMessage unavailable in harness → re-dispatched fresh (aea08a8a). No stray worktree/branch left.
 2026-06-20 | E5-S3/S4 merged (8a0b4d3) — palmier-engine composition graph (build_frame → CompositionFrame/LayerRender, z-order, source-frame mapping) + per-frame sampling (Mat3 affine, opacity/crop, 8-segment smooth parity); no wgpu dep (descriptors for E5-S8); 57 tests + criterion bench. Wave-7 remaining: E4-S8..S11, E4-S6/S7.
 2026-06-20 | E4-S8..S11 merged (cfa24be) — media-panel UI (src-ui/media-panel: shell + Media/Captions/Music tabs, 4 sort modes, filters, folder/flat/grouped views, search panel, generation panel; mocked + E7/E9/E11 seams); pnpm green. Wave-7 remaining: E4-S6/S7.
+2026-06-20 | E4-S6/S7 merged (a4c7ae3) — folder model + cycle-guarded moves + snapshot-undo (palmier-model/project/history) + import orchestration (one undo step, recursive folder→hierarchy, byte-exact drag payload; palmier-media); new dep edges (project→history, media→project), no cycle; 112+89+89 tests. Wave 7 COMPLETE (~36 stories). Dispatching Wave 8 (E5-S5/S7 transport, E4-S12..S14 panel polish).
