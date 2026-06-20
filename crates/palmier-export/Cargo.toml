@@ -12,3 +12,30 @@ palmier-engine = { path = "../palmier-engine" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+
+# E6-S5 video export pipeline. `ffmpeg-next` (the export SINK: muxer + HW
+# encoder, NOT decode — decode stays with palmier-media's FrameSource) and the
+# engine's `wgpu-compositor` (the offscreen render → readback path) are pulled
+# ONLY under `gpu-export` so the pure XMEML/bundle stories + the pure
+# encoder-selection / frame-count / render-size math still build & test without
+# FFmpeg or a GPU (docs/windows-harness-notes.md: ffmpeg-next env auto-sourced
+# by scripts/with-msvc.ps1). The LGPL FFmpeg build has NO libx264/libx265 — the
+# video lane uses HW encoders (NVENC/QSV/AMF/MediaFoundation) or prores_ks.
+ffmpeg-next = { version = "7", optional = true }
+
+[features]
+default = []
+# E6-S5: the real video encode (FFmpeg sink + offscreen wgpu render → readback).
+# Turning this on enables `palmier-engine/wgpu-compositor` so the export render
+# path can drive the compositor; the encoder-selection logic, render-size and
+# frame-count math are pure and compile WITHOUT this feature.
+gpu-export = ["dep:ffmpeg-next", "palmier-engine/wgpu-compositor"]
+
+[dev-dependencies]
+tempfile = "3"
+# Only the gpu-export video integration test needs these: `palmier-media` for the
+# `DecodedFrame`/`FrameProvider` fake, `ffmpeg-next` to re-decode the exported
+# file and assert it's playable. Dev-only — no runtime/build impact on the
+# default (pure) build.
+palmier-media = { path = "../palmier-media" }
+ffmpeg-next = "7"
