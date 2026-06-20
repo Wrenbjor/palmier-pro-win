@@ -21,6 +21,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "./media-actions";
 import type {
+  IndexStatus,
   MediaAssetView,
   SearchResults,
   SpokenHit,
@@ -66,92 +67,180 @@ export function momentSearchCandidates(
 
 // --- Live-wiring seam to the E11-S10 `search_media` command -------------------
 //
-// `search_media(query, scope?, media_ref?, limit?)` returns
-//   { hits: [{ score, media_ref, range?, image? }], visual_status }
-// per FOUNDATION §6.14. For the UI we want the typed Hit shapes:
-//   visual → VisualHit{ assetID, time, shotStart, shotEnd, score }
-//   spoken → SpokenHit{ assetID, start, end, text }
-// E11-S10 should expose those fields directly (the reference returns
-// `VisualSearch.Hit` / `TranscriptSearch.Hit` to the UI), so the adapters below
-// map the command payload 1:1. Until the command exists they return [].
+// `search_media` returns the reference `searchMedia` shape (parity authority —
+// `ToolExecutor+Search.swift`), NOT a flat `{ hits }`:
+//   {
+//     query, scope,
+//     visual: { status, moments: [VisualMoment | ImageMoment] },
+//     spoken: [SpokenSegment]
+//   }
+// where
+//   VisualMoment = { mediaRef, name, score, startSeconds, endSeconds }   // video shot
+//   ImageMoment  = { mediaRef, name, score, type: "image" }              // still: no seconds
+//   SpokenSegment = { mediaRef, name, startSeconds, endSeconds, text }
+//   status ∈ "ready"|"indexing"|"model_not_installed"|"downloading_model"
+//            |"preparing"|"disabled"|"failed"  (snake_case wire string)
+//
+// The UI's internal Hit shapes carry a `time` (thumbnail seek) the wire shape does
+// not: the reference seeks the moment thumbnail to the shot start, so `time` maps
+// from `startSeconds` (0 for stills, which render their own thumbnail, not a seek).
+// The renderer (`SearchResultsPanel`) owns the `[start, max(end, start+0.1)]` range
+// math and the still→plain-asset drag rule, so these adapters keep `shotStart`/
+// `shotEnd` raw (= the wire `startSeconds`/`endSeconds`) and let the renderer floor.
 
-interface VisualHitPayload {
-  assetID?: string;
-  asset_id?: string;
-  media_ref?: string;
-  time: number;
-  shotStart?: number;
-  shot_start?: number;
-  shotEnd?: number;
-  shot_end?: number;
+/** A video moment (carries a shot range). */
+interface VisualMomentPayload {
+  mediaRef: string;
+  name?: string;
   score: number;
+  startSeconds: number;
+  endSeconds: number;
+}
+/** A still-image moment (`type:"image"`, no range). */
+interface VisualImagePayload {
+  mediaRef: string;
+  name?: string;
+  score: number;
+  type: "image";
+}
+type VisualMoment = VisualMomentPayload | VisualImagePayload;
+
+interface VisualGroup {
+  status: string;
+  moments?: VisualMoment[];
 }
 
-interface SpokenHitPayload {
-  assetID?: string;
-  asset_id?: string;
-  media_ref?: string;
-  start: number;
-  end: number;
+interface SpokenSegmentPayload {
+  mediaRef: string;
+  name?: string;
+  startSeconds: number;
+  endSeconds: number;
   text: string;
 }
 
-function adaptVisual(p: VisualHitPayload): VisualHit {
-  const shotStart = p.shotStart ?? p.shot_start ?? p.time;
-  const shotEnd = p.shotEnd ?? p.shot_end ?? shotStart;
+interface SearchMediaResponse {
+  visual?: VisualGroup;
+  spoken?: SpokenSegmentPayload[];
+}
+
+/** The wire status strings emitted by `visual_status_wire` (reference parity). */
+type VisualStatusWire =
+  | "ready"
+  | "indexing"
+  | "model_not_installed"
+  | "downloading_model"
+  | "preparing"
+  | "disabled"
+  | "failed";
+
+/** Visual search outcome: the adapted hits plus the live model-loader status. */
+export interface VisualSearchOutcome {
+  moments: VisualHit[];
+  status: VisualStatusWire;
+}
+
+function isImageMoment(m: VisualMoment): m is VisualImagePayload {
+  return (m as VisualImagePayload).type === "image";
+}
+
+function adaptVisual(m: VisualMoment): VisualHit {
+  if (isImageMoment(m)) {
+    // Still: no shot range. The renderer drags it as a plain asset (it keys off the
+    // asset's own `type === "image"`), so its segment fields are inert — set to 0.
+    return { assetID: m.mediaRef, time: 0, shotStart: 0, shotEnd: 0, score: m.score };
+  }
+  // Video shot: thumbnail seeks to the shot start; renderer floors the drag range.
   return {
-    assetID: p.assetID ?? p.asset_id ?? p.media_ref ?? "",
-    time: p.time,
-    shotStart,
-    shotEnd,
-    score: p.score,
+    assetID: m.mediaRef,
+    time: m.startSeconds,
+    shotStart: m.startSeconds,
+    shotEnd: m.endSeconds,
+    score: m.score,
   };
 }
 
-function adaptSpoken(p: SpokenHitPayload): SpokenHit {
+function adaptSpoken(s: SpokenSegmentPayload): SpokenHit {
   return {
-    assetID: p.assetID ?? p.asset_id ?? p.media_ref ?? "",
-    start: p.start,
-    end: p.end,
-    text: p.text,
+    assetID: s.mediaRef,
+    start: s.startSeconds,
+    end: s.endSeconds,
+    text: s.text,
   };
 }
 
 /**
- * Visual ("Moments") search — async. Calls `search_media` (scope=visual) and adapts
- * the payload to VisualHit[]. Returns [] outside Tauri or if the command is absent
- * (so the panel renders "No matches" until E11-S10 lands).
+ * Map the wire `visual.status` to the panel's `IndexStatus` pill state. The wire
+ * status is discrete (no fraction/counts), so `downloading_model` shows an
+ * indeterminate 0% and `indexing` shows 0/0 — the live progress arrives separately.
+ * `ready` (the steady state) is folded by the caller into "don't surface".
  */
-export async function runVisualSearch(query: string): Promise<VisualHit[]> {
-  if (!inTauri()) return [];
+export function indexStatusFromWire(status: VisualStatusWire): IndexStatus {
+  switch (status) {
+    case "ready":
+      return { kind: "ready" };
+    case "indexing":
+      return { kind: "indexing", completed: 0, total: 0 };
+    case "model_not_installed":
+      return { kind: "notInstalled" };
+    case "downloading_model":
+      return { kind: "downloading", fraction: 0 };
+    case "preparing":
+      return { kind: "preparing" };
+    case "disabled":
+      // No model enabled — surface as "not installed" (offers the download CTA).
+      return { kind: "notInstalled" };
+    case "failed":
+      return { kind: "failed", message: "Visual search failed" };
+  }
+}
+
+/**
+ * Visual ("Moments") search — async. Calls `search_media` (scope=visual), reads
+ * `response.visual.moments[]`, and adapts each to a `VisualHit`. Also surfaces the
+ * `response.visual.status` (reference parity). Returns empty + `disabled` outside
+ * Tauri or if the command throws (so the panel renders "No matches" / the status
+ * affordance until the visual backend is wired).
+ */
+export async function runVisualSearch(query: string): Promise<VisualSearchOutcome> {
+  if (!inTauri()) return { moments: [], status: "disabled" };
   try {
-    const res = await invoke<{ hits?: VisualHitPayload[] }>("search_media", {
+    const res = await invoke<SearchMediaResponse>("search_media", {
       query,
       scope: "visual",
     });
-    return (res.hits ?? []).map(adaptVisual);
+    const status = (res.visual?.status as VisualStatusWire) ?? "disabled";
+    const moments = (res.visual?.moments ?? []).map(adaptVisual);
+    return { moments, status };
   } catch {
-    return [];
+    return { moments: [], status: "disabled" };
   }
 }
 
 /**
  * Spoken (transcript) search — sync in the reference (keyword match, no model). The
  * keyword index is local; here we still go through `search_media` (scope=spoken) for
- * strict layering (no transcript cache in the frontend). Returns [] outside Tauri /
- * before the command lands.
+ * strict layering (no transcript cache in the frontend). Reads `response.spoken[]`.
+ * Returns [] outside Tauri / before the command lands.
  */
 export async function runSpokenSearch(query: string): Promise<SpokenHit[]> {
   if (!inTauri()) return [];
   try {
-    const res = await invoke<{ hits?: SpokenHitPayload[] }>("search_media", {
+    const res = await invoke<SearchMediaResponse>("search_media", {
       query,
       scope: "spoken",
     });
-    return (res.hits ?? []).map(adaptSpoken);
+    return (res.spoken ?? []).map(adaptSpoken);
   } catch {
     return [];
   }
+}
+
+/** The debounced search outcome handed to `scheduleMomentSearch`'s callback. */
+export interface MomentSearchResult {
+  moments: VisualHit[];
+  spoken: SpokenHit[];
+  /** The live `visual.status` wire string (`disabled` outside Tauri). */
+  visualStatus: VisualStatusWire;
 }
 
 /**
@@ -162,16 +251,18 @@ export async function runSpokenSearch(query: string): Promise<SpokenHit[]> {
  * Parity: the reference computes `spoken` synchronously then `await`s the visual
  * coordinator, assigning `visualHits = visual; spokenHits = spoken` only if the task
  * was not cancelled. Here both run after the debounce; results are delivered together.
+ * The visual coordinator's `status` rides along so the panel can surface a
+ * non-`ready` model-loader state.
  */
 export function scheduleMomentSearch(
   query: string,
   _candidates: readonly MediaAssetView[],
-  onResults: (r: { moments: VisualHit[]; spoken: SpokenHit[] }) => void,
+  onResults: (r: MomentSearchResult) => void,
   debounceMs = MOMENT_SEARCH_DEBOUNCE_MS,
 ): () => void {
   const trimmed = query.trim();
   if (trimmed.length === 0) {
-    onResults({ moments: [], spoken: [] });
+    onResults({ moments: [], spoken: [], visualStatus: "disabled" });
     return () => {};
   }
   let cancelled = false;
@@ -179,8 +270,13 @@ export function scheduleMomentSearch(
     void Promise.all([
       runSpokenSearch(trimmed),
       runVisualSearch(trimmed),
-    ]).then(([spoken, moments]) => {
-      if (!cancelled) onResults({ moments, spoken });
+    ]).then(([spoken, visual]) => {
+      if (!cancelled)
+        onResults({
+          moments: visual.moments,
+          spoken,
+          visualStatus: visual.status,
+        });
     });
   }, debounceMs);
   return () => {
