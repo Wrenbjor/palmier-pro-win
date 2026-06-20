@@ -66,9 +66,22 @@
 //!   `ToolContext`, plus the Tauri command/event surface, is the deferred
 //!   integration (E8-S9).
 //!
+//! ## E8-S5 — `api_messages()` mentions + context hints + image inlining (this slice)
+//! - [`mention_context`] — the `@`-mention context-hint construction
+//!   ([`hint`](mention_context::hint), [`referenced_mentions`],
+//!   [`inline_image_blocks`], [`make_display_name`]) for the three mention kinds
+//!   (`mediaAsset` / `timelineClip` / `timelineRange`, exact JSON shapes), plus the
+//!   [`MentionResolver`](mention_context::MentionResolver) (clip-summary) +
+//!   [`MentionEnricher`](mention_context::MentionEnricher) seams.
+//! - [`image_encoder`] — [`ImageEncoder`](image_encoder::ImageEncoder): downscale
+//!   to longest-edge ≤ 1568px + JPEG q-ladder `[85,70,55,40]` until ≤ 3.5 MB (or
+//!   `None`), over an [`AssetBytesSource`](image_encoder::AssetBytesSource) seam,
+//!   with a process-global bounded inline cache.
+//! - [`AgentLoop::api_messages`](loop_run::AgentLoop::api_messages) now **prepends**
+//!   the hint text block + inlined image blocks at index 0 of a user turn with
+//!   mentions (in-app-loop-only; the system prompt + MCP path are unaffected).
+//!
 //! ## Deferred to later E8 stories (NOT in this slice)
-//! - **E8-S5** — `api_messages()` mention/context-hint enrichment + image
-//!   inlining (S4 ships the structural projection only).
 //! - **E8-S6** — the `PalmierClient` (Convex-proxied) transport + live model
 //!   catalog.
 //! - **E8-S7** — the tab/session orchestration + save-on-document-save trigger.
@@ -81,7 +94,9 @@ pub mod anthropic_client;
 pub mod availability;
 pub mod client;
 pub mod event;
+pub mod image_encoder;
 pub mod loop_run;
+pub mod mention_context;
 pub mod model;
 pub mod request;
 pub mod session_store;
@@ -99,9 +114,19 @@ pub use client::{
     WireMessage, DEFAULT_MAX_TOKENS, NO_BACKEND_MESSAGE, SIGN_IN_OR_ADD_KEY_MESSAGE,
 };
 pub use event::{AnthropicModel, AnthropicStopReason, StreamEvent, Usage};
+pub use image_encoder::{
+    AssetBytes, AssetBytesSource, EncodedImage, ImageEncoder, JPEG_QUALITY_LADDER,
+    MAX_BYTES as IMAGE_MAX_BYTES, MAX_CACHE_ENTRIES as IMAGE_MAX_CACHE_ENTRIES,
+    MAX_LONGEST_EDGE as IMAGE_MAX_LONGEST_EDGE,
+};
 pub use loop_run::{
     parse_json_object, AgentLoop, DispatchResult, ToolDispatcher, ORPHAN_REASON,
     TOOL_EXECUTOR_UNAVAILABLE,
+};
+pub use mention_context::{
+    hint, inline_image_blocks, make_display_name, referenced_mentions, InlinedMentions,
+    MentionEnricher, MentionResolver, FAIL_NOT_IN_LIBRARY, FAIL_UNREADABLE, NOTE_CLIPS,
+    NOTE_INLINED, NOTE_INLINE_ERROR, NOTE_RANGES,
 };
 pub use model::{
     to_canonical_json, AgentContentBlock, AgentMention, AgentMessage, AgentTimelineRangeMention,
