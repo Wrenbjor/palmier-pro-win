@@ -96,5 +96,34 @@ From `docs/reference/*.md` — the load-bearing specifics downstream stories mus
    *not* clean-room; the result inherits GPLv3. Recorded as `signals/gpl-cleanroom-contradiction`.
 3. ~~**wgpu→WebView spike** (#23)~~ **RESOLVED** — native-composited-surface mechanism chosen, SM-2 met zero-copy, wgpu 27.x pinned; one WRY-integration sub-spike deferred to E5-S8 start. See #23.
 
+## Spike & build-time resolutions (binding, recorded post-Phase-0)
+
+**S-3 — SigLIP2 visual-search runtime (resolves the runtime half of #13).** RESOLVED
+(`spikes/s3-siglip2/FINDINGS.md`). Runtime = **`ort` (ONNX Runtime 2.0)** with DirectML (DX12, GPU on
+this AMD box) + automatic CPU fallback — candle is fallback-only (ships SigLIP**1**; SigLIP2 is an
+unmerged candle PR). Weights = **`onnx-community/siglip2-base-patch16-256-ONNX`** (Apache-2.0, same
+`google/siglip2-base-patch16-256` base the reference CoreML derives from): split `vision_model.onnx`
+(pixel `[1,3,256,256]`→`[1,768]`) + `text_model.onnx` (ids `[1,64]`→`[1,768]`), Gemma `tokenizer.json`.
+**Load-bearing finding:** ONNX `pooler_output` is **NOT L2-normalized** (the reference CoreML output is)
+→ the port **must add an explicit L2-normalize** after encode so raw dot==cosine and the 0.05/0.85 cutoffs
+hold (expect parity, no pre-emptive re-tune). `.embed` keeps the byte-exact **PALMEMB1** format but bumps
+`modelVersion`→**2** to force a clean re-index (ONNX vectors ≠ CoreML vectors bit-wise). Proven: compiles +
+19 tests pass; `ort` encode path type-checks vs `ort 2.0.0-rc.10`. **NOT yet proven:** a real encode +
+measured cosine (blocked on ~750 MB weights + `onnxruntime.dll` download). **Orchestrator must decide
+before Epic 11:** (a) fp16 (recommended default) vs fp32; (b) re-host ONNX under `palmier-io` (recommended)
+vs pin onnx-community + SHA-verify; (c) ship `onnxruntime.dll`+DirectML as a Tauri resource (parallels the
+FFmpeg DLLs); (d) confirm `.embed` modelVersion=2 re-index; (e) run the live encode to lock `COSINE_FLOOR`.
+
+**E9 — `convex` crate enables serde_json `preserve_order` (workspace-contagious).** BINDING FOLLOW-UP.
+The official `convex` crate (adopted per #25) turns on serde_json's `preserve_order` feature, which is
+workspace-wide once any crate depends on it. That makes serde_json emit map keys in insertion order, which
+**breaks palmier-agent's Anthropic-request goldens** (the reference requires `.sortedKeys` canonical JSON —
+see the carry-forward note above). **Mitigation in place:** the `convex-transport` feature on `palmier-gen`
+is **defaulted OFF**, so default builds keep sorted-key behavior and the goldens pass (verified: 52 default
+suites green post-merge). **Before `convex-transport` is ever enabled by default, palmier-agent MUST
+canonicalize its request JSON explicitly** (serialize via a `BTreeMap`/sorted-keys pass, not rely on
+serde_json's default ordering) so the 2-ephemeral-breakpoint cache and golden bytes survive `preserve_order`.
+
 ## Timeline
 2026-06-20 | Phase 0 complete — 15 reference docs + this reconciliation. Reference = parity authority; 24 discrepancies ruled. Advancing to Phase 1 (PRD).
+2026-06-20 | M2 build: S-3 SigLIP2 runtime resolved (ort+ONNX, explicit L2-normalize, modelVersion=2); E9 convex-transport preserve_order hazard recorded — convex-transport OFF by default until palmier-agent sorts request JSON.
