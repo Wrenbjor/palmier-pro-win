@@ -32,7 +32,7 @@ import {
   momentUri,
   parseUri,
 } from "./drag";
-import { fileMatches } from "./search";
+import { fileMatches, formatTimecode, secondsToFrame } from "./search";
 import { Spacing } from "./theme";
 import type {
   FilterableType,
@@ -309,6 +309,37 @@ export function runMediaParityChecks(): string[] {
     const m = fileMatches(assets, "BEACH");
     check(m.length === 1 && m[0].id === "x", "fileMatches case-insensitive");
     check(fileMatches(assets, "").length === 0, "empty query → no file matches");
+  }
+
+  // --- E11-S11: moment/spoken navigation math --------------------------------
+  {
+    // secondsToFrame = Int(seconds * fps) — truncates toward zero (NOT rounded),
+    // parity with Utilities/TimeFormatting.swift `secondsToFrame`.
+    check(secondsToFrame(2.0, 30) === 60, "secondsToFrame 2s@30 = 60");
+    check(secondsToFrame(1.999, 30) === 59, "secondsToFrame truncates (1.999@30 = 59)");
+    check(secondsToFrame(0, 30) === 0, "secondsToFrame 0 = 0");
+
+    // The moment/spoken draggable segment = [start, max(end, start+0.1)] — keeps a
+    // non-degenerate span when shotEnd <= shotStart (reference parity).
+    const momentRange = (s: number, e: number): [number, number] => [
+      s,
+      Math.max(e, s + 0.1),
+    ];
+    const [ms, me] = momentRange(5, 5); // zero-length shot → floor at start+0.1
+    check(ms === 5 && Math.abs(me - 5.1) < 1e-9, "moment range floors at start+0.1");
+    const [ms2, me2] = momentRange(2, 8);
+    check(ms2 === 2 && me2 === 8, "moment range keeps shotEnd when > start+0.1");
+    // momentUri over the range emits the load-bearing %.3f segment URI.
+    check(
+      momentUri("a1", ms, me) === "palmier-asset://a1#5.000-5.100",
+      `moment range URI %.3f, got ${momentUri("a1", ms, me)}`,
+    );
+
+    // timecode parity: m:ss under an hour, h:mm:ss at/over an hour, rounded.
+    check(formatTimecode(0) === "0:00", "timecode 0 → 0:00");
+    check(formatTimecode(75) === "1:15", "timecode 75 → 1:15");
+    check(formatTimecode(75.4) === "1:15", "timecode rounds to nearest second");
+    check(formatTimecode(3661) === "1:01:01", "timecode ≥1h → h:mm:ss");
   }
 
   return fail;

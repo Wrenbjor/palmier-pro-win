@@ -71,11 +71,17 @@ export const readClipboardImportablePaths = async (): Promise<string[]> =>
  * source_seconds, max_size)`), keyed `path@time`, consumed by the search panel's
  * `MomentThumbnail`. Returns a data-URL, or `undefined` until the E4-S3 pipeline +
  * Epic 11 search land. No-op outside Tauri.
+ *
+ * Parity (MediaTab+Search.swift `MomentThumbnail.thumbnail`): the reference
+ * `AVAssetImageGenerator` uses `maximumSize = 240×240` and a 1s tolerance
+ * before/after the requested time (so the decoder snaps to the nearest sync frame).
+ * `maxSize` defaults to 240 to match; the 1s seek tolerance is the FFmpeg backend's
+ * responsibility (palmier-media `thumbnail` command).
  */
 export const momentThumbnail = (
   path: string,
   sourceSeconds: number,
-  maxSize = 120,
+  maxSize = 240,
 ) =>
   tryInvoke<string | null>("thumbnail", {
     mediaRef: path,

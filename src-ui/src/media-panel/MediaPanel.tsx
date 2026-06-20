@@ -29,6 +29,13 @@ export interface MediaPanelProps {
    * start empty (the real `get_media` command will populate it at Epic 7).
    */
   seedFixture?: boolean;
+  /**
+   * Timeline fps used to convert a moment/spoken hit's source time to a source
+   * frame on tap (reference `secondsToFrame(seconds, editor.timeline.fps)`).
+   * Defaults to 30; pass the editor's real fps once the panel shares the editor
+   * store. Threaded to MediaTab → the search-results navigation.
+   */
+  fps?: number;
 }
 
 const TABS: { tab: PanelTab; label: string; icon: string }[] = [
@@ -37,7 +44,12 @@ const TABS: { tab: PanelTab; label: string; icon: string }[] = [
   { tab: "music", label: "Music", icon: "♪" },
 ];
 
-export function MediaPanel({ store, controller, seedFixture = true }: MediaPanelProps) {
+export function MediaPanel({
+  store,
+  controller,
+  seedFixture = true,
+  fps = 30,
+}: MediaPanelProps) {
   // Create a self-contained store/controller once if not injected.
   const owned = useRef<{ store: MediaPanelStore; controller: MediaPanelController } | null>(
     null,
@@ -154,7 +166,9 @@ export function MediaPanel({ store, controller, seedFixture = true }: MediaPanel
 
       {/* tab body */}
       <div style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
-        {tab === "media" && <MediaTab store={theStore} controller={theController} />}
+        {tab === "media" && (
+          <MediaTab store={theStore} controller={theController} fps={fps} />
+        )}
         {tab === "captions" && <CaptionsTab />}
         {tab === "music" && <MusicTab />}
       </div>

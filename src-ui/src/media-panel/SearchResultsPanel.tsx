@@ -1,18 +1,29 @@
-// Search-results panel (E4-S10): three sections — Moments (visual frame grid),
-// Spoken (transcript segments with timecodes), Files (name matches). Shown only when
-// the query is non-empty. Moments/Spoken are collapsible; empty → "No matches".
+// Search-results panel (E4-S10 scaffold; E11-S11 Moments/Spoken UI + navigation).
+// Three sections — Moments (visual frame grid), Spoken (transcript rows), Files
+// (name matches). Shown only when the query is non-empty. Moments/Spoken are
+// collapsible; empty → "No matches". Ported from `MediaTab/MediaTab+Search.swift`.
 //
-// The Moments/Spoken data is fed by Epic 11 (`search_media`); here those arrays are
-// empty (stub) so both render "No matches" until the backend lands. The Files
-// section always works (local name filter). Moment thumbnails would call the E4-S3
-// `thumbnail(media_ref, source_seconds, max_size)` command (TODO(E11)); here they
-// render a type-colored placeholder keyed `path@time`.
+// The Moments/Spoken data is fed by the Epic 11 search backend (E11-S6 visual +
+// E11-S8 spoken, via the `search_media` command — see `search.ts`). The Files
+// section always works (local name filter). Moment/Spoken thumbnails call the
+// E4-S3 `thumbnail(media_ref, source_seconds, max_size)` command (`momentThumbnail`,
+// 240px / 1s tolerance) and fall back to a type-colored placeholder until it lands.
+//
+// Parity targets (search.md §"UI result navigation" + the reference):
+//   - Moment card: thumbnail at hit.time; name label (1 line); timecode
+//     `shotStart–shotEnd` shown for video only. Range = [shotStart,
+//     max(shotEnd, shotStart+0.1)]. Tap → selectMediaAsset(asset,
+//     atSourceFrame: secondsToFrame(range.lowerBound, fps)). Draggable payload =
+//     plain asset for stills, else moment segment over the range.
+//   - Spoken row: thumbnail at hit.start; transcript text (3 lines); `name ·
+//     timecode`. Range = [start, max(end, start+0.1)]. Tap → seek to start.
+//     Draggable with the range segment.
 
 import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { Spacing, Theme, typeColor } from "./theme";
 import { formatTimecode } from "./search";
-import { momentUri } from "./drag";
+import { assetUri, momentUri } from "./drag";
 import { momentThumbnail } from "./media-actions";
 import type {
   MediaAssetView,
@@ -24,9 +35,21 @@ import type {
 export interface SearchResultsPanelProps {
   results: SearchResults;
   assetsById: ReadonlyMap<string, MediaAssetView>;
+  /** Tap a Moment hit → select asset at `shotStart` (controller converts to frame). */
   onSelectMoment?: (hit: VisualHit) => void;
+  /** Tap a Spoken hit → select asset / seek to `start`. */
   onSelectSpoken?: (hit: SpokenHit) => void;
   onSelectFile?: (asset: MediaAssetView) => void;
+}
+
+/** Inclusive source range for a moment: `[shotStart, max(shotEnd, shotStart+0.1)]`. */
+function momentRange(shotStart: number, shotEnd: number): [number, number] {
+  return [shotStart, Math.max(shotEnd, shotStart + 0.1)];
+}
+
+/** Inclusive source range for a spoken hit: `[start, max(end, start+0.1)]`. */
+function spokenRange(start: number, end: number): [number, number] {
+  return [start, Math.max(end, start + 0.1)];
 }
 
 export function SearchResultsPanel({
@@ -141,6 +164,54 @@ export function SearchResultsPanel({
   );
 }
 
+/**
+ * Async moment thumbnail keyed `path@time` (E4-S3 `thumbnail` command seam, 240px /
+ * 1s tolerance). Stills render the asset's own thumbnail; videos seek to `time`.
+ * Falls back to a type-colored placeholder until the palmier-media pipeline lands.
+ */
+function MomentThumbnail({
+  asset,
+  time,
+  height,
+}: {
+  asset?: MediaAssetView;
+  time: number;
+  height?: number | string;
+}) {
+  const isImage = asset?.type === "image";
+  // Stills show their existing thumbnail (no per-time seek); videos seek to `time`.
+  const [thumb, setThumb] = useState<string | undefined>(asset?.thumbnailUrl);
+  useEffect(() => {
+    if (isImage) {
+      setThumb(asset?.thumbnailUrl);
+      return;
+    }
+    if (!asset?.path) return;
+    let active = true;
+    void momentThumbnail(asset.path, time).then((url) => {
+      if (active && url) setThumb(url);
+    });
+    return () => {
+      active = false;
+    };
+  }, [asset?.path, asset?.thumbnailUrl, time, isImage]);
+
+  return (
+    <div
+      style={{
+        height,
+        aspectRatio: height === undefined ? "16 / 9" : undefined,
+        width: "100%",
+        background: thumb
+          ? `center / cover no-repeat url(${thumb})`
+          : asset
+            ? typeColor(asset.type, 0.3)
+            : Theme.background.prominent,
+      }}
+    />
+  );
+}
+
 function MomentCard({
   hit,
   asset,
@@ -150,31 +221,18 @@ function MomentCard({
   asset?: MediaAssetView;
   onClick: () => void;
 }) {
-  // Async moment thumbnail keyed `path@time` (E4-S3 `thumbnail` command seam).
-  // Returns undefined until the palmier-media pipeline + Epic 11 land → falls back
-  // to a type-colored placeholder.
-  const [thumb, setThumb] = useState<string | undefined>(asset?.thumbnailUrl);
-  useEffect(() => {
-    if (!asset?.path) return;
-    let active = true;
-    void momentThumbnail(asset.path, hit.time).then((url) => {
-      if (active && url) setThumb(url);
-    });
-    return () => {
-      active = false;
-    };
-  }, [asset?.path, hit.time]);
+  const isImage = asset?.type === "image";
+  const [rangeStart, rangeEnd] = momentRange(hit.shotStart, hit.shotEnd);
+  // Stills drag as plain assets — a source segment is meaningless for them.
+  const payload = isImage
+    ? assetUri(hit.assetID)
+    : momentUri(hit.assetID, rangeStart, rangeEnd);
 
   return (
     <button
       onClick={onClick}
       draggable
-      onDragStart={(e) =>
-        e.dataTransfer.setData(
-          "text/plain",
-          momentUri(hit.assetID, hit.shotStart, hit.shotEnd),
-        )
-      }
+      onDragStart={(e) => e.dataTransfer.setData("text/plain", payload)}
       style={{
         border: `1px solid ${Theme.border.subtle}`,
         borderRadius: 6,
@@ -182,21 +240,35 @@ function MomentCard({
         background: Theme.background.raised,
         cursor: "pointer",
         padding: 0,
+        display: "flex",
+        flexDirection: "column",
+        textAlign: "left",
       }}
     >
-      <div
-        style={{
-          // Moment thumbnail keyed path@time (E4-S3 command; placeholder until then).
-          height: 68,
-          background: thumb
-            ? `center / cover no-repeat url(${thumb})`
-            : asset
-              ? typeColor(asset.type, 0.3)
-              : Theme.background.prominent,
-        }}
-      />
-      <div style={{ padding: 4, fontSize: 10, color: Theme.text.tertiary }}>
-        {formatTimecode(hit.shotStart)}–{formatTimecode(hit.shotEnd)}
+      <MomentThumbnail asset={asset} time={hit.time} height={68} />
+      <div style={{ padding: 4 }}>
+        <div
+          style={{
+            fontSize: 11,
+            color: Theme.text.secondary,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {asset?.name ?? ""}
+        </div>
+        {!isImage && (
+          <div
+            style={{
+              fontSize: 10,
+              color: Theme.text.tertiary,
+              fontVariantNumeric: "tabular-nums",
+            }}
+          >
+            {formatTimecode(rangeStart)}–{formatTimecode(rangeEnd)}
+          </div>
+        )}
       </div>
     </button>
   );
@@ -211,6 +283,7 @@ function SpokenRow({
   asset?: MediaAssetView;
   onClick: () => void;
 }) {
+  const [rangeStart, rangeEnd] = spokenRange(hit.start, hit.end);
   return (
     <button
       onClick={onClick}
@@ -218,7 +291,7 @@ function SpokenRow({
       onDragStart={(e) =>
         e.dataTransfer.setData(
           "text/plain",
-          momentUri(hit.assetID, hit.start, Math.max(hit.end, hit.start + 0.1)),
+          momentUri(hit.assetID, rangeStart, rangeEnd),
         )
       }
       style={{
@@ -234,13 +307,16 @@ function SpokenRow({
     >
       <div
         style={{
-          width: 48,
-          height: 27,
+          width: 64,
+          height: 36,
           flexShrink: 0,
           borderRadius: 3,
-          background: asset ? typeColor(asset.type, 0.3) : Theme.background.prominent,
+          overflow: "hidden",
         }}
-      />
+      >
+        {/* Thumbnail seeked to the spoken hit's start time (parity). */}
+        <MomentThumbnail asset={asset} time={hit.start} height={36} />
+      </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div
           style={{
@@ -254,7 +330,16 @@ function SpokenRow({
         >
           {hit.text}
         </div>
-        <div style={{ fontSize: 10, color: Theme.text.muted, marginTop: 2 }}>
+        <div
+          style={{
+            fontSize: 10,
+            color: Theme.text.muted,
+            marginTop: 2,
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
           {asset?.name ?? hit.assetID} · {formatTimecode(hit.start)}
         </div>
       </div>

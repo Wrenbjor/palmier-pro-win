@@ -450,6 +450,36 @@ registered in the Epic 7 catalogue (M2) but returns visual_status=`disabled`/emp
 ---
 
 ### E11-S11 — Media panel "Moments" + "Spoken" sections (UI + navigation)
+> **Status:** DONE — branch `story/E11-S11-moments-spoken-ui`. Built the Moments
+> (frame grid) + Spoken (transcript rows) sections into the Epic 4 media-panel
+> search scaffold (`src-ui/src/media-panel/`), parity with
+> `MediaTab/MediaTab+Search.swift`. `scheduleMomentSearch` keeps the **250ms
+> debounce** and now runs **spoken + visual into separate hit arrays**
+> (`runSpokenSearch` / `runVisualSearch`). Moment card: thumbnail at `hit.time`
+> (240px / 1s tolerance via the E4-S3 `thumbnail` seam), **name label (1 line)**,
+> timecode `shotStart–shotEnd` shown **video-only**; tap → `selectMediaAtSource(id,
+> secondsToFrame(shotStart, fps))`; draggable payload = **plain `palmier-asset://`
+> for stills**, else `palmier-asset://<id>#<start>-<end>` over
+> `[shotStart, max(shotEnd, shotStart+0.1)]`. Spoken row: thumbnail at `hit.start`,
+> 3-line transcript clamp, `name · timecode`; tap → seek to start
+> (`secondsToFrame(start, fps)`); draggable over `[start, max(end, start+0.1)]`.
+> Added `secondsToFrame` (= `Math.trunc(seconds*fps)`, reference parity) +
+> `formatTimecode` h:mm:ss-at-≥1h. Reused the existing media-panel thumbnail
+> (`momentThumbnail`) + drag-URI (`drag.ts`) seams — no second thumbnail/drag
+> system. `corepack pnpm build` green (tsc --noEmit clean + vite build); media
+> parity checks pass.
+>
+> **LIVE search_media WIRING = thin adapter (pending E11-S10):** `runVisualSearch` /
+> `runSpokenSearch` call `invoke('search_media', { query, scope: 'visual'|'spoken' })`
+> and map the payload to `VisualHit` / `SpokenHit`; outside Tauri or before E11-S10
+> lands they return `[]` (Moments/Spoken show "No matches"; Files keeps working).
+> **E11-S10 backend must return** per-hit fields the UI consumes: visual →
+> `{ assetID|asset_id|media_ref, time, shotStart|shot_start, shotEnd|shot_end, score }`,
+> spoken → `{ assetID|asset_id|media_ref, start, end, text }`, both under a top-level
+> `{ hits: [...] }` (the adapter accepts camelCase or snake_case / `media_ref`).
+> "Use as B-roll" drop-at-playhead rides the existing Epic 3/E4 drag-URI contract
+> (timeline `parsePayload`); no new path added here.
+
 **Intent:** As a user, I want Moments (frame grid) and Spoken (transcript rows) sections in the Media panel
 with click-to-jump and drag-to-timeline, so I can place searched moments by hand (UJ-2).
 

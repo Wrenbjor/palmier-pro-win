@@ -202,8 +202,13 @@ export class MediaPanelController {
 
   /**
    * Run a query: update the live name filter (always works) and the result panel.
-   * The Files section is computed locally; Moments/Spoken come from the (stubbed)
-   * Epic 11 `search_media` via the debounced scheduler.
+   * The Files section is computed locally; Moments/Spoken come from the Epic 11
+   * search backend (E11-S6 visual + E11-S8 spoken via the `search_media` command)
+   * through the debounced scheduler (`scheduleMomentSearch`, 250ms).
+   *
+   * `search_media` wiring is live in `search.ts` (`runVisualSearch` /
+   * `runSpokenSearch`); outside Tauri or before E11-S10 lands those return [] so
+   * Moments/Spoken render "No matches" while Files keeps working.
    */
   search(query: string): void {
     this.store.setQuery(query);
@@ -214,15 +219,13 @@ export class MediaPanelController {
       this.store.setSearchResults(null);
       return;
     }
-    // Immediate Files section; empty Moments/Spoken until the debounce resolves.
+    // Immediate Files section; Moments/Spoken fill in once the debounce resolves.
     this.store.setSearchResults(assembleResults(assets, query, [], []));
 
     this.cancelSearch = scheduleMomentSearch(
       query,
       momentSearchCandidates(assets),
       (r) => {
-        // TODO(E11): `r` is currently always empty (stub). Real visual/spoken hits
-        // arrive from `invoke('search_media', { query, scope: 'both' })`.
         this.store.setSearchResults(
           assembleResults(assets, query, r.moments, r.spoken),
         );
@@ -236,13 +239,15 @@ export class MediaPanelController {
   }
 
   /**
-   * `selectMediaAsset(atSourceFrame:)` (MediaTab+Search.swift): tapping a moment /
-   * spoken hit selects the underlying asset and focuses it. `sourceSeconds` is the
-   * hit's source time the reference scrubs the preview to.
-   * TODO(E5/E6): seek the preview/inspector to `sourceSeconds` once the preview
+   * `previewMoment` → `selectMediaAsset(asset, atSourceFrame:)`
+   * (MediaTab+Search.swift): tapping a moment / spoken hit selects the underlying
+   * asset and focuses it. `atSourceFrame` is the hit's source time converted to an
+   * integer frame via `secondsToFrame(range.lowerBound, fps)` at the call site —
+   * the reference scrubs the preview to that source frame.
+   * TODO(E5/E6): seek the preview/inspector to `atSourceFrame` once the preview
    * surface owns a source-time cursor; today it selects + focuses the asset.
    */
-  selectMediaAtSource(assetId: string, _sourceSeconds: number): void {
+  selectMediaAtSource(assetId: string, _atSourceFrame: number): void {
     this.store.setSelection([assetId]);
     this.store.setFocused(assetId);
   }
