@@ -19,6 +19,7 @@
     "core:webview:default",
     "core:webview:allow-create-webview-window",
     "core:app:default",
-    "window-state:default"
+    "window-state:default",
+    "dialog:default"
   ]
 }

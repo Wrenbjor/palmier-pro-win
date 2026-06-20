@@ -19,9 +19,12 @@ import Feedback from "./settings/Feedback";
 export default function App() {
   const surface = useMemo(() => resolveSurface(), []);
 
-  // Subscribe to the main-menu events only on the surfaces that act on editor actions.
+  // Subscribe to the main-menu events on the Project (editor) surface. The Home
+  // surface registers its own menu overrides (File → New / Open) in `Home.tsx`, so
+  // it is excluded here to avoid a double subscription firing the New/Open dialog
+  // twice.
   useEffect(() => {
-    if (surface.kind !== "home" && surface.kind !== "project") return;
+    if (surface.kind !== "project") return;
     let unlisten: (() => void) | undefined;
     registerMenuHandlers()
       .then((un) => {

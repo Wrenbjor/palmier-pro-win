@@ -30,6 +30,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # E1-S4: per-window size/position persistence (replaces the reference frame-autosave).
 tauri-plugin-window-state = "2"
+# E1-S7: native Save-As / Open file dialogs for New/Open project (reference
+# NSSavePanel/NSOpenPanel → tauri-plugin-dialog). The frontend drives the picker and
+# hands the chosen `.palmier` path to `create_project`/`open_project`.
+tauri-plugin-dialog = "2"
 # E1-S10: real updater plugin, only compiled with the `updater-plugin` feature.
 tauri-plugin-updater = { version = "2", optional = true }
 # Settings/log dir resolution (%APPDATA%\PalmierProWin / ~/.config/palmier-pro).

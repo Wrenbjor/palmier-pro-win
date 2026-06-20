@@ -23,6 +23,14 @@ dirs.workspace = true
 # Recycle Bin / XDG trash for `ProjectRegistry::delete` (E2-S11). Optional +
 # feature-gated so unit tests never move anything to the real OS trash.
 trash = { workspace = true, optional = true }
+# Convex HTTP transport for the sample catalog/resolve/download (E1-S8). Blocking
+# client keeps `palmier-project` runtime-agnostic (no async runtime dep), mirroring
+# `palmier-auth`'s `HttpConvexBackend`. rustls so no system OpenSSL is required.
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "json",
+    "rustls-tls",
+] }
 
 [features]
 # `system-trash` performs a real Recycle-Bin / XDG-trash move on `delete`. It is
