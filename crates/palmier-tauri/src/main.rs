@@ -10,19 +10,32 @@
 //! `boot.rs`; settings persistence (`settings.json`, absent⇒ON booleans) in
 //! `settings.rs`.
 //!
-//! Boot steps that are **real** here: crash-handler panic hook (step 1), tracing
-//! subscriber (step 2), settings read (step 3), and Home window show (step 7).
-//! **Stubbed** for later stories: Sentry/native crash + categorized file logging
-//! (E1-S2), Clerk/Convex client config (step 4 → E1-S6), the `/v1/models` async
-//! fetch (step 5), and the MCP server start (step 6 → Epic 7).
+//! Boot steps that are **real** here: telemetry-owned crash hook + tracing/Sentry
+//! (steps 1–2, via `palmier_telemetry::init`), settings read (step 3), Clerk +
+//! Convex auth config (step 4, via `palmier_auth::Auth::init`), the full main menu
+//! with shortcuts (E1-S3), and Home window show (step 7). Stubbed for later
+//! stories: the `/v1/models` async fetch (step 5) and the MCP start (step 6, Epic 7).
+//!
+//! ## Managed state
+//! The long-lived boot handles are moved into Tauri managed state so they live
+//! for the process and commands can reach them:
+//! - [`palmier_telemetry::TelemetryHandle`] — **must** outlive the process
+//!   (dropping it flushes logging + stops Sentry).
+//! - [`palmier_auth::Auth`] — single source of truth for account/credit/key state.
+//! - [`AppSettings`] — the launch-time settings snapshot.
 
 // On Windows release builds, suppress the extra console window. Harmless in debug.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod boot;
+mod menu;
 mod settings;
 
 use tauri::Manager;
+
+/// The launch-time settings snapshot, stored in Tauri managed state so commands
+/// (E1-S9 Settings UI) can read the booted prefs without re-reading the file.
+pub struct AppSettings(pub settings::Settings);
 
 fn main() {
     // Steps 1–6 of the FOUNDATION §6.1 boot sequence run synchronously, before
@@ -33,6 +46,19 @@ fn main() {
 
     tauri::Builder::default()
         .setup(move |app| {
+            // Move the long-lived boot handles into Tauri managed state. The
+            // telemetry handle MUST live for the whole process (dropping it stops
+            // Sentry + flushes the rotated-file log writer); managed state holds
+            // it for the app lifetime. Auth + settings are likewise process-wide.
+            app.manage(boot_ctx.telemetry);
+            app.manage(boot_ctx.auth);
+            app.manage(AppSettings(boot_ctx.settings.clone()));
+
+            // E1-S3 — build + install the full main menu (Palmier Pro / File /
+            // Edit / View / Help) with the reference Windows/Linux accelerators
+            // and wire the single menu-event router.
+            menu::install(&app.handle().clone())?;
+
             // Step 5 — kick the non-blocking model-catalog load. Spawned onto the
             // Tauri async runtime and never awaited: offline/slow Convex cannot
             // delay reaching Home (FR-1 / SM-1).

@@ -23,9 +23,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 # Settings/log dir resolution (%APPDATA%\PalmierProWin / ~/.config/palmier-pro).
 dirs = "5"
-# Boot-path tracing (step 2). The categorized/rotated file subscriber is E1-S2.
+# Boot-path tracing macros. The tracing **subscriber** is owned entirely by
+# `palmier-telemetry` (E1-S3 removed the boot's own stub subscriber so the
+# categorized daily-rotated file logger attaches), so we depend on `tracing` for
+# the log macros only — NOT `tracing-subscriber`.
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 
 # Workspace crates wired into the binary (boot sequence calls into these).
 palmier-model = { path = "../palmier-model" }
