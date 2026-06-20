@@ -7,3 +7,8 @@
 
 # Local Claude Code state (keep skills/ + workflows/, ignore local settings)
 .claude/settings.local.json
+
+# Build artifacts — Rust workspace + frontend
+/target
+**/node_modules
+src-ui/dist

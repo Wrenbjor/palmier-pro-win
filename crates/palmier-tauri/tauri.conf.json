@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Palmier Pro",
+  "version": "0.1.0",
+  "identifier": "io.palmier.pro.win",
+  "build": {
+    "beforeDevCommand": "pnpm --dir ../../src-ui dev",
+    "beforeBuildCommand": "pnpm --dir ../../src-ui build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../../src-ui/dist"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "home",
+        "title": "Palmier Pro",
+        "width": 1200,
+        "height": 1200,
+        "minWidth": 760,
+        "minHeight": 480,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/icon.ico"
+    ]
+  }
+}

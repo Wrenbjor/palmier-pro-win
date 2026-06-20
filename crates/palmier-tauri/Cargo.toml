@@ -1,0 +1,24 @@
+[package]
+name = "palmier-tauri"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+default-run = "palmier-tauri"
+
+[[bin]]
+name = "palmier-tauri"
+path = "src/main.rs"
+
+[dependencies]
+# Wires the workspace together. The real Tauri 2 runtime (`tauri`,
+# `tauri-build`, plugins) is added by E1-S1 — kept OUT of the skeleton so
+# `cargo build` stays fast and doesn't require WebView2/system bundling deps.
+palmier-model = { path = "../palmier-model" }
+palmier-project = { path = "../palmier-project" }
+palmier-auth = { path = "../palmier-auth" }
+palmier-update = { path = "../palmier-update" }
+palmier-telemetry = { path = "../palmier-telemetry" }
+palmier-mcp = { path = "../palmier-mcp" }
+palmier-text = { path = "../palmier-text" }

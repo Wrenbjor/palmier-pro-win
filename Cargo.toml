@@ -1,0 +1,52 @@
+# Palmier-Pro-Windows — Cargo workspace
+#
+# Skeleton scaffold (E1-S1 / E2-S1). This defines the 17 core crates from
+# FOUNDATION §4 plus the `palmier-tauri` binary. Crates are stubs: each carries
+# a doc comment naming its responsibility and a trivial placeholder so the whole
+# workspace COMPILES fast. Features and feature work are added per-story.
+#
+# IMPORTANT — heavy deps come per-story, NOT here:
+#   ffmpeg-next / wgpu / whisper-rs / candle / ort / cpal / symphonia / rubato /
+#   rmcp / axum / reqwest / tauri runtime ... are intentionally absent so the
+#   skeleton builds in seconds. Each owning epic/story wires its own crate's
+#   external dependencies when it lands. See docs/FOUNDATION.md §2 (locked stack).
+#
+# Builds on this box MUST go through scripts/with-msvc.ps1 (vswhere can't see the
+# VS install): `pwsh -File scripts/with-msvc.ps1 cargo build`.
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/palmier-model",
+    "crates/palmier-project",
+    "crates/palmier-media",
+    "crates/palmier-engine",
+    "crates/palmier-text",
+    "crates/palmier-edit",
+    "crates/palmier-history",
+    "crates/palmier-export",
+    "crates/palmier-transcribe",
+    "crates/palmier-search",
+    "crates/palmier-gen",
+    "crates/palmier-agent",
+    "crates/palmier-mcp",
+    "crates/palmier-tools",
+    "crates/palmier-auth",
+    "crates/palmier-update",
+    "crates/palmier-telemetry",
+    "crates/palmier-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "GPL-3.0-only"
+publish = false
+
+# Shared dependency versions. Kept minimal for the skeleton; crates opt in.
+# Heavy/per-story deps are deliberately NOT declared here.
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }

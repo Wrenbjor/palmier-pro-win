@@ -1,0 +1,12 @@
+[package]
+name = "palmier-transcribe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+palmier-model = { path = "../palmier-model" }
+
+# Heavy deps (whisper-rs, tokenizers) come per-story — see FOUNDATION §2 / §6.9.
