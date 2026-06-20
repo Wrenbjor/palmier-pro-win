@@ -451,6 +451,17 @@ fn parse_crop_rows(rows: &[Value]) -> Result<KeyframeTrack<Crop>, String> {
 /// default frames)): routes to palmier-edit's atomic `ripple_delete_ranges_on_track`.
 /// Overlaps merge; linked partners cut on the same span; sync-locked tracks shift.
 /// Reference `rippleDeleteRanges`.
+///
+/// **E10-S8 / FR-38 — the transcript-driven cut path (UJ-1 climax).** This is the
+/// agent-facing edit `get_transcript` (E10-S7) hands off to: the agent reads a
+/// clip's dead-air/filler words (already in project frames) and passes the word's
+/// `clipId` + frames straight here, or a source-seconds range (e.g. from
+/// `inspect_media`) with `units:"seconds"`. The `clipId` path below performs the
+/// source-seconds → project-frame conversion through the clip's placement + trim +
+/// speed — the same `Clip::timeline_frame` math as `span_frames`/E10-S6
+/// (`f64::round` ties-away, speed floor `0.0001`, half-open `[start, end)`) — then
+/// the merged Epic 3 engine cuts and closes the gap in **one atomic, undoable**
+/// [`agent_edit`] step. No new editing engine: glue over get_transcript + ripple.
 pub fn ripple_delete_ranges(state: &mut EditorState, args: &Value) -> ToolResult {
     let obj = args.as_object().expect("validated object");
     let ranges = match obj.get("ranges").and_then(Value::as_array) {

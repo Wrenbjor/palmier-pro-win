@@ -445,6 +445,21 @@ tool stories if it touches only its own tool modules; depends on S6, so sequence
 
 ### E10-S8 — Transcript-driven cut path (FR-38) — `get_transcript` → ranges → `ripple_delete_ranges`
 
+> **Status:** DONE (story/E10-S8-transcript-cut) — **Epic 10 is now COMPLETE** (S1–S8 all done). The
+> source-seconds→project-frames conversion + `ripple_delete_ranges` + agent-undo glue this story is
+> responsible for is **realized by the merged `ripple_delete_ranges` tool** (`palmier-tools/src/properties.rs`):
+> its `clipId` path maps source seconds → project frames through the clip's placement+trim+speed using the
+> same `Clip::timeline_frame` math (`f64::round` ties-away, speed floor `0.0001`, half-open `[start, end)`),
+> then routes to the atomic Epic-3 `ripple_delete_ranges_on_track` engine wrapped as ONE reversible
+> `agent_edit` step — **no new editing engine**. This story seals the UJ-1 climax path end-to-end: added
+> the §11.3 agent-cut e2e gate (`palmier-tools/tests/transcript_cut.rs`, 3 tests) — (1) seed transcript
+> cache → `get_transcript` (project frames) → agent reads the filler word's frames → `ripple_delete_ranges`
+> → timeline gap closes (the trailing clip ripples left) → ONE atomic agent-undo step, reversible via
+> `undo`; (2) the named source-**seconds** path maps through trim+speed+placement before the cut; (3) the
+> UJ-1 edge — no cached transcript → `get_transcript` returns empty words and no cut points, so the agent
+> transcribes first rather than guessing. Documented the path in the `ripple_delete_ranges` rustdoc.
+> `cargo build` (workspace) + `cargo test --package palmier-tools` (77 tests) + full `cargo test` all green.
+
 **Intent:** As a dev agent, I want the source-seconds→project-frames conversion that lets the agent turn
 dead-air/filler ranges from a transcript into a `ripple_delete_ranges` call, so UJ-1's climax (collapse
 dead air in one atomic, undoable op) works end to end.
