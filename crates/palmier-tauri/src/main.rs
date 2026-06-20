@@ -30,6 +30,7 @@
 mod boot;
 mod commands;
 mod menu;
+mod project;
 mod settings;
 mod update;
 mod window;
@@ -56,6 +57,10 @@ fn main() {
         // reference frame-autosave names (the label is the state key, so Settings/Help
         // cannot collide — settings-account-app.md autosave gotcha).
         .plugin(tauri_plugin_window_state::Builder::default().build())
+        // E1-S7 — native Save-As / Open dialogs for New/Open project. The Home UI
+        // drives the picker via `@tauri-apps/plugin-dialog`, then hands the chosen
+        // `.palmier` path to `create_project` / `open_project`.
+        .plugin(tauri_plugin_dialog::init())
         // E1-S4/E1-S9/E1-S10 — the command seam the Home/Settings/Help/Feedback surfaces
         // and the menu router call via `invoke`.
         .invoke_handler(tauri::generate_handler![
@@ -72,18 +77,34 @@ fn main() {
             commands::open_settings,
             commands::open_help,
             commands::open_feedback,
-            commands::open_project,
-            commands::show_home,
             commands::check_for_updates,
             commands::send_feedback,
+            // E1-S7 — project lifecycle (Recent / create / open / delete / autosave-on-home).
+            project::list_recent,
+            project::create_project,
+            project::open_project,
+            project::open_project_dialog,
+            project::delete_project,
+            project::show_home,
+            project::default_storage_dir,
+            // E1-S8 — sample carousel (list / resolve+materialize+open).
+            project::list_samples,
+            project::open_sample,
         ])
         .setup(move |app| {
+            // E1-S7/E1-S8 — build the project lifecycle state BEFORE `auth` is moved
+            // into managed state: the sample service needs the Convex HTTP URL from
+            // the auth config (None ⇒ empty carousel, offline-safe). The registry
+            // loads from `project-registry.json` (missing ⇒ empty, lenient).
+            let project_state = project::build_state(&boot_ctx.auth);
+
             // Move the long-lived boot handles into Tauri managed state. The
             // telemetry handle MUST live for the whole process (dropping it stops
             // Sentry + flushes the rotated-file log writer); managed state holds
             // it for the app lifetime. Auth + settings are likewise process-wide.
             app.manage(boot_ctx.telemetry);
             app.manage(boot_ctx.auth);
+            app.manage(project_state);
             app.manage(AppSettings(boot_ctx.settings.clone()));
             // E1-S9 — the live (mutable) settings the General-tab toggles mutate +
             // persist, seeded from the boot snapshot.

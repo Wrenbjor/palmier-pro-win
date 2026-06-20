@@ -54,6 +54,7 @@ pub mod dialog;
 pub mod document;
 pub mod registry;
 pub mod resolver;
+pub mod samples;
 
 pub use bundle::{
     project, read_bundle, read_chat_session_files, write_bundle, BundleError, BundleSnapshot,
@@ -64,6 +65,10 @@ pub use document::{ProjectDocument, DEFAULT_AUTOSAVE_DEBOUNCE};
 pub use registry::{normalize_path, ProjectEntry, ProjectRegistry, SystemTrasher, Trasher};
 pub use resolver::{
     expected_url_for_source, restore_entries, source_for_url, MediaResolver, RestoreEvent,
+};
+pub use samples::{
+    safe_name, FixtureSampleBackend, HttpSampleBackend, ResolvedSample, SampleBackend, SampleChat,
+    SampleDownload, SampleError, SampleProjectService, SampleSummary,
 };
 
 /// Reference bundle filenames (ruling #3). Re-exported from [`bundle::project`]

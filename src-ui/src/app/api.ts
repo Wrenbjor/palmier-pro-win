@@ -92,6 +92,71 @@ export const openProject = (projectId: string) =>
   tryInvoke<void>("open_project", { projectId });
 export const showHome = () => tryInvoke<void>("show_home");
 
+// ── project lifecycle (E1-S7) ─────────────────────────────────────────────────
+
+/** A recent-project row (mirrors Rust `RecentProject`). */
+export interface RecentProject {
+  id: string;
+  title: string;
+  path: string;
+  /** Last-opened time as Unix seconds (newest-first sort key). */
+  lastOpened: number;
+  accessible: boolean;
+}
+
+/** Recent projects, newest-first (registry `sorted_entries`). */
+export const listRecent = () => tryInvoke<RecentProject[]>("list_recent");
+
+/** New project: Rust opens the Save-As dialog. Returns the new id, or null on cancel. */
+export const createProject = () =>
+  tryInvoke<string | null>("create_project");
+
+/** Open project: Rust opens the Open dialog. Returns the id, or null on cancel. */
+export const openProjectDialog = () =>
+  tryInvoke<string | null>("open_project_dialog");
+
+/** Delete a project (trash bundle + drop the registry entry). */
+export const deleteProject = (projectId: string) =>
+  tryInvoke<void>("delete_project", { projectId });
+
+// ── samples (E1-S8) ───────────────────────────────────────────────────────────
+
+/** A sample-carousel card (mirrors Rust `SampleCard`). */
+export interface SampleCard {
+  slug: string;
+  title: string;
+  posterUrl: string | null;
+}
+
+/** Sample summaries; empty when offline / unconfigured (degrades, never errors). */
+export const listSamples = () => tryInvoke<SampleCard[]>("list_samples");
+
+/** Resolve + materialize + open a sample (download progress over `sample://progress`). */
+export async function openSample(slug: string): Promise<{ ok: boolean; error?: string }> {
+  if (!inTauri()) return { ok: false, error: "Not running in the app." };
+  try {
+    await invoke<void>("open_sample", { slug });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+}
+
+/** Sample download-progress event payload (mirrors Rust `SampleProgress`). */
+export interface SampleProgress {
+  slug: string;
+  /** 0.0..=1.0. */
+  progress: number;
+}
+
+/** Subscribe to sample download progress; returns an unlisten fn (no-op outside Tauri). */
+export async function onSampleProgress(
+  handler: (p: SampleProgress) => void,
+): Promise<UnlistenFn> {
+  if (!inTauri()) return () => {};
+  return listen<SampleProgress>("sample://progress", (e) => handler(e.payload));
+}
+
 // ── feedback ────────────────────────────────────────────────────────────────
 export interface FeedbackInput {
   message: string;

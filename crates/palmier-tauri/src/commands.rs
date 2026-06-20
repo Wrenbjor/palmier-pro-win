@@ -284,18 +284,8 @@ pub fn open_feedback(app: AppHandle) -> Result<(), String> {
     window::open_or_focus(&app, WindowKind::Feedback).map_err(|e| e.to_string())
 }
 
-/// Open a Project window for `project_id` (one per project, FR-2).
-#[tauri::command]
-pub fn open_project(app: AppHandle, project_id: String) -> Result<(), String> {
-    window::open_project_window(&app, &project_id).map_err(|e| e.to_string())
-}
-
-/// Return to Home (reference `showHome`). The autosave-on-home of the active project is
-/// E1-S7's lifecycle; here we just surface Home.
-#[tauri::command]
-pub fn show_home(app: AppHandle) -> Result<(), String> {
-    window::show_home(&app).map_err(|e| e.to_string())
-}
+// `open_project` + `show_home` moved to `project.rs` (E1-S7): they now run the real
+// registry-backed open + autosave-on-switch lifecycle instead of a window-only stub.
 
 /// Re-check for updates now (Settings/menu "Check for Updates"). Delegates to the
 /// E1-S10 updater glue.
