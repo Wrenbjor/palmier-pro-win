@@ -39,7 +39,9 @@ use crate::Mat3;
 use super::pixels::{decoded_to_rgba, RgbaImage};
 use super::provider::FrameProvider;
 use super::quad::{crop_corners, crop_uv_rect, layer_clip_matrix, CanvasSize};
+use super::text_pass::{TextDraw, TextPass};
 use super::texture_cache::{TexKey, TextureCache};
+use palmier_text::FontRegistry;
 
 /// The single working pixel format. BGRA on a surface (the native swapchain format
 /// DWM wants); RGBA for the headless offscreen target. Both are 8-bit, non-sRGB so
@@ -124,6 +126,13 @@ pub struct Compositor {
     /// The swapchain/target format (BGRA for a surface, RGBA headless).
     format: wgpu::TextureFormat,
     adapter_info: wgpu::AdapterInfo,
+    /// Font registry (bundled + system fonts) the text pass rasterizes through.
+    /// Built once with the compositor so the `FontSystem` (expensive system scan)
+    /// is shared across every frame's text layers (E5-S9).
+    font_registry: FontRegistry,
+    /// The wgpu glyph text pass (E5-S9), built lazily on the first text frame so a
+    /// composition with no text never pays for the atlas/pipelines.
+    text_pass: Option<TextPass>,
 }
 
 impl Compositor {
@@ -361,6 +370,8 @@ impl Compositor {
             texture_cache: TextureCache::new(),
             target: Target::Surface { surface, config },
             format,
+            font_registry: FontRegistry::with_bundled_fonts(),
+            text_pass: None,
         })
     }
 
@@ -391,6 +402,9 @@ impl Compositor {
                 height: height.max(1),
             },
             format,
+            // Tests/headless use bundled-only fonts (deterministic, no system scan).
+            font_registry: FontRegistry::bundled_only(),
+            text_pass: None,
         })
     }
 
@@ -573,6 +587,18 @@ impl Compositor {
         // Resolve + upload every layer's texture BEFORE opening the render pass
         // (write_texture + the pass can't interleave; and resolve borrows &mut self).
         let mut draws: Vec<DrawItem> = Vec::new();
+        // Text layers are collected here (they composite ABOVE the video stack —
+        // reference text `CALayer` tree over the `AVPlayerLayer`); their glyph
+        // rasterization + atlas upload also happens before the pass.
+        let text_layers: Vec<&crate::TextLayer> = frame
+            .composition
+            .layers
+            .iter()
+            .filter_map(|l| match l {
+                LayerRender::Text(t) => Some(t),
+                _ => None,
+            })
+            .collect();
 
         for layer in &frame.composition.layers {
             let (visual, transform, opacity, crop) = match layer {
@@ -586,8 +612,8 @@ impl Compositor {
                     (v, v.transform, v.opacity, v.crop)
                 }
                 LayerRender::Text(_) => {
-                    // STUBBED (E5-S9): text renders via the cosmic-text glyph pass, not
-                    // as a composition texture. Skip it here.
+                    // Text is rendered by the glyph pass (collected above), above the
+                    // video quads — not as a composition texture. Handled post-loop.
                     continue;
                 }
             };
@@ -624,6 +650,30 @@ impl Compositor {
             draws.push(item);
         }
 
+        // Prepare text-layer draws (E5-S9): rasterize any new glyphs into the atlas
+        // (queue.write_texture — must run BEFORE the render pass) and build the
+        // per-glyph/box quads. The text pass is built lazily on the first text frame.
+        let mut text_draws: Vec<TextDraw> = Vec::new();
+        if !text_layers.is_empty() {
+            // Lazily stand up the text pass for this target's format.
+            if self.text_pass.is_none() {
+                self.text_pass = Some(TextPass::new(&self.device, self.format));
+            }
+            // Disjoint field borrows: text_pass + font_registry + device/queue.
+            let pass = self.text_pass.as_mut().expect("text pass present");
+            for t in &text_layers {
+                let mut d = pass.prepare_layer(
+                    &self.device,
+                    &self.queue,
+                    &mut self.font_registry,
+                    &t.run,
+                    t.opacity,
+                    canvas,
+                );
+                text_draws.append(&mut d);
+            }
+        }
+
         // One render pass: clear to black (opaque floor), draw layers bottom→top.
         let mut encoder = self
             .device
@@ -652,6 +702,13 @@ impl Compositor {
                 pass.set_bind_group(0, &d.bind_group, &[]);
                 pass.set_vertex_buffer(0, d.vertex_buf.slice(..));
                 pass.draw(0..4, 0..1); // triangle-strip quad
+            }
+
+            // Text pass: draw glyph/background/border/shadow quads ABOVE the video
+            // (reference text tree over the player layer). Same render pass, same
+            // premultiplied-alpha blend.
+            if let Some(tp) = self.text_pass.as_ref() {
+                tp.draw(&mut pass, &text_draws);
             }
         }
         self.queue.submit(std::iter::once(encoder.finish()));

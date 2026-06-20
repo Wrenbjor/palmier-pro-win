@@ -83,9 +83,12 @@ pub enum LayerRender {
     Image(VisualLayer),
     /// A Lottie animation pre-rendered to a texture (first-class, #22).
     Lottie(VisualLayer),
-    /// A text layer — rendered by `palmier-text` (E5-S9). Carried for enum
-    /// completeness; **not emitted by the E5-S3 builder** (text is excluded from
-    /// video layering, matching the reference).
+    /// A text layer — shaped by `palmier-text` (E5-S9, cosmic-text glyph runs) and
+    /// rasterized in the wgpu text pass. The E5-S3 video builder ([`build_frame`])
+    /// still **excludes** `.text` clips from video layering (matching the
+    /// reference); text layers are produced separately by
+    /// [`build_text_layers`](crate::build_text_layers) with the 30-frame preroll,
+    /// then appended on top of the video stack by the compositor.
     Text(TextLayer),
 }
 
@@ -140,13 +143,25 @@ pub struct VisualLayer {
     pub has_alpha: bool,
 }
 
-/// A text layer placeholder (filled by E5-S9). Carries the sampled transform +
-/// opacity so the text pass renders with the same geometry seam as visual layers.
+/// A text layer (E5-S9): the clip's shaped [`GlyphRun`](palmier_text::GlyphRun)
+/// (positioned glyphs + resolved style + box) plus the sampled opacity. The glyph
+/// run is laid out by `palmier-text` (cosmic-text) in **render-pixel** space with
+/// the box already placed from the clip's normalized transform, so the text pass
+/// draws glyph/background/border/shadow quads straight from it — no per-layer
+/// [`Mat3`] is needed (the box geometry is baked into the glyph positions). The
+/// `transform` is retained for parity with visual layers / overlay hit-testing.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextLayer {
     pub clip_id: String,
-    pub transform: Mat3,
+    /// The shaped glyph run (positions + style + box), render-pixel space.
+    pub run: palmier_text::GlyphRun,
+    /// Effective opacity at the frame, in `[0, 1]` (folds keyframes × fade; `0`
+    /// during the 30-frame preroll lead-in). The text pass multiplies every glyph /
+    /// box / shadow alpha by this.
     pub opacity: f64,
+    /// The sampled layer affine (parity with visual layers; the glyph positions
+    /// already embed the box placement, so the text pass does not re-apply it).
+    pub transform: Mat3,
 }
 
 /// The composition graph for a single timeline frame: the ordered, bottom→top stack

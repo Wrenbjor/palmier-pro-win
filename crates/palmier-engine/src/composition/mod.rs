@@ -28,9 +28,11 @@
 pub mod build;
 pub mod mat3;
 pub mod sampler;
+pub mod text;
 pub mod types;
 
 pub use build::{build_frame, refresh_visuals, source_frame_for, SourceResolver};
 pub use mat3::Mat3;
 pub use sampler::{affine_transform, crop_rect, layer_opacity, layer_transform, SourceInfo};
+pub use text::build_text_layers;
 pub use types::{CompositionFrame, CropRect, FrameRef, LayerRender, TextLayer, VisualLayer};

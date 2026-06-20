@@ -9,6 +9,12 @@ publish.workspace = true
 [dependencies]
 palmier-model = { path = "../palmier-model" }
 palmier-media = { path = "../palmier-media" }
+# E5-S9 text layout/shaping (cosmic-text + fontdb). Pure (no GPU) and always on —
+# the composition's text-layer build (`text::build_text_layers`) produces glyph runs
+# headlessly; the wgpu glyph-atlas RASTERIZE pass that turns them into textured quads
+# is behind `wgpu-compositor`. `palmier-text` re-exports the cosmic-text `SwashCache`
+# inputs the GPU pass needs.
+palmier-text = { path = "../palmier-text" }
 
 # E5-S6 audio mixer (FOUNDATION §6.5 "Audio mixing", §2 locked stack):
 #   symphonia decode → rubato resample 48 kHz → speed time-stretch → envelope → cpal out.
