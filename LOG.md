@@ -169,3 +169,19 @@ URL + test Clerk account) and E8-S9 agent-cut e2e (needs a real ANTHROPIC_API_KE
 M3 already underway: E9 generation lifecycle (palmier-gen) merged; whisper-rs 0.16 toolchain proven end-to-end
 (JFK sample transcribed; portable CMake + whisper-env.ps1, models MIT); S-3 SigLIP2 runtime resolved (ort+ONNX) for M4.
 Refs: main @af28901; crates/palmier-{mcp,agent,tools,tauri,prompt,gen}; [phase0-reconciliation](docs/phase0-reconciliation.md) (updated: S-3 + convex preserve_order); scripts/whisper-env.ps1 (new). Next: M3 E10 (palmier-transcribe — whisper wrapper + verbatim CaptionBuilder + add_captions/get_transcript bodies); M4 E11 (SigLIP2 search).
+
+## 2026-06-20 · M3 functionally complete — generation lifecycle + transcription/captions (Epics 9–10) · #build #m3 #transcription #generation
+What: Epic 10 (Transcription & Captions) closed S1–S8, joining the already-merged Epic 9 (generation
+lifecycle) to make M3 functionally complete. Transcription stack, all clean-room parity ports verified green:
+palmier-transcribe (TranscriptionResult model + offsetting; FFmpeg-forced 16kHz/mono/s16le extraction +
+whisper-rs 0.16 engine — **live ggml-small.en transcription proven**, JFK sample 5.49s CPU; locale resolver
++ profanity censoring [clean-room word-list caveat]; TranscriptCache sha256(content)+model+lang #19 with
+windowed no-re-transcribe filter), palmier-text CaptionBuilder (8 phrase-algo oracles + 6 specs tests ported
+verbatim, grapheme-aware, min-dur cascade), palmier-edit generate_captions (targets/union/dominant-track/
+overlap-assignment/casing/placement, one "Generate Captions" undo), and the agent tools add_captions +
+get_transcript + the UJ-1 transcript-driven cut (get_transcript→ranges→ripple_delete_ranges, atomic agent-undo;
+e2e gate proven). MCP surface now **28/30 tools functional** (search_media=M4, generate live paths gated).
+Whisper toolchain (portable CMake + whisper-env.ps1, MIT models) and the 2 parallel-dispatch engine seams
+(resolve_locale_en + censor_result) all wired. Worktree discipline clean throughout (every merged worker's
+worktree+branch removed; only main + the in-flight E11-S6 coordinator remain).
+Refs: main @c6013a0; crates/palmier-{transcribe,text,edit,tools}; [phase0-reconciliation](docs/phase0-reconciliation.md) (profanity clean-room + S-3 + convex preserve_order); scripts/whisper-env.ps1. Next: finish M4 search (E11-S6 coordinator → search_media tool → Moments/Spoken UI), then M5 (Epic 12 packaging/release).
