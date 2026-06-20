@@ -7,4 +7,26 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-# Heavy deps (reqwest, keyring) come per-story — see FOUNDATION §2 / §6.13, E1-S6.
+# Clerk token cache, Convex account/credit state, OS-keyring Anthropic-key storage
+# (FOUNDATION §4 / §6.13 / §8.1 / §8.2; E1-S6). Network is behind a trait so the
+# state machine is testable without a live backend.
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = "2"
+url = "2"
+# Convex HTTP transport (FOUNDATION §8.1). Blocking client keeps the M1 read-only
+# slice runtime-agnostic; rustls so no system OpenSSL is required on Win/Linux.
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "json",
+    "rustls-tls",
+] }
+keyring = { version = "3", features = [
+    "windows-native",
+    "linux-native",
+    "sync-secret-service",
+] }
+
+# No dev-dependencies: the in-memory keyring (`InMemoryKeyStore`) and mock Convex
+# backend used by the unit tests are part of the crate itself, so no live backend
+# (Credential Manager / Secret Service / network) is needed to run `cargo test`.
