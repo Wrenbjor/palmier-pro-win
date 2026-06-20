@@ -9,3 +9,8 @@ publish.workspace = true
 [dependencies]
 palmier-model = { path = "../palmier-model" }
 serde_json.workspace = true
+# `uuidRegex` literal port — the same `[0-9A-Fa-f]{8}-…` pattern the reference
+# `ToolExecutor+ShortId.swift` uses to find known UUIDs in result text and rewrite
+# them to their short prefix. ShortId itself compares id strings directly (no UUID
+# parsing), so the `uuid` crate isn't needed here — `regex` is the only addition.
+regex.workspace = true
