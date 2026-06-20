@@ -311,9 +311,21 @@ fn validation_missing_required_is_error() {
 #[test]
 fn validation_generate_audio_no_required_passes_dispatch() {
     let exec = ToolExecutor::with_state(EditorState::new());
-    // generate_audio has no required field; it dispatches (to the stub body).
+    // generate_audio has no required field, so it passes arg-schema validation and
+    // reaches its body (E9-S11). With no generation backend wired (default
+    // EditorState: can_generate=false, no gateway) the body returns the reference
+    // "backend not available" result — NOT a validation/unknown-tool error. The
+    // distinguishing assertion: the message is the FR-34 sign-in text, proving
+    // validation did not short-circuit it.
     let r = exec.execute("generate_audio", json!({}), &NullCtx);
-    assert!(!r.is_error, "generate_audio with empty args should pass validation");
+    assert!(r.is_error, "no backend wired → backend-not-available result");
+    match &r.content[0] {
+        palmier_tools::Block::Text(t) => assert!(
+            t.contains("Sign in"),
+            "should be the backend-not-available message, got: {t}"
+        ),
+        _ => panic!("expected text"),
+    }
 }
 
 #[test]

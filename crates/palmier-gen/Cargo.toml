@@ -8,5 +8,67 @@ publish.workspace = true
 
 [dependencies]
 palmier-model = { path = "../palmier-model" }
+# Account / credit state (the advisory `can_generate` gate reads budget/spent from
+# palmier-auth's AccountState — E9-S8). Auth also owns the Clerk JWT cache that the
+# convex transport injects (E9-S1 / S-2 §3.3).
+palmier-auth = { path = "../palmier-auth" }
 
-# Heavy deps (reqwest, tokio, convex client) come per-story — see FOUNDATION §2 / §6.11.
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+# Apple-ref-epoch / wall-clock for upload-cache TTL + createdAt stamping. `clock`
+# for `OffsetDateTime::now_utc`.
+time = { workspace = true, features = ["macros", "parsing", "formatting"] }
+
+# Async runtime + stream plumbing for the GenerationTransport trait, the lifecycle
+# orchestration, and the convex subscription stream. `tokio` is needed even for the
+# mock transport (the lifecycle is async); the heavy WS client is feature-gated below.
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# HTTP: reference upload POST (3-step), result download, the /v1/models snapshot,
+# and the generations:byId polling fallback. rustls so no system OpenSSL on Windows.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+
+# Temp files for streamed downloads before the atomic move into <project>/media.
+tempfile = "3"
+
+# Structured logging (parity with FOUNDATION §6.16 target `generation`).
+tracing = "0.1"
+
+# The official Convex Rust client (Apple-2.0, GPLv3-compatible — ruling #25 / S-2).
+# Implements the WS sync protocol (subscribe → futures::Stream, query/mutation/action,
+# dynamic JWT auth). Feature-gated so the lifecycle + mock transport + every unit test
+# build and run WITHOUT pulling the WS client or touching the network. The live WS
+# transport (E9-S1) is compiled in only with `--features convex-transport`.
+convex = { version = "0.10", optional = true }
+# The convex crate's auth callback returns `anyhow::Result<AuthenticationToken>`;
+# needed only by the WS transport, so gated under the same feature.
+anyhow = { version = "1", optional = true }
+
+[features]
+# DEFAULT = no WS client. The convex-crate WS transport is **opt-in**, NOT default.
+#
+# WHY (load-bearing): the `convex` crate (and convex_sync_types) hard-enable
+# serde_json's `preserve_order` feature. Because Cargo unifies features across a
+# build, pulling `convex` into the default graph flips serde_json from its default
+# sorted-key (BTreeMap) ordering to insertion-order (IndexMap) for EVERY crate in
+# the build — which breaks `palmier-agent`'s byte-stable Anthropic-request golden
+# tests (they assert sorted key order, the cache-hashing contract). Keeping
+# `convex-transport` off by default means the whole-workspace `cargo build` /
+# `cargo test` gate stays free of `preserve_order` and palmier-agent stays green.
+#
+# The WS transport (E9-S1 primary) is still fully built + the live test run with
+# `--features convex-transport`; the host (palmier-tauri) opts in there. When it
+# does, palmier-agent's request builder should be made order-independent (it owns
+# that fragility) — flagged for the orchestrator (out of this worker's scope).
+default = []
+convex-transport = ["dep:convex", "dep:anyhow"]
+# Expose `MockTransport` outside `cfg(test)` so downstream crates (palmier-tools)
+# can drive the lifecycle in THEIR tests without a live Convex. Enabled as a
+# dev-dependency feature there; never in a release build.
+test-mock = []
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
