@@ -58,6 +58,9 @@ raw-window-handle = "=0.6.2"
 # categorized daily-rotated file logger attaches), so we depend on `tracing` for
 # the log macros only — NOT `tracing-subscriber`.
 tracing = "0.1"
+# E8-S7: parse the frontend-minted chat session id (a uuid string) so a brand-new
+# chat's first turn adopts that id as its `ChatSession`/`<uuid>.json` filename.
+uuid = { workspace = true }
 
 # Workspace crates wired into the binary (boot sequence calls into these).
 palmier-model = { path = "../palmier-model" }
@@ -80,3 +83,7 @@ palmier-agent = { path = "../palmier-agent" }
 # swapchain and the WebView2 child — see spikes/s2-wry-integration/FINDINGS.md plan A1).
 palmier-engine = { path = "../palmier-engine", features = ["wgpu-compositor"] }
 palmier-media = { path = "../palmier-media" }
+
+[dev-dependencies]
+# E8-S7: fixed timestamps for the session round-trip / sort-desc tests.
+time = { workspace = true }
