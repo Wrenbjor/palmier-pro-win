@@ -39,6 +39,7 @@
 
 use crate::client::{AgentClient, AgentClientError, AgentRequest, AnthropicToolSchema, WireMessage};
 use crate::event::{AnthropicModel, AnthropicStopReason, StreamEvent};
+use crate::mention_context::{hint, inline_image_blocks, referenced_mentions, MentionEnricher};
 use crate::model::{AgentContentBlock, AgentMessage, Role, ToolResultBlock};
 use futures_util::StreamExt;
 use serde_json::Value;
@@ -114,7 +115,7 @@ pub const TOOL_EXECUTOR_UNAVAILABLE: &str = "Tool executor unavailable.";
 /// The session/tab orchestration, `send()` gating, and Tauri event emission live
 /// outside this struct (E8-S7 / the integration story); the loop is a pure,
 /// testable state machine over `(client, dispatcher, cancel)`.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AgentLoop {
     /// The full conversation, mutated in place across tool rounds (reference
     /// `AgentService.messages`).
@@ -125,10 +126,31 @@ pub struct AgentLoop {
     pub tools: Vec<AnthropicToolSchema>,
     /// The target model.
     pub model: AnthropicModel,
+    /// The mention-enrichment seam (E8-S5): resolves `clip` summaries +
+    /// inlines `@`-mention images in [`api_messages`](Self::api_messages). `None`
+    /// (the reference's `editor == nil` branch) still projects — mentions just
+    /// carry no resolved `clip` / inlined image. The real editor/media-library
+    /// adapter is wired at integration (E8-S9).
+    pub enricher: Option<std::sync::Arc<dyn MentionEnricher>>,
+}
+
+impl std::fmt::Debug for AgentLoop {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentLoop")
+            .field("messages", &self.messages)
+            .field("system", &self.system)
+            .field("tools", &self.tools)
+            .field("model", &self.model)
+            .field("enricher", &self.enricher.as_ref().map(|_| "<dyn MentionEnricher>"))
+            .finish()
+    }
 }
 
 impl AgentLoop {
-    /// A loop with an empty conversation for `model`, `system`, and `tools`.
+    /// A loop with an empty conversation for `model`, `system`, and `tools`, and
+    /// **no** mention enricher (mentions project without `clip` summaries / inlined
+    /// images — the reference's `editor == nil` path). Use
+    /// [`with_enricher`](Self::with_enricher) to attach the editor/media seam.
     #[must_use]
     pub fn new(
         model: AnthropicModel,
@@ -140,17 +162,52 @@ impl AgentLoop {
             system: system.into(),
             tools,
             model,
+            enricher: None,
         }
     }
 
-    /// Append a user turn (reference `send()` minus the gating/mention snapshot,
-    /// which the caller owns). Runs orphan repair first, matching `send()`'s
-    /// `resolveOrphanToolUses()` before appending.
+    /// Attach the mention-enrichment seam (clip-summary resolution + image
+    /// inlining) used by [`api_messages`](Self::api_messages). Builder-style.
+    #[must_use]
+    pub fn with_enricher(mut self, enricher: std::sync::Arc<dyn MentionEnricher>) -> Self {
+        self.enricher = Some(enricher);
+        self
+    }
+
+    /// Append a plain user turn with no `@`-mentions (reference `send()` minus the
+    /// gating, for the no-mention path). Runs orphan repair first, matching
+    /// `send()`'s `resolveOrphanToolUses()` before appending.
     pub fn push_user_text(&mut self, text: impl Into<String>) {
+        self.push_user_message(text, Vec::new());
+    }
+
+    /// Append a user turn carrying `@`-mentions (reference `send()`): trims, filters
+    /// to the **referenced** mentions (those whose `@displayName` appears in the
+    /// text), snapshots a `context_hint` (inlining image mentions through the
+    /// [`enricher`](Self::enricher)), runs orphan repair, then appends the message.
+    ///
+    /// The snapshot mirrors the reference: the hint is computed **once at send
+    /// time** and stored on the message, so a later `api_messages()` reuses it
+    /// rather than recomputing (image inlining is still re-derived at projection —
+    /// it is the cache's job to make that cheap). An empty/whitespace `text`, or no
+    /// referenced mentions, stores no hint.
+    pub fn push_user_message(&mut self, text: impl Into<String>, mentions: Vec<crate::model::AgentMention>) {
+        let trimmed = text.into().trim().to_string();
+        let referenced = referenced_mentions(&mentions, &trimmed);
+        let context_hint = if referenced.is_empty() {
+            None
+        } else {
+            let source = self.enricher.as_deref().map(MentionEnricher::as_asset_source);
+            let inlined = inline_image_blocks(&referenced, source);
+            let resolver = self.enricher.as_deref().map(MentionEnricher::as_resolver);
+            Some(hint(&referenced, resolver, &inlined))
+        };
         self.resolve_orphan_tool_uses(ORPHAN_REASON);
-        self.messages.push(AgentMessage::new(
+        self.messages.push(AgentMessage::with_context(
             Role::User,
-            vec![AgentContentBlock::text(text)],
+            vec![AgentContentBlock::text(trimmed)],
+            referenced,
+            context_hint,
         ));
     }
 
@@ -485,22 +542,45 @@ impl AgentLoop {
     /// Project the stored conversation to the wire [`WireMessage`] list (reference
     /// `apiMessages`).
     ///
-    /// **S4 scope (structural projection):** each block maps via
-    /// [`content_block_json`] (drops empty text); `tool_use` re-parses `input_json`
-    /// into an object (the FIRST of the two parse sites — `agent-panel.md` lines
-    /// 201-203); `tool_result` emits `{type:tool_result, tool_use_id, content,
-    /// is_error}`. Messages whose content ends up empty are skipped.
+    /// Each block maps via [`content_block_json`] (drops empty text); `tool_use`
+    /// re-parses `input_json` into an object (the FIRST of the two parse sites —
+    /// `agent-panel.md` lines 201-203); `tool_result` emits `{type:tool_result,
+    /// tool_use_id, content, is_error}`. Messages whose content ends up empty are
+    /// skipped.
     ///
-    /// **Deferred to E8-S5:** for user messages with mentions, prepend the
-    /// context-hint text block + inlined image blocks at index 0. S4 ships the
-    /// projection without the mention enrichment so the tool round-trip is exact.
+    /// **E8-S5 mention enrichment:** for a **user** message carrying `@`-mentions,
+    /// prepend at index 0, in order: (1) the **context-hint text block** (the
+    /// stored snapshot from `send()`, else recomputed — reference `msg.contextHint
+    /// ?? AgentMentionContext.hint(...)`), then (2) the **inlined image blocks**.
+    /// The enrichment is in-app-loop-only — it never touches the system prompt or
+    /// the MCP path.
     #[must_use]
     pub fn api_messages(&self) -> Vec<WireMessage> {
         self.messages
             .iter()
             .filter_map(|msg| {
-                let content: Vec<Value> =
+                let mut content: Vec<Value> =
                     msg.blocks.iter().filter_map(content_block_json).collect();
+
+                // Mention enrichment: user turns with referenced mentions get the
+                // hint text + inlined images prepended (index 0, hint first).
+                if msg.role == Role::User && !msg.mentions.is_empty() {
+                    let source =
+                        self.enricher.as_deref().map(MentionEnricher::as_asset_source);
+                    let inlined = inline_image_blocks(&msg.mentions, source);
+                    let hint_text = msg.context_hint.clone().unwrap_or_else(|| {
+                        let resolver =
+                            self.enricher.as_deref().map(MentionEnricher::as_resolver);
+                        hint(&msg.mentions, resolver, &inlined)
+                    });
+                    // Insert image blocks at 0, then the hint at 0 → final order is
+                    // [hint, images..., original content...].
+                    for block in inlined.blocks.into_iter().rev() {
+                        content.insert(0, block);
+                    }
+                    content.insert(0, serde_json::json!({ "type": "text", "text": hint_text }));
+                }
+
                 if content.is_empty() {
                     return None;
                 }
@@ -1062,5 +1142,133 @@ mod tests {
         assert_eq!(parse_json_object("[1,2]"), serde_json::json!({}));
         assert_eq!(parse_json_object("not json"), serde_json::json!({}));
         assert_eq!(parse_json_object(""), serde_json::json!({}));
+    }
+
+    // ── E8-S5: api_messages mention enrichment (hint + image prepend) ─────────
+
+    use crate::image_encoder::test_support::{png, MapSource};
+    use crate::mention_context::{MentionResolver, NOTE_INLINED};
+    use crate::model::AgentMention;
+
+    /// Enricher backed by an image asset map + a clip-summary map for the
+    /// loop-level prepend tests.
+    struct LoopEnricher {
+        assets: MapSource,
+        clips: std::collections::HashMap<String, serde_json::Value>,
+    }
+    impl MentionResolver for LoopEnricher {
+        fn clip_summary(&self, clip_id: &str) -> serde_json::Value {
+            self.clips
+                .get(clip_id)
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({ "clipId": clip_id, "error": "clip not found" }))
+        }
+    }
+    impl crate::image_encoder::AssetBytesSource for LoopEnricher {
+        fn load(&self, media_ref: &str) -> Option<crate::image_encoder::AssetBytes> {
+            self.assets.load(media_ref)
+        }
+    }
+
+    fn image_mention(name: &str, media_ref: &str) -> AgentMention {
+        AgentMention {
+            id: uuid::Uuid::nil(),
+            display_name: name.to_string(),
+            media_ref: Some(media_ref.to_string()),
+            clip_type: Some(palmier_model::ClipType::Image),
+            clip_id: None,
+            timeline_range: None,
+        }
+    }
+
+    #[test]
+    fn api_messages_prepends_hint_then_image_for_user_turn_with_image_mention() {
+        let enricher = LoopEnricher {
+            assets: MapSource::new(),
+            clips: std::collections::HashMap::new(),
+        };
+        enricher.assets.insert("media_pic", png(48, 48), 1);
+        let mut l = AgentLoop::new(AnthropicModel::Haiku45, "sys", Vec::new())
+            .with_enricher(std::sync::Arc::new(enricher));
+
+        // send() snapshots the hint + filters to referenced mentions.
+        l.push_user_message("look at @pic please", vec![image_mention("pic", "media_pic")]);
+
+        let wire = l.api_messages();
+        assert_eq!(wire.len(), 1);
+        let content = &wire[0].content;
+        // Order: [hint text, image block, original user text].
+        assert_eq!(content.len(), 3);
+        assert_eq!(content[0]["type"], "text");
+        assert!(
+            content[0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("Referenced assets and timeline context in this message:"),
+            "block 0 is the hint"
+        );
+        assert!(content[0]["text"].as_str().unwrap().contains(NOTE_INLINED));
+        assert_eq!(content[1]["type"], "image", "block 1 is the inlined image");
+        assert_eq!(content[1]["source"]["type"], "base64");
+        assert_eq!(content[1]["source"]["media_type"], "image/png");
+        assert_eq!(content[2]["type"], "text", "block 2 is the original user text");
+        assert_eq!(content[2]["text"], "look at @pic please");
+    }
+
+    #[test]
+    fn api_messages_no_mentions_path_is_unchanged_from_e8_s4() {
+        // A loop with NO mentions must project EXACTLY as the structural S4
+        // projection — no hint, no extra blocks, byte-identical to a loop with no
+        // enricher attached.
+        let build = |with_enricher: bool| {
+            let mut l = AgentLoop::new(AnthropicModel::Haiku45, "sys", Vec::new());
+            if with_enricher {
+                l = l.with_enricher(std::sync::Arc::new(LoopEnricher {
+                    assets: MapSource::new(),
+                    clips: std::collections::HashMap::new(),
+                }));
+            }
+            l.push_user_text("just a plain message, no mentions");
+            l.api_messages()
+        };
+        let without = build(false);
+        let with = build(true);
+        assert_eq!(without.len(), 1);
+        assert_eq!(without[0].content.len(), 1);
+        assert_eq!(without[0].content[0]["type"], "text");
+        assert_eq!(without[0].content[0]["text"], "just a plain message, no mentions");
+        // Attaching an enricher does NOT change the no-mention projection.
+        assert_eq!(without[0].content, with[0].content);
+    }
+
+    #[test]
+    fn api_messages_uses_stored_hint_snapshot_when_present() {
+        // A message with a pre-stored context_hint (the send-time snapshot) reuses
+        // it verbatim rather than recomputing (reference `msg.contextHint ?? ...`).
+        let mut l = AgentLoop::new(AnthropicModel::Haiku45, "sys", Vec::new());
+        l.messages.push(AgentMessage::with_context(
+            Role::User,
+            vec![AgentContentBlock::text("use @sel")],
+            vec![AgentMention {
+                id: uuid::Uuid::nil(),
+                display_name: "sel".to_string(),
+                media_ref: None,
+                clip_type: None,
+                clip_id: None,
+                timeline_range: Some(crate::model::AgentTimelineRangeMention {
+                    start_frame: 0,
+                    end_frame: 10,
+                    duration_frames: 10,
+                    fps: 30,
+                    start_timecode: "00:00:00:00".to_string(),
+                    end_timecode: "00:00:00:10".to_string(),
+                    duration_timecode: "00:00:00:10".to_string(),
+                    range_semantics: "startInclusiveEndExclusive".to_string(),
+                }),
+            }],
+            Some("STORED HINT SNAPSHOT".to_string()),
+        ));
+        let wire = l.api_messages();
+        assert_eq!(wire[0].content[0]["text"], "STORED HINT SNAPSHOT");
     }
 }
