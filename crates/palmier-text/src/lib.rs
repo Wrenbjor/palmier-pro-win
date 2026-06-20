@@ -52,8 +52,8 @@ pub mod preroll;
 pub mod registry;
 pub mod style;
 
-pub use caption::{phrases, CaptionCase, Phrase, Segment, MIN_DISPLAY_DURATION};
-pub use layout::{GlyphRun, LayoutBox, PositionedGlyph, TextLayout};
+pub use caption::{caption_theme, phrases, CaptionCase, Phrase, Segment, MIN_DISPLAY_DURATION};
+pub use layout::{GlyphRun, LayoutBox, NaturalSize, PositionedGlyph, TextLayout, SHADOW_PADDING};
 pub use preroll::{is_visible, preroll_window, PREROLL_FRAMES};
 pub use registry::{FontRegistry, BUNDLED_FONTS};
 pub use style::{render_style, FontScale, RenderColor, RenderStyle, ShadowStyle};

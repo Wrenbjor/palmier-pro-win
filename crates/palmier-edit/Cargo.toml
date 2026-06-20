@@ -9,4 +9,11 @@ publish.workspace = true
 [dependencies]
 palmier-model = { path = "../palmier-model" }
 palmier-history = { path = "../palmier-history" }
+# E10-S6 captions: `specs(...)` + `generate_captions` consume the CaptionBuilder
+# phrase algorithm + `caption_line_fits`/natural-size measurement (palmier-text) and
+# the `TranscriptionResult` model (palmier-transcribe). The actual transcribe call
+# (cache vs bypass, spawn_blocking) is injected as a closure by the caller (E10-S7),
+# so this crate stays free of whisper/tokio; only the result *type* is needed here.
+palmier-text = { path = "../palmier-text" }
+palmier-transcribe = { path = "../palmier-transcribe" }
 uuid = { workspace = true }

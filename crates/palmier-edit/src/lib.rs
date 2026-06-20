@@ -35,6 +35,7 @@
 //! reference implementation exists).
 
 pub mod adapter;
+pub mod captions;
 pub mod drag;
 pub mod geometry;
 pub mod orchestration;
@@ -50,6 +51,10 @@ pub mod split;
 pub use adapter::{
     clip_to_placement, clip_to_snap_clip, clip_to_split_clip, has_no_source_media,
     track_to_placements, tracks_to_snap_clips,
+};
+pub use captions::{
+    generate_captions, place_text_clips, specs, AssetInfo, CaptionCase, CaptionError,
+    CaptionRequest, GenerateCaptionsResult, NoAssetInfo, TextClipSpec, GENERATE_CAPTIONS_UNDO_NAME,
 };
 pub use drag::{
     begin_clip_drag, clamp_move_frame_delta, clamp_trim_delta, clamped_track_delta, clip_sub_mode,

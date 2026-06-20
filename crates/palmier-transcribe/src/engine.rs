@@ -33,15 +33,16 @@
 //! AMD). Vulkan/CUDA are opt-in cargo features wired at the `whisper-rs` dep and are
 //! off in the default build (`spikes/whisper-setup/FINDINGS.md` §"Backend decision").
 //!
-//! ## E10-S3 seam (locale + profanity)
+//! ## E10-S3 seam (locale + profanity) — WIRED (E10-S6)
 //! Locale **resolution** and profanity **censoring** are E10-S3's job (it owns
-//! `locale.rs` / `profanity.rs`). This module accepts the `locale` /
-//! `censor_profanity` params and threads them, but resolves the locale with a
-//! minimal stub ([`resolve_locale_stub`]) that returns BCP-47 `"en"` for the bundled
-//! `.en` model. When E10-S3 lands its real resolver, replace the
-//! [`resolve_locale_stub`] call site in [`transcribe`] with the S3 resolver and pass
-//! `censor_profanity` into the suppression path — the signatures here already carry
-//! both params. See the inline `// E10-S3 SEAM` markers.
+//! `locale.rs` / `profanity.rs`). The engine now consumes the merged S3 surface:
+//! * locale is resolved through [`crate::resolve_locale_en`] (the English-only set
+//!   for the bundled `.en` model); a non-English override surfaces
+//!   `UnsupportedLocale`, and the resolved BCP-47 tag flows into
+//!   `TranscriptionResult.language` (real for future multi-lang models).
+//! * when `censor_profanity` is set, the decoded result is run through
+//!   [`crate::censor_result`] before returning (bracketed redactions across
+//!   text/segments/words). See the inline `// E10-S3 SEAM` markers.
 
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
@@ -458,18 +459,6 @@ fn resolve_model_path() -> Result<PathBuf, TranscriptionError> {
     )))
 }
 
-/// E10-S3 SEAM — minimal locale resolver stub.
-///
-/// Returns the BCP-47 tag for the bundled `.en` model (`"en"`) regardless of the
-/// requested `preferred_locale`, which is all the default `ggml-small.en` build
-/// supports. E10-S3 owns the real resolution algorithm (`match_locale` /
-/// `best_supported_locale` over `sys-locale`); when it lands, replace this call in
-/// [`transcribe`] with the S3 resolver. Kept private + tiny so the swap is a
-/// one-line change at the call site.
-fn resolve_locale_stub(_preferred_locale: Option<&str>) -> String {
-    "en".to_string()
-}
-
 /// Transcribe an audio file. Mirrors the reference
 /// `transcribe(fileURL:censorProfanity:preferredLocale:sourceRange:)`.
 ///
@@ -522,11 +511,12 @@ fn transcribe_extracted(
     censor_profanity: bool,
     locale: Option<&str>,
 ) -> Result<TranscriptionResult, TranscriptionError> {
-    // E10-S3 SEAM: resolve the locale (stub → "en" for the .en model). Swap this
-    // call for the S3 resolver when it lands; `censor_profanity` is threaded for the
-    // S3 token-suppression path (no-op in S2).
-    let _ = censor_profanity;
-    let resolved_locale = resolve_locale_stub(locale);
+    // E10-S3 SEAM: resolve the locale through the merged S3 resolver. For the
+    // bundled `.en` model the supported universe is English-only, so any English (or
+    // regionless) override lands on an English BCP-47 tag; a non-English override
+    // surfaces `UnsupportedLocale`. The resolved tag flows into
+    // `TranscriptionResult.language` (real for future multi-language models).
+    let resolved_locale = crate::resolve_locale_en(locale)?.to_bcp47();
 
     let model_path = resolve_model_path()?;
     let model_path_str = model_path.to_string_lossy().to_string();
@@ -544,16 +534,30 @@ fn transcribe_extracted(
     params.set_print_special(false);
     params.set_print_realtime(false);
     // Word-level token timestamps — needed for per-word start/end (dominant-track
-    // midpoint logic downstream). `.en` model → English; resolved locale is `en`.
+    // midpoint logic downstream).
     params.set_token_timestamps(true);
-    // Force English for the bundled `.en` model (S3 will generalize per locale).
+    // Force English for the bundled `.en` model — its decode language is fixed
+    // regardless of the resolved BCP-47 region (`resolved_locale` only governs the
+    // tag reported in `result.language`). A future multi-language model would pass
+    // the resolved language subtag here instead.
     params.set_language(Some("en"));
 
     state
         .full(params, &samples)
         .map_err(|e| TranscriptionError::AnalysisFailed(format!("whisper full: {e}")))?;
 
-    decode_results(&state, &resolved_locale)
+    let result = decode_results(&state, &resolved_locale)?;
+
+    // E10-S3 SEAM: when censoring is requested, run the decoded transcript through
+    // the merged S3 censor (bracketed redactions across text/segments/words) before
+    // returning. whisper-rs has no token-suppression API, so the reference's
+    // `.etiquetteReplacements` is realized as post-decode bracketing (clean-room
+    // word set — see profanity.rs / phase0-reconciliation #4).
+    Ok(if censor_profanity {
+        crate::censor_result(&result)
+    } else {
+        result
+    })
 }
 
 /// Decode whisper.cpp state into a [`TranscriptionResult`]. Parity port of the
@@ -672,12 +676,56 @@ mod tests {
         assert!(!tmp.exists(), "temp file should be deleted on drop");
     }
 
-    /// The locale stub resolves to `"en"` for the bundled `.en` model regardless of
-    /// the requested locale (E10-S3 owns the real resolver).
+    /// E10-S3 SEAM (locale flow): the engine resolves through the merged
+    /// `resolve_locale_en` — an English (or regionless) override yields an English
+    /// BCP-47 tag; a non-English override surfaces `UnsupportedLocale` (which the
+    /// engine propagates, never silently transcribing in the wrong language).
     #[test]
-    fn locale_stub_is_en() {
-        assert_eq!(resolve_locale_stub(None), "en");
-        assert_eq!(resolve_locale_stub(Some("fr-FR")), "en");
+    fn locale_seam_resolves_through_s3() {
+        // The engine resolves locale through the merged S3 `resolve_locale_en`, which
+        // sets `TranscriptionResult.language` to the resolved BCP-47 tag. An English
+        // override resolves to the supported English tag (`.en` model's supported set
+        // is `en-US`; `match_locale` prefers exact region else first same-language, so
+        // any `en-*` candidate lands on the supported `en-US`). This is the exact call
+        // the engine makes — no longer the old `resolve_locale_stub`.
+        assert_eq!(crate::resolve_locale_en(Some("en-US")).unwrap().to_bcp47(), "en-US");
+        assert_eq!(crate::resolve_locale_en(Some("en-GB")).unwrap().to_bcp47(), "en-US");
+        // The resolver yields an English BCP-47 tag for an English override (proving
+        // the seam is real, not the constant `"en"` stub the engine used pre-S3).
+        let resolved = crate::resolve_locale_en(Some("en-US")).unwrap().to_bcp47();
+        assert!(resolved.starts_with("en"));
+        // (A non-English override falls back to the OS locale per the reference
+        // "prefer user → auto-detect → error" order, so its outcome is OS-dependent
+        // and is covered by S3's locale.rs tests, not asserted here.)
+    }
+
+    /// E10-S3 SEAM (censor flow): the post-decode censor is applied to a decoded
+    /// result when `censor_profanity` is set and is a no-op otherwise. Drives the
+    /// `transcribe_extracted` branch without needing a live model by exercising the
+    /// exact `censor_result` seam the engine calls.
+    #[test]
+    fn censor_seam_applies_only_when_flagged() {
+        let raw = TranscriptionResult {
+            text: "what the hell".to_string(),
+            language: Some("en-US".to_string()),
+            words: vec![TranscriptionWord {
+                text: "hell".to_string(),
+                start: Some(0.3),
+                end: Some(0.5),
+            }],
+            segments: vec![TranscriptionSegment {
+                text: "what the hell".to_string(),
+                start: 0.0,
+                end: 0.5,
+            }],
+        };
+        // Flag set → bracketed redaction across text/segments/words.
+        let censored = crate::censor_result(&raw);
+        assert_eq!(censored.text, "what the [hell]");
+        assert_eq!(censored.segments[0].text, "what the [hell]");
+        assert_eq!(censored.words[0].text, "[hell]");
+        // Flag clear → the engine returns the result untouched (no censor call).
+        assert_eq!(raw.text, "what the hell");
     }
 
     /// Missing audio track / unreadable input → `AudioExtractionFailed`.
@@ -724,6 +772,7 @@ mod tests {
         );
         eprintln!("LIVE text: {}", result.text);
         assert!(!result.text.is_empty(), "expected non-empty transcript");
-        assert_eq!(result.language.as_deref(), Some("en"));
+        // After the S3 seam wiring, `Some("en-US")` resolves to the `en-US` tag.
+        assert_eq!(result.language.as_deref(), Some("en-US"));
     }
 }

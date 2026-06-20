@@ -303,6 +303,26 @@ and any off-by-one breaks visible caption timing.
 
 ### E10-S6 — `CaptionBuilder.specs(...)` mapping + `generateCaptions` orchestration + caption track placement
 
+> **Status:** DONE (story/E10-S6-captions-orchestration) — `crates/palmier-edit/src/captions.rs`:
+> `specs(...)` (5-step phrase→`TextClipSpec` map: visible-source drop, `Clip::timeline_frame`
+> with start/end fallback, `duration` clamp, center-based `Transform`), `generate_captions(...)`
+> (targets w/ linked-video-yields-to-audio + sort-by-start; per-`media_ref` transcribe over the
+> ±1.0 s-padded `visible_source_union`; auto-detect dominant-speech-track by spoken-word midpoint;
+> phrase→clip by most-overlap with the `>0 && >= len/2` gate; auto/upper/lower casing; shared
+> `group_id`; placement = new video track at index 0 under **one** undo group **"Generate Captions"**),
+> `place_text_clips(...)`, `caption_line_fits`/`caption_transform` (consume palmier-text). Transcribe
+> is **injected as a closure** (cache-vs-bypass + `spawn_blocking` stay with E10-S7) so palmier-edit
+> stays whisper/tokio-free. **Clip::timeline_frame already existed and matched the parity math** (Epic 2)
+> — verified, not changed. The **6 `specs` tests E10-S5 deferred** are ported verbatim (incl.
+> `transform_for`/center-based + drop-before-trim), plus dominant-track, overlap-assignment,
+> union-pad/clamp, casing, no-source, and undo-group-name parity tests (12 caption tests; 102 palmier-edit
+> tests green). **Two engine seams landed** in `crates/palmier-transcribe/src/engine.rs`: `resolve_locale_stub`
+> replaced by `crate::resolve_locale_en` (resolved BCP-47 → `result.language`), and `crate::censor_result`
+> applied post-decode when `censor_profanity` (2 new seam tests). New `palmier-text`: `caption_theme`
+> constants (AppTheme.Caption) + `TextLayout::natural_size` (measurement for `caption_line_fits`/transform).
+> Frontend `CaptionsTab.tsx` constants aligned to AppTheme.Caption (snap 0.02, defaultCenter (0.5,0.9),
+> font 12–300). Full workspace `cargo build`/`cargo test` + `pnpm build` green.
+
 **Intent:** As a dev agent, I want phrases mapped through clip trim/speed into `TextClipSpec` records and
 the full caption-generation orchestration (target selection, transcribe, phrase→clip assignment, casing,
 track placement) wired into the editor, so a user/agent can generate captions onto the timeline.
