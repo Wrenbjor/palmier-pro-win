@@ -4175,9 +4175,13 @@ dependencies = [
  "palmier-history",
  "palmier-media",
  "palmier-model",
+ "palmier-text",
+ "palmier-transcribe",
  "png 0.17.16",
  "regex",
  "serde_json",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

@@ -31,6 +31,7 @@
 //! `ToolResult.swift`) and `docs/reference/mcp-tools.md`. Tool descriptions and the
 //! 30-count are load-bearing contract — see [`schema`] (ruling #1, #2; R-5).
 
+pub mod caption_transcribe;
 pub mod clips;
 pub mod dispatch;
 pub mod editor;
@@ -55,7 +56,8 @@ pub use editor::{AgentStack, EditorState};
 pub use generate::{GenerationGateway, GenerationSubmission, BACKEND_NOT_AVAILABLE};
 pub use executor::ToolExecutor;
 pub use json_round::{round_json_numbers, JSON_ROUND_PLACES};
-pub use read::{CAPTION_ROW_LIMIT, TRANSCRIPT_WORD_CAP};
+pub use caption_transcribe::{resolve_cache_language, CACHE_DIR_ENV, WHISPER_MODEL_ID};
+pub use read::{CAPTION_ROW_LIMIT, TRANSCRIPT_SEGMENT_CAP, TRANSCRIPT_WORD_CAP};
 pub use resources::{
     ResourceDescriptor, IMAGE_MODELS_RESOURCE, RESOURCE_DESCRIPTORS, VIDEO_MODELS_RESOURCE,
 };

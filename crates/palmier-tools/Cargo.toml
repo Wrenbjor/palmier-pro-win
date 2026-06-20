@@ -24,6 +24,20 @@ palmier-media = { path = "../palmier-media" }
 # host (palmier-tauri). Default features OFF here — palmier-tools needs only the
 # catalog/params/validate types, not the WS `convex` client, to build + test.
 palmier-gen = { path = "../palmier-gen", default-features = false }
+# E10-S7 caption tools: `add_captions` drives palmier-edit's `generate_captions`
+# orchestration with the cache-vs-bypass `transcribe` closure wired here, and both
+# `add_captions` + `get_transcript` read/write the on-device transcript cache. The
+# whisper engine (synchronous) + `TranscriptCache` (async singleton) live in
+# palmier-transcribe; `FontRegistry`/`TextLayout` (caption measurement) in palmier-text.
+palmier-transcribe = { path = "../palmier-transcribe" }
+palmier-text = { path = "../palmier-text" }
+# `add_captions` mints the shared caption-group UUID for the placement batch.
+uuid = { workspace = true, features = ["v4"] }
+# The cache singleton (`TranscriptCache::shared`) is async (tokio `OnceCell`) and the
+# whisper transcribe call BLOCKS (`whisper full()`), so the sync tool body builds a
+# small current-thread runtime to `block_on` the cache and runs each transcription via
+# `spawn_blocking` (E10-S7 cache-vs-bypass + blocking-thread requirement).
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "sync"] }
 serde_json.workspace = true
 # `uuidRegex` literal port — the same `[0-9A-Fa-f]{8}-…` pattern the reference
 # `ToolExecutor+ShortId.swift` uses to find known UUIDs in result text and rewrite

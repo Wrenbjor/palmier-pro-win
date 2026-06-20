@@ -25,9 +25,13 @@ use serde_json::{json, Map, Value};
 
 use palmier_model::{Clip, GenerationStatus, MediaAsset, Timeline, Track};
 
+use crate::caption_transcribe::{
+    acquire_cache, asset_path, build_runtime, resolve_cache_language, WHISPER_MODEL_ID,
+};
 use crate::editor::EditorState;
 use crate::json_round::{round_json_numbers, JSON_ROUND_PLACES};
 use crate::result::ToolResult;
+use crate::transcript::span_frames;
 
 /// Per-group caption-row cap (reference `captionRowLimit = 200`).
 pub const CAPTION_ROW_LIMIT: usize = 200;
@@ -584,17 +588,24 @@ pub fn list_models(_state: &EditorState, _args: &Value) -> ToolResult {
 /// Maximum words returned by `get_transcript` (reference `inspectMaxWords`).
 pub const TRANSCRIPT_WORD_CAP: usize = 10000;
 
-/// `get_transcript` (`startFrame?`, `endFrame?`, `clipId?`): the spoken transcript
-/// of the CURRENT timeline in project frames — clips in timeline order, words
-/// `[text, startFrame, endFrame]` capped at 10000, paged via `nextStartFrame`.
+/// The transcript **segment** cap (400) — the OTHER cap class, applied by
+/// `inspect_media`'s per-source transcript-segment output (mcp-tools.md). `get_transcript`
+/// emits per-clip **words**, not segments, so it is bounded by [`TRANSCRIPT_WORD_CAP`];
+/// this constant documents the distinct 400-segment ceiling (it must NOT be conflated
+/// with the `maxFrames ≤ 12` image-frame cap, a third class).
+pub const TRANSCRIPT_SEGMENT_CAP: usize = 400;
+
+/// `get_transcript` (`startFrame?`, `endFrame?`, `clipId?`): the spoken transcript of
+/// the CURRENT timeline in project frames — clips in timeline order, words `[text,
+/// startFrame, endFrame]` capped at 10000 ([`TRANSCRIPT_WORD_CAP`]), paged via
+/// `nextStartFrame`. Reference `ToolExecutor+Timeline.swift:getTranscript`.
 ///
-/// The real word data lives in **Epic 10's transcription store** (M3). In M2 there
-/// is no store, so every audio/video clip yields zero words and the transcript is
-/// empty — matching the reference's "no transcription → empty → agent tells the
-/// user to transcribe" (UJ-1 edge case). The clip-walk, ordering, window
-/// validation, and the `spanFrames` source→timeline mapping
-/// ([`crate::transcript`]) are all implemented now so Epic 10 only supplies the
-/// words.
+/// Each audio/video clip's words come from the on-device transcript **cache**
+/// (E10-S4): a word is attributed to the clip whose visible source window contains its
+/// **midpoint**, then mapped to project frames via [`span_frames`]. The cache is **read
+/// only** here — `get_transcript` NEVER transcribes. When nothing is cached, every clip
+/// yields zero words and the result is empty: the contract description instructs the
+/// agent to transcribe first (UJ-1 — the agent must not guess cut points).
 pub fn get_transcript(state: &EditorState, args: &Value) -> ToolResult {
     let timeline = state.timeline();
     let fps = timeline.fps;
@@ -611,14 +622,11 @@ pub fn get_transcript(state: &EditorState, args: &Value) -> ToolResult {
     }
     let clip_filter = args.get("clipId").and_then(Value::as_str);
 
-    // Walk every audio/video clip in timeline order. Without Epic 10's store there
-    // are no words; we still emit clip entries scoped/ordered correctly so the
-    // shape is stable. (When a clip filter is set and matches nothing → error, per
-    // the reference.)
-    let mut frags: Vec<(usize, &Clip)> = Vec::new();
+    // Walk every audio/video clip, sorted by start_frame (reference `frags`). Snapshot
+    // each clip so the borrow ends before we read the cache.
+    let mut frags: Vec<(usize, Clip)> = Vec::new();
     for (track_index, track) in timeline.tracks.iter().enumerate() {
         for clip in &track.clips {
-            // Only audio/video clips carry speech.
             use palmier_model::ClipType::*;
             if !matches!(clip.media_type, Video | Audio) {
                 continue;
@@ -628,7 +636,7 @@ pub fn get_transcript(state: &EditorState, args: &Value) -> ToolResult {
                     continue;
                 }
             }
-            frags.push((track_index, clip));
+            frags.push((track_index, clip.clone()));
         }
     }
     frags.sort_by_key(|(_, c)| c.start_frame);
@@ -640,32 +648,139 @@ pub fn get_transcript(state: &EditorState, args: &Value) -> ToolResult {
         ));
     }
 
-    // In M2 there is no transcription backend, so words are empty for every clip.
-    // We emit clip entries with empty word lists (the reference emits clips with
-    // their `words` slices — here always empty until Epic 10).
-    let clips_out: Vec<Value> = frags
-        .iter()
-        .map(|(track_index, clip)| {
-            json!({
+    // Transcribe each UNIQUE source once via the cache (read-only; never transcribes).
+    // Per-asset cache/IO errors are skipped (reference records them in `skipped`),
+    // never failing the whole call.
+    let cache_language = resolve_cache_language(None);
+    let runtime = build_runtime();
+    let mut transcripts: std::collections::HashMap<String, palmier_transcribe::TranscriptionResult> =
+        std::collections::HashMap::new();
+    let mut skipped: Vec<Value> = Vec::new();
+    if let Ok(runtime) = &runtime {
+        let cache = runtime.block_on(acquire_cache());
+        let mut seen: Vec<String> = Vec::new();
+        for (_, clip) in &frags {
+            if seen.contains(&clip.media_ref) {
+                continue;
+            }
+            seen.push(clip.media_ref.clone());
+            let Some(file) = asset_path(&state.library, &clip.media_ref) else {
+                continue;
+            };
+            match cache.transcript(&file, WHISPER_MODEL_ID, &cache_language, None) {
+                Ok(Some(result)) => {
+                    transcripts.insert(clip.media_ref.clone(), result);
+                }
+                // Clean miss → no entry (clip yields no words; UJ-1 empty path).
+                Ok(None) => {}
+                Err(e) => skipped.push(json!({
+                    "file": file.file_name().map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| clip.media_ref.clone()),
+                    "reason": e.to_string(),
+                })),
+            }
+        }
+    }
+
+    // Build the per-clip word rows. Words attributed to the clip whose visible source
+    // window contains their midpoint; mapped to project frames via span_frames; window
+    // filtered; globally capped at TRANSCRIPT_WORD_CAP with nextStartFrame paging.
+    let fps_f = fps as f64;
+    let mut clips_out: Vec<Value> = Vec::new();
+    let mut total_words = 0usize;
+    let mut remaining = TRANSCRIPT_WORD_CAP;
+    let mut last_end: Option<i32> = None;
+
+    for (track_index, clip) in &frags {
+        let Some(transcript) = transcripts.get(&clip.media_ref) else {
+            // No cached transcript for this source → still emit the clip with empty
+            // words so the shape is stable (reference only emits clips that have rows;
+            // we keep an empty entry so the agent sees the clip exists but is untranscribed).
+            clips_out.push(json!({
                 "clipId": clip.id,
                 "trackIndex": track_index,
                 "startFrame": clip.start_frame,
                 "endFrame": clip.end_frame(),
                 "words": [],
-            })
-        })
-        .collect();
+            }));
+            continue;
+        };
 
-    // totalWords is 0 in M2 (no store) → no paging note.
-    let body = json!({
-        "fps": fps,
-        "timing": "projectFrames",
-        "wordFormat": ["text", "start", "end"],
-        "clips": clips_out,
-    });
+        let vis_start = clip.trim_start_frame as f64;
+        let vis_end = vis_start + clip.duration_frames as f64 * clip.speed.max(0.0001);
+
+        // Collect (start, end, row) for words whose midpoint is in the visible window.
+        let mut rows: Vec<(i32, i32, Value)> = Vec::new();
+        for w in &transcript.words {
+            let (Some(s), Some(e)) = (w.start, w.end) else {
+                continue;
+            };
+            let mid_frame = (s + e) / 2.0 * fps_f;
+            if !(mid_frame >= vis_start && mid_frame < vis_end) {
+                continue;
+            }
+            let Some((fs, fe)) = span_frames(s, e, clip, fps) else {
+                continue;
+            };
+            // Window filter: drop words ending at/before startFrame or starting at/after endFrame.
+            if let Some(ws) = window_start {
+                if fe <= ws {
+                    continue;
+                }
+            }
+            if let Some(we) = window_end {
+                if fs >= we {
+                    continue;
+                }
+            }
+            rows.push((fs, fe, json!([w.text, fs, fe])));
+        }
+        rows.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+        if rows.is_empty() {
+            continue;
+        }
+        total_words += rows.len();
+        if remaining == 0 {
+            continue;
+        }
+        let take = rows.len().min(remaining);
+        remaining -= take;
+        if let Some((_, e, _)) = rows.get(take.saturating_sub(1)) {
+            last_end = Some(*e);
+        }
+        let slice: Vec<Value> = rows.into_iter().take(take).map(|(_, _, r)| r).collect();
+        clips_out.push(json!({
+            "clipId": clip.id,
+            "trackIndex": track_index,
+            "startFrame": clip.start_frame,
+            "endFrame": clip.end_frame(),
+            "words": slice,
+        }));
+    }
+
+    let mut body = Map::new();
+    body.insert("fps".to_string(), json!(fps));
+    body.insert("timing".to_string(), json!("projectFrames"));
+    body.insert("wordFormat".to_string(), json!(["text", "start", "end"]));
+    body.insert("clips".to_string(), Value::Array(clips_out));
+    if total_words > TRANSCRIPT_WORD_CAP {
+        body.insert("totalWords".to_string(), json!(total_words));
+        if let Some(end) = last_end {
+            body.insert("nextStartFrame".to_string(), json!(end));
+            body.insert(
+                "wordsNote".to_string(),
+                json!(format!(
+                    "First {TRANSCRIPT_WORD_CAP} of {total_words} words. Continue with startFrame = nextStartFrame."
+                )),
+            );
+        }
+    }
+    if !skipped.is_empty() {
+        body.insert("skipped".to_string(), Value::Array(skipped));
+    }
 
     // get_transcript is NOT rounded (integer frames).
-    match serde_json::to_string(&body) {
+    match serde_json::to_string(&Value::Object(body)) {
         Ok(s) => ToolResult::ok(s),
         Err(_) => ToolResult::error("Failed to serialize transcript"),
     }

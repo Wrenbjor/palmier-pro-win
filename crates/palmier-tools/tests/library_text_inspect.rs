@@ -145,15 +145,20 @@ fn add_texts_bad_color_rejected() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// E7-S8 — add_captions (stub until Epic 10)
+// E7-S8 / E10-S7 — add_captions
 // ════════════════════════════════════════════════════════════════════════════
+// Full happy-path + cache-vs-bypass coverage lives in caption_tools.rs (it needs the
+// transcript-cache seam). Here: the arg-validation rejections that need no backend.
 
 #[test]
-fn add_captions_reports_not_available() {
+fn add_captions_no_source_reports_no_audio() {
+    // Empty timeline → auto-detect finds no captionable clips → CaptionError::NoSource
+    // ("No audio clips to caption.") with no agent undo step.
     let exec = ToolExecutor::new();
     let (err, text) = call(&exec, "add_captions", json!({}));
-    assert!(err);
-    assert!(text.contains("not yet available"), "{text}");
+    assert!(err, "{text}");
+    assert!(text.contains("No audio clips to caption."), "{text}");
+    assert_eq!(agent_steps_timeline(&exec), 0, "no undo step on a no-source run");
 }
 
 #[test]
