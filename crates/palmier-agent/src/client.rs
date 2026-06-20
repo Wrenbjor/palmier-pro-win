@@ -186,6 +186,51 @@ pub fn select_client(api_key: Option<&str>, is_signed_in: bool) -> SelectedBacke
     }
 }
 
+/// Construct a live [`AgentClient`] for the chosen backend (reference
+/// `selectClient` → a concrete client). This is the bridge from the pure
+/// [`select_client`] decision to a usable transport:
+/// - [`SelectedBackend::Anthropic`] → a real
+///   [`AnthropicClient`](crate::anthropic_client::AnthropicClient) (BYOK, direct
+///   `api.anthropic.com`, E8-S3).
+/// - [`SelectedBackend::Palmier`] → **deferred to E8-S6** (the Convex-proxied
+///   transport); until then this returns [`AgentClientError::Upstream`] so the
+///   caller surfaces the proxied path as not-yet-wired rather than silently
+///   selecting nothing.
+/// - [`SelectedBackend::None`] → [`AgentClientError::Upstream`] carrying
+///   [`NO_BACKEND_MESSAGE`].
+///
+/// # Errors
+/// - [`AgentClientError::Upstream`] when no backend is available, the proxied path
+///   is selected (E8-S6 not yet landed), or the `reqwest`/rustls client fails to
+///   build.
+pub fn build_client(backend: SelectedBackend) -> Result<Box<dyn AgentClient>, AgentClientError> {
+    match backend {
+        SelectedBackend::Anthropic { api_key } => {
+            let client = crate::anthropic_client::AnthropicClient::new(api_key)?;
+            Ok(Box::new(client))
+        }
+        SelectedBackend::Palmier => Err(AgentClientError::Upstream(
+            "Convex-proxied transport is not yet available (E8-S6).".to_string(),
+        )),
+        SelectedBackend::None => Err(AgentClientError::Upstream(NO_BACKEND_MESSAGE.to_string())),
+    }
+}
+
+/// Select and construct the live [`AgentClient`] in one step (reference
+/// `selectClient`): runs [`select_client`] then [`build_client`]. The BYOK path
+/// (key present) yields a real
+/// [`AnthropicClient`](crate::anthropic_client::AnthropicClient).
+///
+/// # Errors
+/// Propagates [`build_client`]'s errors (no backend / proxied-not-wired / client
+/// build failure).
+pub fn select_and_build_client(
+    api_key: Option<&str>,
+    is_signed_in: bool,
+) -> Result<Box<dyn AgentClient>, AgentClientError> {
+    build_client(select_client(api_key, is_signed_in))
+}
+
 /// Whether a turn may be streamed at all (reference `canStream =
 /// has_api_key || (is_signed_in && has_credits)`; `agent-panel.md` lines 51-52).
 ///
@@ -305,6 +350,46 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn build_client_byok_key_yields_a_real_client() {
+        // A present key builds a concrete AnthropicClient (no network at build time).
+        let client = build_client(SelectedBackend::Anthropic {
+            api_key: "sk-ant-xyz".to_string(),
+        });
+        assert!(client.is_ok(), "BYOK key must build a live client");
+    }
+
+    #[test]
+    fn build_client_palmier_is_not_yet_wired() {
+        // E8-S6 lands the proxied transport; until then this is an explicit error,
+        // not a silent no-op. (Box<dyn AgentClient> isn't Debug, so match rather
+        // than unwrap_err.)
+        match build_client(SelectedBackend::Palmier) {
+            Err(AgentClientError::Upstream(_)) => {}
+            Ok(_) => panic!("proxied path must not build a client yet (E8-S6)"),
+            Err(other) => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn build_client_none_carries_no_backend_message() {
+        match build_client(SelectedBackend::None) {
+            Err(e) => assert_eq!(e, AgentClientError::Upstream(NO_BACKEND_MESSAGE.to_string())),
+            Ok(_) => panic!("no backend must not build a client"),
+        }
+    }
+
+    #[test]
+    fn select_and_build_prefers_byok() {
+        // A key present + signed in → the BYOK client is built (key wins).
+        assert!(select_and_build_client(Some("sk-ant-xyz"), true).is_ok());
+        // No key, not signed in → no-backend error.
+        match select_and_build_client(None, false) {
+            Err(e) => assert_eq!(e, AgentClientError::Upstream(NO_BACKEND_MESSAGE.to_string())),
+            Ok(_) => panic!("no backend must not build a client"),
+        }
     }
 
     #[tokio::test]
