@@ -415,7 +415,7 @@ impl<S> History<S> {
         work: impl FnOnce(&mut S) -> R,
     ) -> R
     where
-        S: Clone + PartialEq + 'static,
+        S: Clone + PartialEq + Send + 'static,
     {
         self.with_swap(Origin::User, name, state, work)
     }
@@ -430,7 +430,7 @@ impl<S> History<S> {
         work: impl FnOnce(&mut S) -> R,
     ) -> R
     where
-        S: Clone + PartialEq + 'static,
+        S: Clone + PartialEq + Send + 'static,
     {
         self.with_swap(Origin::Agent, name, state, work)
     }
@@ -443,7 +443,7 @@ impl<S> History<S> {
         work: impl FnOnce(&mut S) -> R,
     ) -> R
     where
-        S: Clone + PartialEq + 'static,
+        S: Clone + PartialEq + Send + 'static,
     {
         let name = name.into();
         // Nested: just run the work; the open group will register one entry from

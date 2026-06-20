@@ -8,6 +8,12 @@ publish.workspace = true
 
 [dependencies]
 palmier-model = { path = "../palmier-model" }
+# The edit engines (Overwrite/Ripple/Snap) + named-undo history the mutating tool
+# bodies call (E7-S6..S10). Read tools (this story, E7-S2/S3) don't mutate, but the
+# executor owns the editor handle (EditorState = MediaLibrary + History<Timeline>),
+# so the deps land now for the dispatch seam.
+palmier-edit = { path = "../palmier-edit" }
+palmier-history = { path = "../palmier-history" }
 serde_json.workspace = true
 # `uuidRegex` literal port — the same `[0-9A-Fa-f]{8}-…` pattern the reference
 # `ToolExecutor+ShortId.swift` uses to find known UUIDs in result text and rewrite

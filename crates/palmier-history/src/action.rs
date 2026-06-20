@@ -56,15 +56,21 @@ impl<S: Clone> Reversible<S> for StateSwap<S> {
 /// touch only the affected clips rather than snapshot the whole state — e.g.
 /// `ClosureSwap::new(move |t| set_clip(t, &after), move |t| set_clip(t, &before))`.
 pub struct ClosureSwap<S> {
-    apply: Box<dyn Fn(&mut S)>,
-    revert: Box<dyn Fn(&mut S)>,
+    apply: Box<dyn Fn(&mut S) + Send>,
+    revert: Box<dyn Fn(&mut S) + Send>,
 }
 
 impl<S> ClosureSwap<S> {
     /// Build from an `apply` (redo) closure and a `revert` (undo) closure.
+    ///
+    /// The closures are `Send` so a `History` (and any `EditorState`/executor
+    /// owning one) can be shared across threads behind a `Mutex` — required by the
+    /// Epic 7 MCP server (axum's multi-threaded runtime serializes tool calls
+    /// through one `Mutex<EditorState>`, which needs the guarded state to be
+    /// `Send`).
     pub fn new(
-        apply: impl Fn(&mut S) + 'static,
-        revert: impl Fn(&mut S) + 'static,
+        apply: impl Fn(&mut S) + Send + 'static,
+        revert: impl Fn(&mut S) + Send + 'static,
     ) -> Self {
         ClosureSwap {
             apply: Box::new(apply),
@@ -90,13 +96,14 @@ impl<S> Reversible<S> for ClosureSwap<S> {
 pub struct NamedAction<S> {
     name: String,
     /// Ops in the order they were applied. Coalesced groups hold several; a plain
-    /// action holds one.
-    ops: Vec<Box<dyn Reversible<S>>>,
+    /// action holds one. The boxed ops are `+ Send` so a `History` can live behind
+    /// a `Mutex` shared across threads (the Epic 7 MCP server requirement).
+    ops: Vec<Box<dyn Reversible<S> + Send>>,
 }
 
 impl<S> NamedAction<S> {
     /// A named action wrapping a single reversible op.
-    pub fn new(name: impl Into<String>, op: impl Reversible<S> + 'static) -> Self {
+    pub fn new(name: impl Into<String>, op: impl Reversible<S> + Send + 'static) -> Self {
         NamedAction {
             name: name.into(),
             ops: vec![Box::new(op)],
@@ -104,7 +111,7 @@ impl<S> NamedAction<S> {
     }
 
     /// A named action from an already-boxed op (lets callers erase the type).
-    pub fn from_boxed(name: impl Into<String>, op: Box<dyn Reversible<S>>) -> Self {
+    pub fn from_boxed(name: impl Into<String>, op: Box<dyn Reversible<S> + Send>) -> Self {
         NamedAction {
             name: name.into(),
             ops: vec![op],
