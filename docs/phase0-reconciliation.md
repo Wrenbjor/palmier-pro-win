@@ -95,6 +95,13 @@ From `docs/reference/*.md` — the load-bearing specifics downstream stories mus
 2. **GPLv3 clean-room contradiction** — porting the agent prompt verbatim + bundling reference fonts is
    *not* clean-room; the result inherits GPLv3. Recorded as `signals/gpl-cleanroom-contradiction`.
 3. ~~**wgpu→WebView spike** (#23)~~ **RESOLVED** — native-composited-surface mechanism chosen, SM-2 met zero-copy, wgpu 27.x pinned; one WRY-integration sub-spike deferred to E5-S8 start. See #23.
+4. **Profanity censoring word-list is clean-room (E10-S3)** — the reference uses Apple `SpeechTranscriber`'s
+   `.etiquetteReplacements`, whose word/replacement set lives inside a **closed Apple framework and is
+   unobservable** from `../palmier-pro`. The port ships a documented **clean-room seed list** with bracketed
+   replacement (`damn`→`[damn]`), overridable via `censor_*_with`. NOT parity-exact by definition — if exact
+   parity to Apple's censoring is ever required, the list must be sourced/expanded. `whisper-rs` has no
+   token-suppression API today, so suppression-at-decode wasn't an option. QA: treat censored-word coverage
+   as best-effort, not reference-matched.
 
 ## Spike & build-time resolutions (binding, recorded post-Phase-0)
 
