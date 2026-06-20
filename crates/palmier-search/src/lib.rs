@@ -42,6 +42,7 @@
 //! matching [`spec::SAMPLER_VERSION`]) so it tests without a decoder.
 
 pub mod embedder;
+pub mod indexer;
 pub mod manifest;
 pub mod model_loader;
 pub mod preprocess;
@@ -75,6 +76,9 @@ pub mod spec {
     pub const RELATIVE_CUTOFF: f32 = 0.85;
 }
 
+pub use indexer::{
+    ExportYield, FrameEmbedder, Indexed, NoExportYield, VisualIndexer,
+};
 pub use sampler::{
     candidate_times, effective_interval, Frame, FrameSampler, LumaGrid, Options, SampleError,
     SamplerState, SAMPLER_VERSION,

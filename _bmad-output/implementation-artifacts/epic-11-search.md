@@ -194,6 +194,15 @@ sampling cadence", §"macOS/Apple APIs to replace" (`AVAssetImageGenerator`→FF
 ---
 
 ### E11-S4 — VisualIndexer (sampler → embedder → store), idempotent
+> **Status:** DONE (story/E11-S4-visualindexer) — `palmier_search::VisualIndexer` drives
+> FrameSampler → embedder → EmbeddingStore. Parity: first shot starts at 0, `shot_end` = next
+> shot's start (or `duration` for the last), still = single `(0,0,0)` row, idempotent `needs_index`
+> via `EmbeddingStore::is_current`. The embed step is abstracted behind a **`FrameEmbedder` trait**
+> so the indexing logic builds + tests by DEFAULT with a mock unit-vector (no ort/weights); under
+> `--features ort` a blanket impl adapts the real `VisualEmbedder`. The `wait_while_export_active`
+> hook is an injected `ExportYield` trait (default `NoExportYield` no-op) for E11-S6 to replace.
+> `palmier_search::{VisualIndexer, FrameEmbedder, ExportYield, NoExportYield, Indexed}`.
+
 **Intent:** As the coordinator, I want to turn one asset into a persisted `AssetIndex`, idempotently per
 file/model/sampler identity, so re-indexing only happens when something actually changed.
 
