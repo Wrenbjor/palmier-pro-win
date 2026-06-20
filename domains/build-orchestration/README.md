@@ -34,12 +34,16 @@ acceptance + governing reference doc; milestones M1–M5; spikes S-1 (wgpu→Web
 `_bmad-output/implementation-artifacts/` — **135 stories**, each with crates, acceptance, dependencies,
 milestone, and a parallel-safe flag; sprint plan has the dependency DAG + M1–M5 + parallel-batch waves.
 
-**Phase 4 — Build: STARTING.** Toolchain unblocked (MSVC works via `scripts/with-msvc.ps1`; pnpm installed).
-Order: (1) **Scaffold** the 17-crate Cargo workspace + Vite/React `src-ui` + Tauri 2 (root of the DAG —
-must land on main before parallel dev); build-verify through the wrapper. (2) **Spike S-1** (wgpu→WebView
-texture presentation — gates Epic 5). (3) **Delegate** the M1 first-wave parallel-safe stories to worker
-agents in isolated worktrees per the worker contract (each returns a verified PR; orchestrator merges).
-Gate per story: acceptance criteria met + local verify green before merge.
+**Phase 4 — Build: IN PROGRESS (M1).** Workspace **scaffold merged to main** (`d7b36c0`) — 18 crates
+compile + test green, `src-ui` builds (independently verified). Toolchain via `scripts/with-msvc.ps1`.
+
+Delegating per `sprint-plan.md` §4. **Wave 0 (spikes)** + **Wave 1 (foundation)** dispatching now as
+isolated-worktree workers:
+- **S-1** (wgpu→WebView presentation — BLOCKER for Epic 5; isolated in `spikes/` so it doesn't touch prod crates)
+- **E2-S1** palmier-model core types · **E1-S1** palmier-tauri runtime+boot · **E3-S8** palmier-history ·
+  **E4-S2** palmier-media cache — disjoint crates, parallel-safe.
+Each worker: implement → build-verify via the MSVC wrapper → push `story/<id>` branch → orchestrator
+verifies + merges (model-touching stories serialize through palmier-model per §5.1). Then Wave 2+.
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
