@@ -181,6 +181,18 @@ profanity censoring, so transcription matches the reference's language/etiquette
 
 ### E10-S4 — TranscriptCache (disk + memory) with FOUNDATION cache key + windowed filter
 
+> **Status:** DONE (story/E10-S4-transcript-cache) — `cache.rs`: tokio-friendly
+> `TranscriptCache` singleton (`tokio::sync::OnceCell` + `Mutex` memory tier) with
+> content key `sha256(first-N-MB(content) + len + model_id + language)` (ruling #19,
+> **deviates** from the reference `path|mtime|size`), **N = 16 MiB** hashing cutoff
+> (+ exact byte length mixed in so same-prefix/different-length files key apart);
+> verbatim windowed `filter` overlap predicates; memory cap 4 / clear-all-on-overflow
+> (not LRU); JSON disk tier at `%LOCALAPPDATA%\PalmierProWin\Transcripts\<key>.json`
+> (`dirs::cache_dir()`). 7 new unit tests incl. windowed-no-re-transcribe + disk
+> round-trip + model/lang/content key invalidation; 11/11 crate tests + full workspace
+> green. Cargo.toml additive: promoted `serde_json` to a dep; added `sha2`, `dirs`,
+> `tokio` (workspace `sha2`/`tokio` pins added).
+
 **Intent:** As a dev agent, I want a transcript cache keyed by content+model+language that stores only
 full transcripts and filters windowed requests, so repeated transcribe calls are fast and never diverge.
 

@@ -66,3 +66,10 @@ trash = "5"
 # `uuidRegex` literal port that rewrites known UUIDs in tool result text to their
 # short prefix. Owned by `palmier-tools`; declared here to pin the version.
 regex = "1"
+# SHA-256 for the transcript-cache content key (E10-S4, FOUNDATION §6.9 / ruling #19:
+# `sha256(file_content)+model+language`). Pure-Rust; pinned here for the workspace.
+sha2 = "0.10"
+# Async runtime primitives. E10-S4 uses `tokio::sync::OnceCell` for the tokio-friendly
+# `TranscriptCache.shared` singleton (reference `actor … .shared`). Heavy runtime
+# features come per-story; the cache only needs `sync`.
+tokio = { version = "1", features = ["sync"] }

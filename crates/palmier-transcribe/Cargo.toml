@@ -10,10 +10,13 @@ publish.workspace = true
 palmier-model = { path = "../palmier-model" }
 # E10-S1: serde derives on the result model (the JSON disk cache in E10-S4 consumes them).
 serde.workspace = true
+# E10-S4: JSON disk cache (promoted from dev-dependency — the disk tier serializes
+# `TranscriptionResult` to `<caches>/.../Transcripts/<key>.json`).
+serde_json.workspace = true
+# E10-S4 transcript cache: content-hash key (sha2), cache dir resolution (dirs),
+# and the tokio-friendly `TranscriptCache.shared` singleton (tokio `OnceCell`).
+sha2.workspace = true
+dirs.workspace = true
+tokio.workspace = true
 
 # Heavy deps (whisper-rs, tokenizers) come per-story — see FOUNDATION §2 / §6.9.
-
-[dev-dependencies]
-# Round-trips the result model in unit tests; the real disk cache (E10-S4) will
-# promote this to a runtime dep.
-serde_json.workspace = true
