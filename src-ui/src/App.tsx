@@ -1,30 +1,51 @@
-// Skeleton app shell. The real Home / Editor / Settings surfaces land per
-// Epic 1 (epic-01-app-shell.md) under src/app, src/home, src/editor, etc.
-import { useEffect } from "react";
+// App-shell window router (E1-S4). Every Palmier Pro window loads this same bundle; the
+// surface to mount is resolved from the window label / hash (`app/route.ts`):
+//   home → Home (project browser)         project/<id> → Project (editor shell)
+//   settings → Settings (5 tabs)          help → Help (Shortcuts + MCP)
+//   feedback → Feedback dialog
+//
+// The main-menu `menu://<id>` event listeners (E1-S3) are registered here for windows
+// that consume editor-action events (Home/Project); the window-opening Help/Settings/
+// Feedback items are handled natively in Rust, so those surfaces don't need listeners.
+import { useEffect, useMemo } from "react";
 import { registerMenuHandlers } from "./app/menu-events";
+import { resolveSurface } from "./app/route";
+import Home from "./home/Home";
+import Project from "./app/Project";
+import Settings from "./settings/Settings";
+import Help from "./settings/Help";
+import Feedback from "./settings/Feedback";
 
 export default function App() {
-  // E1-S3 — subscribe to the main-menu `menu://<id>` events. Until each owning
-  // story lands its real handler, these are logged no-ops, which still proves
-  // every menu binding is invokable (the event fires and is consumed here).
+  const surface = useMemo(() => resolveSurface(), []);
+
+  // Subscribe to the main-menu events only on the surfaces that act on editor actions.
   useEffect(() => {
+    if (surface.kind !== "home" && surface.kind !== "project") return;
     let unlisten: (() => void) | undefined;
     registerMenuHandlers()
       .then((un) => {
         unlisten = un;
       })
       .catch((err) => {
-        // Outside a Tauri webview (e.g. plain `vite dev`) the event API is
-        // unavailable; that is fine for the skeleton shell.
+        // Outside a Tauri webview (plain `vite dev`) the event API is unavailable.
         // eslint-disable-next-line no-console
         console.debug("[menu] handler registration skipped:", err);
       });
     return () => unlisten?.();
-  }, []);
+  }, [surface.kind]);
 
-  return (
-    <main className="flex min-h-screen items-center justify-center">
-      <h1 className="text-2xl font-semibold">Palmier Pro — workspace skeleton</h1>
-    </main>
-  );
+  switch (surface.kind) {
+    case "settings":
+      return <Settings />;
+    case "help":
+      return <Help />;
+    case "feedback":
+      return <Feedback />;
+    case "project":
+      return <Project projectId={surface.projectId} />;
+    case "home":
+    default:
+      return <Home />;
+  }
 }

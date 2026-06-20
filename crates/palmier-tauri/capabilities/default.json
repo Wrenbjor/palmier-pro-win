@@ -1,0 +1,24 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Core + window-state + updater permissions for every Palmier Pro window (Home, Project, Settings, Help, Feedback). E1-S4/E1-S9/E1-S10.",
+  "windows": [
+    "home",
+    "settings",
+    "help",
+    "feedback",
+    "project/*"
+  ],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:webview:default",
+    "core:webview:allow-create-webview-window",
+    "core:app:default",
+    "window-state:default"
+  ]
+}

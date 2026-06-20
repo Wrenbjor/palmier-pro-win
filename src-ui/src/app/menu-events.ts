@@ -16,11 +16,14 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 /// Every menu command id the Rust menu can emit (mirrors `MENU_TABLE` ids in
 /// `menu.rs`). Kept in sync with the Rust side; the parity test there is the
 /// source of truth for the full set.
+// NOTE: only the **Event-dispatched** menu ids appear here. Window/app items
+// (Settings, Check for Updates, Help tabs, Feedback, Quit, fullscreen) are handled
+// natively in Rust (`menu.rs` `Dispatch::Native`) and never emit `menu://<id>` — see
+// E1-S4, which gave those items real windows. The set below mirrors the `Dispatch::Event`
+// rows in `crates/palmier-tauri/src/menu.rs` MENU_TABLE.
 export const MENU_COMMAND_IDS = [
   // Palmier Pro
   "about",
-  "check-for-updates",
-  "settings",
   // File
   "new",
   "open",
@@ -49,9 +52,6 @@ export const MENU_COMMAND_IDS = [
   "layout-vertical",
   // Help
   "tutorial",
-  "keyboard-shortcuts",
-  "mcp-instructions",
-  "send-feedback",
 ] as const;
 
 export type MenuCommandId = (typeof MENU_COMMAND_IDS)[number];

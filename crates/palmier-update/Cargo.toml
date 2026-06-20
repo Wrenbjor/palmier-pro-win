@@ -7,4 +7,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-# Tauri updater glue deps come per-story — see FOUNDATION §2 / §8.4, E1-S10.
+# E1-S10: the crate owns the gate + config + serializable event/result types only
+# (no Tauri runtime — keeps this UAC-sensitive crate's test binary light; the actual
+# `tauri-plugin-updater` plugin call lives in `palmier-tauri`). See FOUNDATION §2 / §8.4.
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
