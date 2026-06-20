@@ -68,7 +68,7 @@ pub const MENU_TABLE: &[MenuRow] = &[
     // ── Palmier Pro ───────────────────────────────────────────────────────────
     MenuRow { menu: "app", id: "about",             label: "About Palmier Pro",  accelerator: None,                 dispatch: Dispatch::Event },
     MenuRow { menu: "app", id: "check-for-updates", label: "Check for Updates…", accelerator: None,                 dispatch: Dispatch::Native },
-    MenuRow { menu: "app", id: "settings",          label: "Settings…",          accelerator: Some("CmdOrCtrl+,"),  dispatch: Dispatch::Event },
+    MenuRow { menu: "app", id: "settings",          label: "Settings…",          accelerator: Some("CmdOrCtrl+,"),  dispatch: Dispatch::Native },
     MenuRow { menu: "app", id: "quit",              label: "Quit Palmier Pro",   accelerator: Some("CmdOrCtrl+Q"),  dispatch: Dispatch::Native },
     // ── File ──────────────────────────────────────────────────────────────────
     MenuRow { menu: "file", id: "new",          label: "New",          accelerator: Some("CmdOrCtrl+N"),       dispatch: Dispatch::Event },
@@ -99,9 +99,9 @@ pub const MENU_TABLE: &[MenuRow] = &[
     MenuRow { menu: "view", id: "toggle-fullscreen",      label: "Enter Full Screen",      accelerator: Some("F11"),             dispatch: Dispatch::Native },
     // ── Help ──────────────────────────────────────────────────────────────────
     MenuRow { menu: "help", id: "tutorial",           label: "Tutorial",           accelerator: None,      dispatch: Dispatch::Event },
-    MenuRow { menu: "help", id: "keyboard-shortcuts", label: "Keyboard Shortcuts", accelerator: Some("?"), dispatch: Dispatch::Event },
-    MenuRow { menu: "help", id: "mcp-instructions",   label: "MCP Instructions",   accelerator: None,      dispatch: Dispatch::Event },
-    MenuRow { menu: "help", id: "send-feedback",      label: "Send Feedback…",     accelerator: None,      dispatch: Dispatch::Event },
+    MenuRow { menu: "help", id: "keyboard-shortcuts", label: "Keyboard Shortcuts", accelerator: Some("?"), dispatch: Dispatch::Native },
+    MenuRow { menu: "help", id: "mcp-instructions",   label: "MCP Instructions",   accelerator: None,      dispatch: Dispatch::Native },
+    MenuRow { menu: "help", id: "send-feedback",      label: "Send Feedback…",     accelerator: None,      dispatch: Dispatch::Native },
 ];
 
 /// Look up a row by its command id.
@@ -243,11 +243,33 @@ fn handle_native<R: Runtime>(app: &AppHandle<R>, r: &MenuRow) {
             }
         }
         "check-for-updates" => {
-            // The updater glue is E1-S10 (`palmier-update`). Reserve the call site:
-            // emit a `menu://check-for-updates` event AND log so the binding is
-            // provably invokable now; E1-S10 wires `palmier_update::check_now`.
-            tracing::info!(target: "app", "menu: Check for Updates (updater wiring is E1-S10)");
-            let _ = app.emit("menu://check-for-updates", ());
+            // E1-S10 — run the real Tauri updater check (silently disabled in dev /
+            // unsigned builds). Replaces E1-S3's placeholder event emit.
+            tracing::info!(target: "app", "menu: Check for Updates");
+            crate::update::check_now(app);
+        }
+        "settings" => {
+            tracing::info!(target: "app", "menu: Settings");
+            if let Err(err) = crate::window::open_or_focus(app, crate::window::WindowKind::Settings) {
+                tracing::error!(target: "app", error = %err, "failed to open Settings window");
+            }
+        }
+        "keyboard-shortcuts" | "mcp-instructions" => {
+            // Both Help-menu items open the Help window (it has the Shortcuts + MCP tabs);
+            // the frontend reads the requested tab from the focus event / its own state.
+            tracing::info!(target: "app", menu_id = r.id, "menu: Help");
+            if let Err(err) = crate::window::open_or_focus(app, crate::window::WindowKind::Help) {
+                tracing::error!(target: "app", error = %err, "failed to open Help window");
+            }
+            // Tell the Help webview which tab to select.
+            let tab = if r.id == "mcp-instructions" { "mcp" } else { "shortcuts" };
+            let _ = app.emit("help://select-tab", tab);
+        }
+        "send-feedback" => {
+            tracing::info!(target: "app", "menu: Send Feedback");
+            if let Err(err) = crate::window::open_or_focus(app, crate::window::WindowKind::Feedback) {
+                tracing::error!(target: "app", error = %err, "failed to open Feedback window");
+            }
         }
         other => {
             tracing::warn!(target: "app", menu_id = other, "native menu item with no handler");
@@ -353,12 +375,23 @@ mod tests {
     /// editor-action items are Event (the dispatch contract the frontend relies on).
     #[test]
     fn dispatch_routing_matches_contract() {
-        // App/window-scoped items handled in Rust.
-        for id in ["quit", "toggle-fullscreen", "check-for-updates"] {
+        // App/window-scoped items handled in Rust. With E1-S4's windows landed, the
+        // window-opening Help/Settings/Feedback items are now Native too (they open a
+        // real WebviewWindow directly), matching the reference responder-chain handlers.
+        for id in [
+            "quit",
+            "toggle-fullscreen",
+            "check-for-updates",
+            "settings",
+            "keyboard-shortcuts",
+            "mcp-instructions",
+            "send-feedback",
+        ] {
             assert_eq!(row(id).unwrap().dispatch, Dispatch::Native, "{id} should be Native");
         }
-        // Editor-action + Help items go to the frontend via events.
-        for id in ["undo", "split", "trim-start", "delete", "settings", "send-feedback"] {
+        // Editor-action items still go to the frontend via events (their owning epic
+        // lands the real handler later).
+        for id in ["undo", "split", "trim-start", "delete", "about", "tutorial"] {
             assert_eq!(row(id).unwrap().dispatch, Dispatch::Event, "{id} should be Event");
         }
     }

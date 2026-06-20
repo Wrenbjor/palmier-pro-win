@@ -66,13 +66,26 @@ impl Settings {
     }
 
     /// Serialize to pretty JSON for persistence.
-    ///
-    /// `allow(dead_code)`: the write/persist side of settings (toggling prefs in
-    /// the Settings UI) lands in E1-S9; E1-S1 only reads. Kept + unit-tested now
-    /// so the round-trip contract is locked.
-    #[allow(dead_code)]
     pub fn to_json(&self) -> Result<String, serde_json::Error> {
         serde_json::to_string_pretty(self)
+    }
+
+    /// Persist to `path` **atomically** (write a sibling temp file, then rename over the
+    /// target) so a crash mid-write never leaves a truncated `settings.json` (E1-S9: the
+    /// General-tab toggles call this). Creates the parent dir if missing.
+    pub fn write_to(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let json = self
+            .to_json()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        // Temp file in the same dir so the rename is atomic (same filesystem).
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json.as_bytes())?;
+        std::fs::rename(&tmp, path)?;
+        tracing::debug!(target: "app", path = %path.display(), "settings.json written");
+        Ok(())
     }
 
     /// Read settings from `path`. A missing file ⇒ defaults (fresh install). A
@@ -202,5 +215,27 @@ mod tests {
             "this/path/definitely/does/not/exist/settings.json",
         );
         assert_eq!(Settings::read_from(p), Settings::default());
+    }
+
+    #[test]
+    fn write_then_read_round_trips_atomically() {
+        // E1-S9: a General-tab toggle persists via write_to; read_from must see it.
+        let dir = std::env::temp_dir().join(format!(
+            "palmier-settings-test-{}",
+            std::process::id()
+        ));
+        let path = dir.join("settings.json");
+        let mut s = Settings::default();
+        s.notifications_enabled = false;
+        s.telemetry_enabled = false;
+        s.has_seen_welcome = true;
+        s.write_to(&path).expect("atomic write succeeds");
+
+        let back = Settings::read_from(&path);
+        assert_eq!(back, s);
+        // No stale temp file left behind by the atomic rename.
+        assert!(!path.with_extension("json.tmp").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

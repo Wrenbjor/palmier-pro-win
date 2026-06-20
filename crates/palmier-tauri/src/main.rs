@@ -28,10 +28,17 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod boot;
+mod commands;
 mod menu;
 mod settings;
+mod update;
+mod window;
+
+use std::sync::Mutex;
 
 use tauri::Manager;
+
+use commands::SettingsState;
 
 /// The launch-time settings snapshot, stored in Tauri managed state so commands
 /// (E1-S9 Settings UI) can read the booted prefs without re-reading the file.
@@ -45,6 +52,31 @@ fn main() {
     let boot_ctx = boot::run_sync_boot();
 
     tauri::Builder::default()
+        // E1-S4 — persist each window's size+position per window label, replacing the
+        // reference frame-autosave names (the label is the state key, so Settings/Help
+        // cannot collide — settings-account-app.md autosave gotcha).
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        // E1-S4/E1-S9/E1-S10 — the command seam the Home/Settings/Help/Feedback surfaces
+        // and the menu router call via `invoke`.
+        .invoke_handler(tauri::generate_handler![
+            commands::get_settings,
+            commands::set_notifications_enabled,
+            commands::set_telemetry_enabled,
+            commands::set_mcp_enabled,
+            commands::dismiss_welcome,
+            commands::get_account,
+            commands::has_anthropic_key,
+            commands::save_anthropic_key,
+            commands::delete_anthropic_key,
+            commands::get_mcp_status,
+            commands::open_settings,
+            commands::open_help,
+            commands::open_feedback,
+            commands::open_project,
+            commands::show_home,
+            commands::check_for_updates,
+            commands::send_feedback,
+        ])
         .setup(move |app| {
             // Move the long-lived boot handles into Tauri managed state. The
             // telemetry handle MUST live for the whole process (dropping it stops
@@ -53,6 +85,9 @@ fn main() {
             app.manage(boot_ctx.telemetry);
             app.manage(boot_ctx.auth);
             app.manage(AppSettings(boot_ctx.settings.clone()));
+            // E1-S9 — the live (mutable) settings the General-tab toggles mutate +
+            // persist, seeded from the boot snapshot.
+            app.manage(SettingsState(Mutex::new(boot_ctx.settings.clone())));
 
             // E1-S3 — build + install the full main menu (Palmier Pro / File /
             // Edit / View / Help) with the reference Windows/Linux accelerators
@@ -80,6 +115,11 @@ fn main() {
                     "boot 7/7: Home window 'home' not found in config"
                 );
             }
+
+            // E1-S10 — touch the updater (reference `AppDelegate` touches
+            // `Updater.shared`). Runs a real check only when a signed feed is
+            // configured; a dev build with no feed stays completely silent.
+            update::check_on_boot(&app.handle().clone());
 
             tracing::info!(
                 target: "app",

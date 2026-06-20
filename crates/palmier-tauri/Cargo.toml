@@ -16,11 +16,22 @@ path = "src/main.rs"
 # Windows app manifest (asInvoker execution level — see build.rs + the UAC signal).
 tauri-build = { version = "2", features = [] }
 
+[features]
+# E1-S10: enable the real `tauri-plugin-updater` network check. OFF by default — the
+# plugin needs a baked Ed25519 pubkey in tauri.conf.json, which dev/CI builds lack; with
+# the feature off the updater glue resolves to the silent-disable path (Sparkle parity).
+# A release build that ships a signed feed turns this on.
+updater-plugin = ["dep:tauri-plugin-updater"]
+
 [dependencies]
 # E1-S1: the real Tauri 2 runtime + the boot-sequence support crates.
 tauri = { version = "2", features = [] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+# E1-S4: per-window size/position persistence (replaces the reference frame-autosave).
+tauri-plugin-window-state = "2"
+# E1-S10: real updater plugin, only compiled with the `updater-plugin` feature.
+tauri-plugin-updater = { version = "2", optional = true }
 # Settings/log dir resolution (%APPDATA%\PalmierProWin / ~/.config/palmier-pro).
 dirs = "5"
 # Boot-path tracing macros. The tracing **subscriber** is owned entirely by
