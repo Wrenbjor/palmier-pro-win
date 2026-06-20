@@ -37,10 +37,25 @@ const LOCALES: Locale[] = [
 
 const FONTS = ["Inter", "Arial", "Helvetica", "Georgia", "Courier New"];
 
-/** Center-snap threshold (placement snaps to 0.5 within this distance). */
-const SNAP_THRESHOLD = 0.04;
+// AppTheme.Caption constants (parity with crates/palmier-text caption_theme +
+// docs/reference/transcription.md §Constants). Carried verbatim so the form's
+// placement/style bounds match the engine.
+const CAPTION = {
+  defaultFontSize: 48,
+  minFontSize: 12,
+  maxFontSize: 300,
+  minPosition: 0,
+  maxPosition: 1,
+  centerSnapValue: 0.5,
+  centerSnapThreshold: 0.02,
+  defaultCenter: { x: 0.5, y: 0.9 },
+} as const;
+
+/** Center-snap: placement snaps to `centerSnapValue` within `centerSnapThreshold`. */
 function snapToCenter(v: number): number {
-  return Math.abs(v - 0.5) <= SNAP_THRESHOLD ? 0.5 : v;
+  return Math.abs(v - CAPTION.centerSnapValue) <= CAPTION.centerSnapThreshold
+    ? CAPTION.centerSnapValue
+    : v;
 }
 
 /** Mirrors the Rust `CaptionRequest` the Epic-10 `generate_captions` command takes. */
@@ -62,14 +77,14 @@ export function CaptionsTab() {
   const [source, setSource] = useState<"auto" | "track">("auto");
   const [language, setLanguage] = useState("auto");
   const [font, setFont] = useState(FONTS[0]);
-  const [size, setSize] = useState(28);
+  const [size, setSize] = useState<number>(CAPTION.defaultFontSize);
   const [color, setColor] = useState("#ffffff");
   const [background, setBackground] = useState("#000000");
   // case = auto/upper/lower only (ruling #18 — no title-case).
   const [caseMode, setCaseMode] = useState<"auto" | "upper" | "lower">("auto");
   const [censor, setCensor] = useState(false);
-  const [centerX, setCenterX] = useState(0.5);
-  const [centerY, setCenterY] = useState(0.85);
+  const [centerX, setCenterX] = useState<number>(CAPTION.defaultCenter.x);
+  const [centerY, setCenterY] = useState<number>(CAPTION.defaultCenter.y);
 
   const request: CaptionRequest = useMemo(
     () => ({
@@ -81,14 +96,15 @@ export function CaptionsTab() {
     [source, language, font, size, color, background, caseMode, censor, centerX, centerY],
   );
 
-  // Form is valid when size is sane and placement is within the frame.
+  // Form is valid when size is within the AppTheme.Caption clamp and placement is
+  // within the normalized frame `[minPosition, maxPosition]`.
   const valid =
-    size >= 8 &&
-    size <= 200 &&
-    centerX >= 0 &&
-    centerX <= 1 &&
-    centerY >= 0 &&
-    centerY <= 1;
+    size >= CAPTION.minFontSize &&
+    size <= CAPTION.maxFontSize &&
+    centerX >= CAPTION.minPosition &&
+    centerX <= CAPTION.maxPosition &&
+    centerY >= CAPTION.minPosition &&
+    centerY <= CAPTION.maxPosition;
 
   const onGenerate = () => {
     // TODO(E10): await invoke('generate_captions', { request }); real CaptionBuilder.
@@ -144,8 +160,8 @@ export function CaptionsTab() {
       <Field label={`Size (${size}px)`}>
         <input
           type="range"
-          min={8}
-          max={200}
+          min={CAPTION.minFontSize}
+          max={CAPTION.maxFontSize}
           value={size}
           onChange={(e) => setSize(Number(e.target.value))}
         />
@@ -200,21 +216,25 @@ export function CaptionsTab() {
 
       <SectionLabel>Placement</SectionLabel>
 
-      <Field label={`Center X (${centerX.toFixed(2)}${centerX === 0.5 ? " · snapped" : ""})`}>
+      <Field
+        label={`Center X (${centerX.toFixed(2)}${centerX === CAPTION.centerSnapValue ? " · snapped" : ""})`}
+      >
         <input
           type="range"
-          min={0}
-          max={1}
+          min={CAPTION.minPosition}
+          max={CAPTION.maxPosition}
           step={0.01}
           value={centerX}
           onChange={(e) => setCenterX(snapToCenter(Number(e.target.value)))}
         />
       </Field>
-      <Field label={`Center Y (${centerY.toFixed(2)}${centerY === 0.5 ? " · snapped" : ""})`}>
+      <Field
+        label={`Center Y (${centerY.toFixed(2)}${centerY === CAPTION.centerSnapValue ? " · snapped" : ""})`}
+      >
         <input
           type="range"
-          min={0}
-          max={1}
+          min={CAPTION.minPosition}
+          max={CAPTION.maxPosition}
           step={0.01}
           value={centerY}
           onChange={(e) => setCenterY(snapToCenter(Number(e.target.value)))}

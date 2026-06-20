@@ -27,6 +27,38 @@ use unicode_segmentation::UnicodeSegmentation;
 /// orchestration (E10-S6). Re-exported here as the parity constant.
 pub const MIN_DISPLAY_DURATION: f64 = 0.7;
 
+/// The `AppTheme.Caption` constant block (E10-S6). Ported verbatim from the macOS
+/// reference `UI/AppTheme.swift` `enum Caption` + the
+/// `ComponentSize.captionPreviewMaxTextWidthRatio` token. These drive the caption
+/// **style config** (font-size clamps), the **placement** controls (position bounds,
+/// center-snap), and the orchestration's `caption_line_fits` width gate. Carried
+/// here so the algorithm crate that owns caption phrasing also owns its constants
+/// (the frontend Captions tab mirrors these — `src-ui/.../CaptionsTab.tsx`).
+pub mod caption_theme {
+    /// Minimum on-screen duration per phrase, seconds (`AppTheme.Caption.minDisplayDuration`).
+    pub const MIN_DISPLAY_DURATION: f64 = super::MIN_DISPLAY_DURATION;
+    /// Default caption font size, pt (`defaultFontSize`).
+    pub const DEFAULT_FONT_SIZE: f64 = 48.0;
+    /// Minimum caption font size, pt (`minFontSize`).
+    pub const MIN_FONT_SIZE: f64 = 12.0;
+    /// Maximum caption font size, pt (`maxFontSize`).
+    pub const MAX_FONT_SIZE: f64 = 300.0;
+    /// Minimum normalized placement coordinate (`minPosition`).
+    pub const MIN_POSITION: f64 = 0.0;
+    /// Maximum normalized placement coordinate (`maxPosition`).
+    pub const MAX_POSITION: f64 = 1.0;
+    /// The value placement snaps to (`centerSnapValue` — the canvas center axis).
+    pub const CENTER_SNAP_VALUE: f64 = 0.5;
+    /// Snap threshold: placement snaps to [`CENTER_SNAP_VALUE`] within this distance
+    /// (`centerSnapThreshold`).
+    pub const CENTER_SNAP_THRESHOLD: f64 = 0.02;
+    /// Default caption center, normalized `(x, y)` (`defaultCenter` — lower third).
+    pub const DEFAULT_CENTER: (f64, f64) = (0.5, 0.9);
+    /// Caption preview max text-width ratio: a caption line "fits" when its natural
+    /// width is `<= timeline.width * this` (`ComponentSize.captionPreviewMaxTextWidthRatio`).
+    pub const CAPTION_PREVIEW_MAX_TEXT_WIDTH_RATIO: f64 = 0.9;
+}
+
 /// A transcript segment: the raw text plus its `[start, end]` window in seconds.
 ///
 /// The phrase algorithm consumes only these three fields; this is the minimal
