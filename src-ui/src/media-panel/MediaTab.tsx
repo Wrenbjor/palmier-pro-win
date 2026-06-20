@@ -9,15 +9,18 @@ import { MediaGrid } from "./MediaGrid";
 import { SearchResultsPanel } from "./SearchResultsPanel";
 import { IndexStatusPill } from "./IndexStatusPill";
 import { GenerationPanel } from "./GenerationPanel";
+import { secondsToFrame } from "./search";
 import type { MediaPanelController } from "./controller";
 import { useMediaStore, type MediaPanelStore } from "./store";
 
 export interface MediaTabProps {
   store: MediaPanelStore;
   controller: MediaPanelController;
+  /** Timeline fps for moment/spoken tap → `selectMediaAsset(atSourceFrame:)`. */
+  fps?: number;
 }
 
-export function MediaTab({ store, controller }: MediaTabProps) {
+export function MediaTab({ store, controller, fps = 30 }: MediaTabProps) {
   const snapshot = useMediaStore(store, (s) => s.snapshot);
   const currentFolderId = useMediaStore(store, (s) => s.currentFolderId);
   const sort = useMediaStore(store, (s) => s.sort);
@@ -70,10 +73,20 @@ export function MediaTab({ store, controller }: MediaTabProps) {
             store.setFocused(a.id);
           }}
           onSelectMoment={(hit) =>
-            controller.selectMediaAtSource(hit.assetID, hit.shotStart)
+            // previewMoment(atSeconds: range.lowerBound = shotStart) →
+            // selectMediaAsset(atSourceFrame: secondsToFrame(shotStart, fps)).
+            controller.selectMediaAtSource(
+              hit.assetID,
+              secondsToFrame(hit.shotStart, fps),
+            )
           }
           onSelectSpoken={(hit) =>
-            controller.selectMediaAtSource(hit.assetID, hit.start)
+            // previewMoment(atSeconds: range.lowerBound = start) →
+            // selectMediaAsset(atSourceFrame: secondsToFrame(start, fps)).
+            controller.selectMediaAtSource(
+              hit.assetID,
+              secondsToFrame(hit.start, fps),
+            )
           }
         />
       ) : (

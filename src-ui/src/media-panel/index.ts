@@ -78,7 +78,9 @@ export {
   assembleResults,
   momentSearchCandidates,
   scheduleMomentSearch,
-  runMomentSearchStub,
+  runVisualSearch,
+  runSpokenSearch,
+  secondsToFrame,
   formatTimecode,
 } from "./search";
 
