@@ -29,6 +29,12 @@ if (-not $Command -or $Command.Count -eq 0) { Write-Error "No command given. Exa
 $ffmpegEnv = Join-Path $PSScriptRoot 'ffmpeg-env.ps1'
 if (Test-Path $ffmpegEnv) { . $ffmpegEnv }
 
+# Dot-source the whisper env if present, so whisper-rs (which builds whisper.cpp from
+# source via CMake + bindgen) can find cmake. Sets CMAKE_BIN and prepends it to PATH.
+# libclang/LIBCLANG_PATH is already provided by ffmpeg-env.ps1 above. Optional: absent = no-op.
+$whisperEnv = Join-Path $PSScriptRoot 'whisper-env.ps1'
+if (Test-Path $whisperEnv) { . $whisperEnv }
+
 $cmdline = ($Command -join ' ')
 cmd /c "call `"$vcvars`" >nul 2>&1 && $cmdline"
 exit $LASTEXITCODE

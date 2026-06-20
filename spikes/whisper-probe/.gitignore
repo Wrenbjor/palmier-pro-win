@@ -1,0 +1,6 @@
+# THROWAWAY probe — never commit build artifacts, lockfile churn, or run logs.
+/target/
+Cargo.lock
+*.log
+smoke.out
+smoke.err
