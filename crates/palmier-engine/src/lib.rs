@@ -13,25 +13,29 @@
 //!   from the timeline (z-order, overlap precedence, clip→source-frame mapping) +
 //!   per-layer transform/opacity/crop sampling (smoothstep parity, fade fold).
 //!   Presentation-agnostic descriptors — GPU textures/device are deferred to E5-S8.
+//! - **E5-S5** — [`preview`] model: the render-ready [`RenderFrame`] (the
+//!   [`CompositionFrame`] finalized with [`Canvas`] geometry + a [`QualityTarget`])
+//!   that E5-S8 consumes, plus the [`PreviewTab`] model (always-present `.timeline`
+//!   tab + closable `.media_asset` tabs) with per-tab playhead state.
+//! - **E5-S7** — [`transport`] loop: the [`Transport`] play/pause/toggle/seek/step
+//!   state machine, a reactive `current_frame` over [`TransportEvent`]s, the
+//!   fake-clock-testable playback clock, and the two-tier structural-vs-property
+//!   rebuild (risk #8). Reuses `palmier-media`'s `SeekMode`/tolerance/throttle.
 
 pub mod audio;
 pub mod composition;
+pub mod preview;
+pub mod transport;
 
 pub use composition::{
     build_frame, refresh_visuals, CompositionFrame, CropRect, FrameRef, LayerRender, Mat3,
     SourceInfo, SourceResolver, VisualLayer,
 };
+pub use preview::{Canvas, PreviewTab, PreviewTabState, QualityTarget, RenderFrame};
+pub use transport::{
+    active_video_layer_count, Clock, ManualClock, Transport, TransportEvent, WallClock,
+};
 
-/// Placeholder for the transport engine (transport lands in E5-S7; the wgpu
-/// compositor + present in E5-S8).
-pub fn placeholder() -> &'static str {
-    "palmier-engine"
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn placeholder_works() {
-        assert_eq!(super::placeholder(), "palmier-engine");
-    }
-}
+// `SeekMode` is owned by `palmier-media` (E5-S2, the decode owner); re-export it so
+// the transport's callers speak one seek vocabulary.
+pub use palmier_media::SeekMode;
