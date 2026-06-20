@@ -203,6 +203,24 @@ state via Tauri commands/events; never touches FFmpeg/wgpu). Wire `aiEditEligibl
 Yes — new Inspector files in `src-ui/editor`; coordinate only with E12-S3..S9 siblings (same subtree,
 disjoint files).
 
+> **Status:** DONE — branch `story/E12-S2-inspector-shell`. New self-contained module
+> `src-ui/src/editor/inspector/` (`types.ts`, `logic.ts`, `theme.ts`, `controller.ts`,
+> `InspectorPanel.tsx`, `parity.checks.ts`, `_run-parity.mts`, `index.ts`), re-exported from
+> `src-ui/src/editor/index.ts`. Pure-view shell over reactive state: header title/icon
+> (Inspector/Source/Timeline + marquee "N selected"), `availableTabs` in exact reference order
+> (Text/Video/Audio/AI Edit) with the bar hidden at ≤1 tab, `aiEditEligible` (single visual clip →
+> visual asset; selected audio all link-partners; linked A/V = one), `resolvePreferredTab`
+> (single-text→text, leaving-text→video, crop-clear seam via `onClearCropEditing`), and the
+> no-selection Project (file-stem name + middle-truncated path) / Format (Resolution, `fps fps`,
+> gcd-reduced aspect, `formatDuration` H:MM:SS|M:SS) panels. `aiEditEligible`/`isMisconfigured` wired
+> to `palmier-auth` via `InspectorController` (the account command/event seam: `getAccount()` +
+> `account://snapshot`, mock-degraded outside Tauri behind the same seam). Tab BODIES + the Source
+> asset body are stubbed via the `tabBodies`/`assetBody` render-prop seams (placeholders) for
+> E12-S3..S9 to fill. `corepack pnpm build` green (tsc --noEmit clean + vite); 40+ pure parity
+> assertions pass (`runInspectorParityChecks`). Tokens use accent `#F29933`/`#F5EFE4` (ruling #21).
+> One parity finding: a text clip does NOT offer AI Edit (text `mediaRef` has no backing visual
+> asset → `resolvedClipAsset` nil), corrected in the golden fixture.
+
 ---
 
 ### E12-S3 — ScrubbableNumberField + InspectorPositionFields components

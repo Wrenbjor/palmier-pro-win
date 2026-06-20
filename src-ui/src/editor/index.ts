@@ -90,3 +90,25 @@ export type { Rect, TimelineLayout, TrackDropTarget } from "./geometry";
 
 export { renderTimeline } from "./renderer";
 export type { RenderArgs } from "./renderer";
+
+// E12-S2 — the right-rail Inspector shell (header/title + tab gating + no-selection
+// Project/Format panels). Tab bodies are filled by E12-S3..S9 via the body seams.
+export {
+  InspectorPanel,
+  InspectorController,
+  resolveInspector,
+  availableTabs,
+  aiEditEligible,
+  resolvePreferredTab,
+  runInspectorParityChecks,
+} from "./inspector";
+export type {
+  InspectorPanelProps,
+  TabBodyRenderer,
+  AssetBodyRenderer,
+  InspectorInput,
+  InspectorState,
+  ClipTab,
+  MediaAssetView,
+  AccountState as InspectorAccountState,
+} from "./inspector";
