@@ -103,6 +103,15 @@ parity-exact foundation.
 
 ### E10-S2 — FFmpeg audio extraction + whisper.cpp engine run (`transcribe`)
 
+> **Status:** DONE (story/E10-S2-whisper-engine) — `crates/palmier-transcribe/src/engine.rs`:
+> `extract_audio_track` (ffmpeg-next + swresample → forced 16 kHz/mono/s16le WAV, `TempAudioFile`
+> RAII drop), `transcribe`/`transcribe_video_audio` (whisper-rs 0.16 CPU, token timestamps,
+> range-extract + `offsetting`), `decode_results` (segments + per-word runs, centiseconds→seconds).
+> LIVE test transcribed the JFK sample on CPU in **5.49 s** → "And so, my fellow Americans, ask not
+> what your country can do for you. Ask what you can do for your country." (108 chars, 26 words,
+> 2 segments, lang=en). 9/9 crate tests + full workspace green. Locale resolution + profanity are the
+> E10-S3 seam (stubbed to "en" for the `.en` model). CPU lane not held to SM-9's RTX-4060/2-min bar.
+
 **Intent:** As a dev agent, I want `transcribe(...)` to decode a clip's audio to the exact PCM format
 Whisper expects and run whisper.cpp, producing word + segment timestamps in source seconds, so the rest
 of the pipeline has real transcripts and SM-9 is met.

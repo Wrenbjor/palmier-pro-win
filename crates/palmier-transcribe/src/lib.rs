@@ -10,12 +10,16 @@
 //! resolution (E10-S3), and disk+memory cache (E10-S4) build on these shapes.
 
 mod cache;
+mod engine;
 mod error;
 mod locale;
 mod model;
 mod profanity;
 
 pub use cache::TranscriptCache;
+pub use engine::{
+    extract_audio_track, transcribe, transcribe_video_audio, TempAudioFile,
+};
 pub use error::TranscriptionError;
 pub use model::{TranscriptionResult, TranscriptionSegment, TranscriptionWord};
 

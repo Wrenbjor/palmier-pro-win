@@ -8,6 +8,10 @@ publish.workspace = true
 
 [dependencies]
 palmier-model = { path = "../palmier-model" }
+# E10-S2 depends on palmier-media to share the SAME ffmpeg-next 7 dependency/toolchain
+# (one FFmpeg in the tree); audio-to-16k-mono extraction has no helper there, so the
+# swresample extraction lives here — we do NOT open a second *video* decode path.
+palmier-media = { path = "../palmier-media" }
 # E10-S1: serde derives on the result model (the JSON disk cache in E10-S4 consumes them).
 serde.workspace = true
 # E10-S4: JSON disk cache (promoted from dev-dependency — the disk tier serializes
@@ -22,4 +26,16 @@ tokio.workspace = true
 # `Locale.preferredLanguages` / `Locale.current`). Small, no transitive heavy deps.
 sys-locale = "0.3"
 
-# Heavy deps (whisper-rs, tokenizers) come per-story — see FOUNDATION §2 / §6.9.
+# E10-S2: whisper.cpp via whisper-rs (CPU baseline — proven to build+run via
+# scripts/with-msvc.ps1, see spikes/whisper-setup/FINDINGS.md). default-features =
+# false keeps it on CPU; Vulkan/CUDA are opt-in cargo features wired here when a GPU
+# build is needed (this box is AMD/CPU). Pinned to the version that builds here.
+whisper-rs = { version = "0.16", default-features = false }
+# FFmpeg decode + swresample for the 16 kHz/mono/s16le audio extraction. Same major
+# (7) as palmier-media so the workspace links one FFmpeg. default features include
+# software-resampling.
+ffmpeg-next = "7"
+# UUID temp file name (palmier-stt-<UUID>.wav).
+uuid.workspace = true
+# Note: `dirs` (E10-S4 line above, workspace) also covers E10-S2's fallback model-path
+# resolution; `serde_json` is a runtime dep (promoted by E10-S4) so no dev-dep needed.
