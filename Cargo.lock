@@ -3671,6 +3671,7 @@ dependencies = [
  "palmier-media",
  "palmier-model",
  "palmier-text",
+ "png 0.17.16",
  "pollster",
  "raw-window-handle",
  "rubato",

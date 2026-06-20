@@ -85,7 +85,28 @@ wgpu-compositor = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:raw-window-h
 # lands in E5-S11. Criterion is a dev-dep only (no runtime/build impact).
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
+# E5-S11 SM-C1 golden rendered-frame I/O: read/write the committed golden PNGs the
+# GPU + CPU-fallback render paths are compared against. `png 0.17` is already in the
+# workspace graph (via `image 0.25` in palmier-media), so this adds no new lock entry.
+# Test/bench only — no runtime/build impact on the shipped crate.
+png = { version = "0.17", default-features = false }
 
 [[bench]]
 name = "composition_build"
+harness = false
+
+# E5-S11 per-frame composition SAMPLE bench (FOUNDATION §11.4): isolates the
+# animated-property sampler cost (transform/opacity/crop re-sample) from the full
+# build, sweeping the sampled frame across a keyframed timeline. Pure-CPU, always
+# buildable.
+[[bench]]
+name = "frame_sample"
+harness = false
+
+# E5-S11 SM-2 GPU render-frame throughput bench (FOUNDATION §11.4, §10 SM-2): the
+# offscreen wgpu render-frame measurement at 1080p60 + 4K30 on this box's adapter.
+# GPU-gated — only compiled when `wgpu-compositor` is on; with the feature off the
+# `cfg`-guarded body is empty so `cargo bench --no-run` still succeeds GPU-free.
+[[bench]]
+name = "render_frame"
 harness = false

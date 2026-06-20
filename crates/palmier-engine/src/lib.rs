@@ -28,6 +28,18 @@
 //!   feature. Premultiplied-alpha blend, black opaque floor, BT.709. The present
 //!   integration into the real Tauri window lives in `palmier-tauri`'s preview
 //!   module (S-2 plan A1). Text + Lottie layers are stubbed (deferred to E5-S9).
+//! - **E5-S11** — the M1 preview capstone: the perf + fidelity gates (no new runtime
+//!   code, all under `benches/` + `tests/`). The §11.4 Criterion benches —
+//!   composition `build_frame` at 50/200/**1000** clips (`composition_build`), the
+//!   per-frame animated sampler + `refresh_visuals` fast path (`frame_sample`), and
+//!   the offscreen wgpu render-frame throughput at 1080p60 + 4K30 (`render_frame`,
+//!   GPU-gated). The **SM-2** sustained-fps measurement (`tests/sm2_perf.rs`) asserts
+//!   4K30 ≥ 30 / 1080p60 ≥ 60 on this box's adapter or fails loudly (no fake pass).
+//!   The **SM-C1** golden rendered-frame gate (`tests/golden_frame.rs`) compares known
+//!   frames of `golden_project_keyframes` + `golden_project_text` against committed
+//!   golden PNGs within a documented tolerance, on both the wgpu path and a CPU-
+//!   fallback branch (interpolation waiver applied to the CPU branch only); golden
+//!   regen is gated behind `UPDATE_GOLDEN=1`.
 
 pub mod audio;
 pub mod composition;
