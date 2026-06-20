@@ -67,9 +67,15 @@ From `docs/reference/*.md` — the load-bearing specifics downstream stories mus
   exactly, `file://localhost//` pathurl rewrite, rotation negated, center as normalized offset-from-0.5.
 - **Search/SigLIP:** 256×256 squash (no crop, black fill, sRGB BGRA), tokenizer pad-to-64 id 0 no mask,
   raw dot-product ranking (model must output L2-normalized), cosine floor 0.05, relative cutoff 0.85.
-- **Project I/O Date encoding:** chat uses iso8601+pretty+sortedKeys; project/media/log use Apple
-  reference-epoch (seconds since 2001-01-01) doubles — a single serde Date format corrupts round-trips.
-  Confirm the Convex sample payload's Date format before locking serde.
+- **Project I/O Date encoding** — **RESOLVED by Spike S-1b** (`spikes/s1b-convex-date/FINDINGS.md`):
+  per-field codec. `media.json` (`cachedRemoteURLExpiresAt`, `GenerationInput.createdAt`) +
+  `generation-log.json` (`createdAt`) = Apple reference-epoch **doubles** (`unix = apple_ref +
+  978_307_200`), Optional + `skip_serializing_if`. `chat/*.json` (`updatedAt`) = **ISO-8601** string,
+  pretty 2-space + sorted keys. `project.json` has **no** Date field. media/log written **compact**.
+  E2-S8 implements `crates/palmier-model/src/serde_date.rs` (modules `apple_ref_epoch` + `iso8601`) per
+  FINDINGS. Confirmed from the reference decoder (Convex URL is a build secret, unreachable) — **R-6
+  carry-forward:** treat as provisional-from-code until a real `/v1/samples/resolve` payload is captured
+  (during the S-2 window) and diffed.
 
 ## Open items for Wren (recorded, proceeding with the ruling above)
 1. **ProRes 422 vs 4444+alpha** (#17) — shipping 422 for v1; confirm if alpha export is needed sooner.

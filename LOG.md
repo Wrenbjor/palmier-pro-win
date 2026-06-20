@@ -92,3 +92,15 @@ WRY-integration sub-spike deferred to E5-S8). Fixed a Cargo.lock merge conflict 
 Refs: github.com/Wrenbjor/palmier-pro-win main @0612ef0; crates/* (18), spikes/s1-wgpu-webview/FINDINGS.md,
 phase0-reconciliation.md #23 (resolved). Next: Wave 2 (model E2-S2/S4 + E3-S1, auth E1-S6, telemetry E1-S2,
 engine E5-S6, spike S-1b).
+
+## 2026-06-20 · Phase 4 M1 Wave-2: 5 stories merged (model/auth/telemetry/engine) + S-1b · #build #m1
+What: Wave-2's 5 workers all landed verified-green on main (37d8637): model trio (E2-S2 center Transform #7,
+E2-S4 VolumeScale #9, E3-S1 edit value types; 38 tests), E1-S6 palmier-auth (Clerk/Convex/keyring #5/account
+machine; 28 tests), E1-S2 palmier-telemetry (Sentry+tracing+crash+categorized logging; 30 tests), E5-S6
+palmier-engine audio mixer (8-segment smoothstep envelope parity; 26 tests), and Spike S-1b which decided the
+per-field project-bundle Date codec (Apple-epoch doubles vs ISO-8601). Resolved two Cargo.lock merge conflicts
+by regeneration. Carry-forwards recorded (E2-S5 f64::round derivations, telemetry boot-subscriber seam, E5-S6
+From<&Clip> adapter, auth Convex path confirmation).
+Refs: main @37d8637; crates/palmier-{model,auth,telemetry,engine}; spikes/s1b-convex-date/FINDINGS.md;
+phase0-reconciliation.md (Date entry resolved). Next: Wave 2b — model E2-S3/S5/S8, edit engines E3-S2..S5,
+media E4-S1/E5-S2, tauri E1-S3 + telemetry/auth boot wiring.

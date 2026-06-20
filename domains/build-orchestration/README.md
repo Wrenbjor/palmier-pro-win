@@ -43,10 +43,20 @@ compile + test green, `src-ui` builds (independently verified). Toolchain via `s
 - **E2-S1** palmier-model · **E1-S1** palmier-tauri (real Tauri 2.11 runtime, clean Windows build) ·
   **E3-S8** palmier-history · **E4-S2** palmier-media cache.
 
-**Wave 2: DISPATCHING** (disjoint crates; same-crate stories serialized in one worker per §5.1):
-- palmier-model: **E2-S2** (center Transform #7) + **E2-S4** (VolumeScale #9) + **E3-S1** (edit value types)
-- palmier-auth: **E1-S6** · palmier-telemetry: **E1-S2** · palmier-engine: **E5-S6** · spike **S-1b** (Convex Date)
-Held for Wave 2b: palmier-edit engines (E3-S2..S5, need E3-S1), palmier-media (E4-S1/E5-S2), E2-S8 (needs S-1b).
+**Wave 2: COMPLETE** — all 5 merged green on main (37d8637): E2-S2/E2-S4/E3-S1 (model: center Transform #7,
+VolumeScale #9, edit types), E1-S6 (palmier-auth), E1-S2 (palmier-telemetry), E5-S6 (palmier-engine audio
+mixer), **S-1b** (Convex Date codec decided — [[phase0-reconciliation]] Date entry, unblocks E2-S8).
+
+**Carry-forwards to honor in later stories:**
+- **E2-S5** must implement Clip frame derivations with `f64::round` ties-away + the rounding-parity test (E3-S1 dep).
+- **Telemetry boot seam:** boot stub installs its own tracing subscriber → file logging won't attach until the
+  integration removes it and holds the `TelemetryHandle` from `palmier_telemetry::init`. (palmier-tauri touch.)
+- **E5-S6** local `AudioClip`/`VolumeKeyframe` → convert to `From<&Clip>` adapter once E2-S5 lands.
+- **palmier-auth** Convex HTTP path strings inferred; confirm against the live deployment (S-2 window).
+- **E2-S8** implements `palmier-model/src/serde_date.rs` per `spikes/s1b-convex-date/FINDINGS.md`.
+
+**Wave 2b: DISPATCHING** (disjoint crates): palmier-model **E2-S3+E2-S5+E2-S8** · palmier-edit
+**E3-S2+E3-S3+E3-S4+E3-S5** (pure engines) · palmier-media **E4-S1+E5-S2** · palmier-tauri **E1-S3 + telemetry/auth boot wiring**.
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -79,3 +89,4 @@ Held for Wave 2b: palmier-edit engines (E3-S2..S5, need E3-S1), palmier-media (E
 2026-06-20 | E3-S8 merged (6940f8b) — palmier-history generic 2-stack undo (user/agent), agent-refusal rule, nested coalescing; 13 tests green on main. Wave-1 remaining: E1-S1, S-1.
 2026-06-20 | E1-S1 merged (0612ef0) — real Tauri 2.11.3 runtime + boot; FIRST Tauri build on Windows compiled clean (wry/tao/webview2-com, no missing deps); asInvoker manifest; 10 tests green. Cargo.lock conflict resolved by regenerate.
 2026-06-20 | S-1 RESOLVED + merged — wgpu→WebView decided (native composited surface, zero-copy, SM-2 met; wgpu 27.x). [[phase0-reconciliation]] #23 updated. Wave 0+1 complete; dispatching Wave 2.
+2026-06-20 | Wave 2 COMPLETE (37d8637) — model trio (E2-S2/S4/E3-S1, 38 tests), E1-S6 auth (28 tests), E1-S2 telemetry (30 tests), E5-S6 engine audio mixer (26 tests), S-1b Date codec. All verified green on main. Dispatching Wave 2b.
