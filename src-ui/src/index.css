@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* Design tokens (FOUNDATION §9) get injected here as CSS variables,
+   generated from src/design/tokens.json at build time (per-story). */
+
+:root {
+  color-scheme: dark;
+  background: #0a0a0a;
+  color: #ffffff;
+}

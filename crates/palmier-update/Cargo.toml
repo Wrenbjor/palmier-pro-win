@@ -1,0 +1,10 @@
+[package]
+name = "palmier-update"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Tauri updater glue deps come per-story — see FOUNDATION §2 / §8.4, E1-S10.

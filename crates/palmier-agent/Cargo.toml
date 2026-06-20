@@ -1,0 +1,12 @@
+[package]
+name = "palmier-agent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+palmier-tools = { path = "../palmier-tools" }
+
+# Heavy deps (reqwest, reqwest-eventsource, tokio) come per-story — FOUNDATION §2 / §6.13.

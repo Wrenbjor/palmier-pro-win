@@ -1,0 +1,10 @@
+[package]
+name = "palmier-telemetry"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Heavy deps (sentry, tracing, tracing-subscriber) come per-story — FOUNDATION §2 / §6.16, E1-S2.

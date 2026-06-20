@@ -1,0 +1,12 @@
+[package]
+name = "palmier-media"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+palmier-model = { path = "../palmier-model" }
+
+# Heavy media deps (ffmpeg-next, symphonia) come per-story — see FOUNDATION §2.

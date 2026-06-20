@@ -1,0 +1,7 @@
+# pnpm 11 build-script approvals (map form; replaces v10 onlyBuiltDependencies).
+# These deps ship a native binary fetched/linked by a postinstall script:
+#   esbuild              — Vite's bundler core
+#   @tailwindcss/oxide   — Tailwind CSS 4 native engine
+allowBuilds:
+  esbuild: true
+  "@tailwindcss/oxide": true

@@ -1,0 +1,13 @@
+[package]
+name = "palmier-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+palmier-model = { path = "../palmier-model" }
+palmier-media = { path = "../palmier-media" }
+
+# Heavy deps (wgpu, cpal, rubato, cosmic-text) come per-story — see FOUNDATION §2.
