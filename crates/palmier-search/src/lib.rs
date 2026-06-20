@@ -31,6 +31,7 @@
 
 pub mod sampler;
 pub mod store;
+pub mod transcript_search;
 pub mod visual_search;
 
 /// The reference model spec (`SearchIndexConfig.manifest` in the macOS reference).
@@ -62,4 +63,7 @@ pub use sampler::{
     SamplerState, SAMPLER_VERSION,
 };
 pub use store::{AssetIndex, EmbeddingStore, Header, Row};
+pub use transcript_search::{
+    TranscriptHit, TranscriptSearch, DEFAULT_LANGUAGE, DEFAULT_LIMIT, DEFAULT_MODEL_ID,
+};
 pub use visual_search::{search as visual_search, Hit};

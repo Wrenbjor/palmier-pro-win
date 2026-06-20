@@ -35,6 +35,15 @@ dirs.workspace = true
 # Error context for the store read/write/decode paths.
 anyhow = "1"
 
+# E11-S8 — TranscriptSearch reads cached transcript segments from the MERGED E10-S4
+# cache (`palmier_transcribe::TranscriptCache`); E11-S7 is subsumed by it (no second
+# cache). Consumes `TranscriptionResult` / `TranscriptionSegment` from the same crate.
+palmier-transcribe = { path = "../palmier-transcribe" }
+# Unicode NFD decomposition for the diacritic-insensitive keyword fold (Swift's
+# `.diacriticInsensitive`): decompose, strip combining marks, then lowercase so
+# "café" matches "cafe". Pure-Rust, light (data tables only); no runtime.
+unicode-normalization = "0.1"
+
 # Heavy deps (candle/ort for SigLIP2/CLIP, tokenizers) come per-story — FOUNDATION §2 / §6.10.
 
 [dev-dependencies]
