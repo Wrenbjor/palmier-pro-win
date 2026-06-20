@@ -11,6 +11,22 @@ palmier-model = { path = "../palmier-model" }
 serde.workspace = true
 serde_json.workspace = true
 # Used for unique temp-dir names during atomic whole-directory save (the
-# write-to-sibling-temp-then-atomic-rename swap). No other runtime dep is needed:
-# the bundle reader/writer is pure `std::fs` + `serde_json`.
+# write-to-sibling-temp-then-atomic-rename swap), and as the `ProjectEntry::id`
+# type (E2-S11).
 uuid.workspace = true
+# `ProjectEntry` created/last-opened timestamps (E2-S11). The registry uses the
+# default-JSONEncoder numeric reference-date encoding like the reference, applied
+# via a local `#[serde(with = ...)]` codec over `time::OffsetDateTime`.
+time.workspace = true
+# Platform registry dir (E2-S11): `%APPDATA%\PalmierProWin\` / `~/.config/palmier-pro/`.
+dirs.workspace = true
+# Recycle Bin / XDG trash for `ProjectRegistry::delete` (E2-S11). Optional +
+# feature-gated so unit tests never move anything to the real OS trash.
+trash = { workspace = true, optional = true }
+
+[features]
+# `system-trash` performs a real Recycle-Bin / XDG-trash move on `delete`. It is
+# ON by default for the shipping crate; tests exercise `delete` through an
+# injectable trasher so they never touch the OS trash regardless of this feature.
+default = ["system-trash"]
+system-trash = ["dep:trash"]
