@@ -9,3 +9,6 @@ publish.workspace = true
 [dependencies]
 palmier-model = { path = "../palmier-model" }
 palmier-engine = { path = "../palmier-engine" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
