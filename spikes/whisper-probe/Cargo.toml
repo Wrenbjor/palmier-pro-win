@@ -1,0 +1,30 @@
+# THROWAWAY probe crate — verifies that `whisper-rs` (which builds whisper.cpp from
+# source via cmake + bindgen) compiles & links on this Windows box through the MSVC
+# wrapper. NOT a workspace member; build it from inside this dir with:
+#   pwsh -File ../../scripts/with-msvc.ps1 cargo build
+# Mirrors the spikes/ffmpeg-probe precedent. CPU backend only (default features = none),
+# because this box is AMD (no CUDA). Vulkan is opt-in via the "vulkan" feature.
+#
+# ISOLATION: declares its OWN empty `[workspace]` table so Cargo treats it as a
+# standalone workspace root, NOT a member of the repo-root workspace. Mirrors
+# spikes/ffmpeg-probe.
+[workspace]
+
+[package]
+name = "whisper-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Default features = none = CPU backend (no CUDA/Vulkan/Metal/OpenBLAS).
+whisper-rs = "0.16"
+
+[features]
+# Optional GPU acceleration on AMD/Windows. Off by default; flip on to test the
+# Vulkan backend build (needs the Vulkan SDK present).
+vulkan = ["whisper-rs/vulkan"]
+
+[[bin]]
+name = "whisper-probe"
+path = "src/main.rs"
