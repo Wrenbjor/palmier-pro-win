@@ -10,6 +10,9 @@ publish.workspace = true
 palmier-model = { path = "../palmier-model" }
 # E10-S1: serde derives on the result model (the JSON disk cache in E10-S4 consumes them).
 serde.workspace = true
+# E10-S3: OS locale for "best supported locale" auto-detect (replaces Apple
+# `Locale.preferredLanguages` / `Locale.current`). Small, no transitive heavy deps.
+sys-locale = "0.3"
 
 # Heavy deps (whisper-rs, tokenizers) come per-story — see FOUNDATION §2 / §6.9.
 

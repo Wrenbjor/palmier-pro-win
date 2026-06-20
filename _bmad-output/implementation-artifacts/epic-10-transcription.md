@@ -153,6 +153,13 @@ of the pipeline has real transcripts and SM-9 is met.
 
 ### E10-S3 — Locale resolution + profanity censoring
 
+> **Status:** DONE (story/E10-S3-locale-profanity) — `locale.rs` (BCP-47 `LocaleTag` +
+> `match_locale`/`best_supported_locale`/`resolve_locale`/`resolve_locale_en`, OS auto-detect via
+> `sys-locale`, exact-region-preferred matching parity) and `profanity.rs` (bracketed-equivalent
+> censor over `text`/segments/words; clean transcript unchanged). 26 unit tests pass; full workspace
+> build + `cargo test` green. Reference `.etiquetteReplacements` word list is closed-source in Apple's
+> framework, so the censored set is a clean-room seed (deviation noted inline).
+
 **Intent:** As a dev agent, I want "prefer user locale, else auto-detect, else error" resolution and
 profanity censoring, so transcription matches the reference's language/etiquette behavior.
 
