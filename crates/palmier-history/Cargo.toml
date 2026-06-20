@@ -6,5 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+# NOTE: palmier-history is GENERIC over the state type (see lib.rs). It must NOT
+# depend on palmier-model — the concrete `Timeline`/`Clip` are supplied by the
+# caller (palmier-edit orchestration) as the `S` type parameter / as boxed
+# reversible actions. Keeping it model-free lets this crate build and be
+# unit-tested standalone (E3-S8: palmier-model is only a skeleton on this branch).
+
 [dependencies]
-palmier-model = { path = "../palmier-model" }

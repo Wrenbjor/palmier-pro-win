@@ -251,9 +251,6 @@ dependencies = [
 [[package]]
 name = "palmier-history"
 version = "0.1.0"
-dependencies = [
- "palmier-model",
-]
 
 [[package]]
 name = "palmier-mcp"
