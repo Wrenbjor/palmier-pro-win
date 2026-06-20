@@ -27,3 +27,18 @@ awk '/^## 20/{p=/^## 2026-06/} p' LOG.md
 ```
 
 ---
+
+## 2026-06-20 · Environment prep for palmier-pro Win port · #setup #infra #ops
+What: Made the loop-engineer + BMAD harness Windows-ready and laid the orchestration spine for the
+palmier-pro Mac→Windows port (this repo is app + KB + planning). Fixed the party-mode blocker
+(PYTHONUTF8), wrote CLAUDE.md operating context, the phase pipeline, and the master build loop.
+Refs: [build-orchestration](docs/build-orchestration.md) (new), [windows-harness-notes](docs/windows-harness-notes.md) (new),
+[build loop](domains/build-orchestration/README.md) (new), CLAUDE.md (updated), .claude/settings.json (new). Awaiting Mac source path + kickoff task.
+
+## 2026-06-20 · Kickoff input filed: Foundation Spec + verified macOS reference · #setup #product #spec
+What: Received the Palmier-Pro-Windows Foundation Specification (locked stack: Tauri 2 / Rust / React /
+wgpu / FFmpeg / Whisper / Convex+Clerk+Anthropic; agent-controlled NLE via local MCP). Verified the
+GPLv3 macOS Swift reference at ../palmier-pro/ matches the spec's citations. Filed spec as the source
+of truth; product identity + source path now wired into CLAUDE.md and the build loop. Ready to launch.
+Refs: [FOUNDATION](docs/FOUNDATION.md) (new), CLAUDE.md (updated), [build loop](domains/build-orchestration/README.md) (updated),
+[build-orchestration](docs/build-orchestration.md) (updated). Next: on `go` → Phase 0 (document ../palmier-pro) → Phase 1 party-mode → PRD.

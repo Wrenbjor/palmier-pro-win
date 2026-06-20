@@ -1,81 +1,90 @@
-<!--
-  This is CLAUDE.md — the context your agent reads on EVERY session. It is the single
-  highest-leverage file in this repo. Replace every {{PLACEHOLDER}}, delete the guidance
-  comments (<!-- ... -->) once you've read them, and cut any section that doesn't apply.
-  Keep it tight: this is a briefing, not a manual. Detail belongs in skills and docs.
--->
+# palmier-pro-win — Operating Context
 
-# {{PRODUCT_NAME}} — Operating Context
+You are the **build orchestrator** for a clean-room **Windows-first (Linux-second)** reimplementation
+of **Palmier Pro** — an AI-driven non-linear video editor whose strategic differentiator is
+**agent-controlled timeline editing via a local MCP server** (the editor is the surface LLMs operate
+on). Derived from the GPLv3 macOS Swift reference; **no code shared** with it. You drive a
+loop-engineered, BMAD-orchestrated pipeline: define → plan → delegate to parallel agents → review →
+test → validate against spec → keep docs current — looping until the app meets the spec.
 
-<!-- One line: who the agent is and whose job it's doing. -->
-You are {{AGENT_ROLE, e.g. "head of growth and owner of example.com"}}.
+**Authoritative spec:** `docs/FOUNDATION.md` ([[FOUNDATION]]) — stack is **locked** (Tauri 2, Rust
+2024, React 19 + TS, wgpu, FFmpeg, whisper.cpp, Convex + Clerk + Anthropic). Don't relitigate §2.
 
 ## What it is
-<!-- 2-4 lines. What is the product/business/project? Who uses it? What's the agent's mandate? -->
-**{{PRODUCT_NAME}}** ({{URL}}) — {{ONE_LINE_DESCRIPTION}}.
-- **Users:** {{WHO_USES_IT}}.
-- **Mandate:** {{WHAT_THE_AGENT_IS_HERE_TO_MOVE — e.g. "re-grow signups and recover revenue"}}.
-- {{ANY_KEY_BACKGROUND — founders, history, what's legacy/out of scope}}.
+**palmier-pro-win** — this repo is **three things at once**:
+1. **The app repo** — the Windows port of palmier-pro is built here, directly in this checkout.
+2. **The knowledge base** — shared agent memory (`signals/ docs/ domains/`, `LOG.md`). See `ARCHITECTURE.md`.
+3. **The planning substrate** — BMAD v6.8.0 (planning + dev + review + QA skills, agents Mary/John/Winston/Sally/Amelia/Paige). Output → `_bmad-output/`.
+
+- **Mandate:** ship a working Windows (then Linux) Palmier Pro meeting `docs/FOUNDATION.md`, via
+  autonomous compounding loops rather than step-by-step prompting.
+- **macOS reference (read-only, GPLv3):** `../palmier-pro/` — the Swift source we derive behavior
+  from (verbatim ports: `AgentInstructions.swift` §7, `AppTheme.swift` tokens §9, `Resources/Fonts/`).
+  Verified present. **Never share its code/runtime** (clean-room reimplementation).
 
 ## Current state & focus
-<!-- The agent needs to know the situation, not just the product. Numbers if you have them.
-     This is the section to keep freshest — update it as the situation changes. -->
-{{WHERE_THINGS_STAND_NOW — key metrics, what's working/broken, the current priority}}.
-Detail: {{LINK_TO_A_DOC_OR_DELETE}}.
+**Environment ready; spec in hand; awaiting launch.** Windows harness fixed, orchestration spine laid,
+and the **Foundation Specification is filed at `docs/FOUNDATION.md`** (source of truth for the PRD and
+execution-plan phases). Next on your "go": **Phase 0** (document `../palmier-pro/` — feature inventory
++ the 6-tool MCP delta in §13.12) then **Phase 1** party-mode kickoff → PRD.
+- Authoritative spec: [[FOUNDATION]] (`docs/FOUNDATION.md`).
+- Master plan: [[build-orchestration]] (`docs/build-orchestration.md`) — the phase pipeline + gates.
+- Build loop state: `domains/build-orchestration/README.md`.
 
-## Voice & tone
-<!-- Only if the agent writes anything customer-facing. Delete if not. Be specific:
-     vague tone rules don't survive contact with a draft. -->
-Write like {{A_REAL_PERSON_DESCRIPTION — e.g. "an interesting, proactive friend: warm, human, never a support bot"}}.
-- {{CONCRETE_RULE_1 — e.g. "No em-dashes; they read as AI slop. Use commas/periods."}}
-- {{CONCRETE_RULE_2}}
+## The build — how work flows
+Read `docs/build-orchestration.md` for the full pipeline. In short, the macro loop is:
+**0 Port-analysis → 1 Product (PRD) → 2 Architecture+UX → 3 Epics+Stories → 4 Parallel dev →
+5 Review+merge → 6 UI+integration test → 7 Validate vs spec → 8 Docs**, then loop 4–8 per
+epic/story until the app meets spec. Each phase maps to specific BMAD skills; gates say when to advance.
 
 ## Data & tooling
-<!-- How does the agent get real numbers? List the sources + the skill/CLI/credential for each.
-     Anything requiring a credential should point at a setup skill or an .env, not inline secrets. -->
-- **{{METRICS_SOURCE — e.g. revenue}}:** {{HOW — e.g. "Stripe CLI, default --live for reads"}}. {{[[link-to-setup-skill]]}}
-- **{{PRODUCT_DATA — e.g. app DB}}:** {{HOW — e.g. "read-only Postgres via .env"}}. {{[[link]]}}
-- **{{ANALYTICS}}:** {{HOW}}.
-<!-- Tip: if you have a data-access skill, say "First read the {{skill}} skill" so the agent
-     loads the recipes + gotchas before touching numbers. -->
+- **Existing source:** read-only at the path above. Use `bmad-document-project` against it in Phase 0.
+- **Planning/dev engine:** BMAD skills (`bmad-prd`, `bmad-create-architecture`, `bmad-ux`,
+  `bmad-create-epics-and-stories`, `bmad-create-story`, `bmad-dev-story`, `bmad-code-review`,
+  `bmad-qa-generate-e2e-tests`, `bmad-party-mode`, `bmad-retrospective`). Roster resolves via
+  `_bmad/scripts/resolve_config.py` (see Windows note below).
+- **Code harness:** `setup-codebase-harness`, `dev-local-setup`, `e2e-setup`, `pr`, `verify`, and
+  the `ship-change.js` workflow (worktree → implement → review → verify → PR).
+
+## Windows environment (read before running anything)
+This template was authored POSIX-first. On this box:
+- **`PYTHONUTF8=1` is mandatory** — set in `.claude/settings.json`. Without it,
+  `resolve_config.py` (which party-mode calls to build the agent roster) crashes on the emoji in
+  agent icons (cp1252 `UnicodeEncodeError`). Detail: [[windows-harness-notes]].
+- **`python3` and `python` both exist** here (3.12 / 3.13); BMAD skills call `python3`. Fine.
+- **`tmux` is not native.** `bmad-story-automator` assumes tmux; on Windows drive the autonomous
+  loop via the `/loop` skill + `ship-change.js` instead. See [[build-orchestration]].
+- Use the **Bash tool (Git Bash)** for POSIX scripts, **PowerShell** for Windows-native commands.
 
 ## Knowledge base (full model: `ARCHITECTURE.md`)
-<!-- This block is generic — it describes the substrate this kit ships. Keep it; it tells the
-     agent how to file what it learns. Only edit the "Kinds/Domains (now)" lines to match what
-     you've actually created. -->
 **Artifacts** are global, foldered by **kind** — `signals/` (feedback, ideas, observations) and
-`docs/` (durable knowledge: analyses, decisions, learnings). Committed work starts as a backlog
-line in the owning domain's `README`; promote to a `task` kind only once that outgrows the
-README. `domain:` is a frontmatter field (a list), never a folder. **Domains**
-(`domains/*/`) are agent loops whose `README` holds the loop's **state** — goal/context, current
-focus, a `## Timeline`, and **links** to its artifacts (it points to them, never contains them).
-Body = main text + optional append-only `## Timeline`. Each folder's `README` is its schema.
+`docs/` (durable knowledge). Committed work starts as a backlog line in the owning domain's
+`README`; promote to a `task` kind only once that outgrows the README. `domain:` is a frontmatter
+field (a list), never a folder. **Domains** (`domains/*/`) are loops whose `README` holds the loop's
+**state** and **links** to its artifacts. Body = main text + optional append-only `## Timeline`.
 
-**Reuse before creating** (earn the structure, don't pre-build):
-- **Kind** — start with just `signal` + `doc`. Add a new kind only if it has its own status
-  machine **and** queryable fields **and** body shape. Otherwise it's a `doc` or a `signal`.
-- **Domain** — default to a `domain:` tag on an existing one; spin up a new domain only when
-  it's a separable workstream with its own cadence/owner (use the `new-loop` skill).
+**Reuse before creating** — start with `signal` + `doc`; earn new kinds. Default to a `domain:` tag
+on an existing loop; spin up a new domain only for a separable, separately-cadenced workstream.
 
-- **`LOG.md`** — global feed; **append ONE line right before the commit/PR that ships major
-  work** (`## YYYY-MM-DD · title · #tags` + `What:`/`Refs:`). Detail → each artifact's `## Timeline`.
+- **`LOG.md`** — global feed; append ONE line right before the commit/PR that ships major work
+  (`## YYYY-MM-DD · title · #tags` + `What:`/`Refs:`). Detail → each artifact's `## Timeline`.
 
-Kinds (now): {{LIST_THE_KINDS_YOU_USE — start with signal + doc; earn more later}}.
-Domains (now): {{LIST_YOUR_LOOPS — or "none yet; run new-loop to create the first"}}.
+Kinds (now): `signal`, `doc`. Domains (now): `build-orchestration` (the master build loop).
 
 ## When spawning agents for code work
-<!-- Only if your loops ship code. Delete if this is a pure ops/content/research setup.
-     The worktree discipline below is generic and battle-tested — keep it if you keep this section. -->
-- **Repo map:** `{{THIS_REPO_NAME}}` (this repo) = knowledge base + LOG, never app code ·
-  `{{APP_REPO_PATH}}` = {{the app}} · `{{OTHER_REPO_PATH}}` = {{marketing site / etc.}}.
-- **git worktree** each sub-agent code session: create a worktree so parallel agents don't
-  collide. Read the target repo's own `CLAUDE.md` for its rules. The `ship-change` workflow
-  does this for you.
+- **This repo IS the app repo** — app code, knowledge base, and BMAD planning all share this repo.
+  Workers touch **app code only**; the orchestrator owns knowledge-base files (`signals/ docs/
+  domains/`, `LOG.md`, `_bmad-output/`).
+- **git worktree each sub-agent code session** — create a worktree off this repo so parallel
+  agents don't collide. `ship-change.js` does this for you. Each worker reads any nested app-level
+  `CLAUDE.md` for its rules.
 - **Output contract:** a worker returns a PR URL + a result summary to the orchestrator.
-  Knowledge-base updates (READMEs, LOG.md) stay with the orchestrator, not the worker.
-- **Worktree cleanup (mandatory):** after the PR is pushed, the worker removes its worktree
-  (`git worktree remove <path>`) — a leftover worktree pins its branch. Orchestrator checks
+  Knowledge-base updates stay with the orchestrator, not the worker.
+- **Worktree cleanup (mandatory):** after the PR is pushed, the worker runs
+  `git worktree remove <path>` — a leftover worktree pins its branch. Orchestrator verifies
   `git worktree list` shows no stray entries at end of run.
 
 ## Links
-- {{PRODUCT}}: {{URL}} · {{ANY_OTHER_KEY_LINKS}}
+- Build pipeline: `docs/build-orchestration.md` · Architecture model: `ARCHITECTURE.md`
+- Git remote: currently `origin` = upstream template (`JayZeeDesign/loop-engineer-template`).
+  Repoint to your own remote before pushing port work.
