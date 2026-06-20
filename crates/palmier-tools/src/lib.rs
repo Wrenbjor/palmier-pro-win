@@ -45,6 +45,7 @@ pub mod read;
 pub mod resources;
 pub mod result;
 pub mod schema;
+pub mod search;
 pub mod short_id;
 pub mod texts;
 pub mod transcript;
@@ -63,6 +64,7 @@ pub use resources::{
 };
 pub use result::{Block, ToolResult};
 pub use schema::{object_schema, tool_definitions, ToolDefinition, ToolName};
+pub use search::{visual_status_wire, VisualCandidate, VisualSearchGateway};
 pub use short_id::{
     expand_id_prefixes, AmbiguousIdError, IdUniverse, ARRAY_ID_KEYS, ID_PREFIX_FLOOR,
     SCALAR_ID_KEYS,

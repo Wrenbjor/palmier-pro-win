@@ -1,6 +1,6 @@
-//! INSPECT tool bodies — `inspect_media`, `inspect_timeline`, and the
-//! `search_media` stub (E7-S5 / E7-S9; reference `ToolExecutor+InspectTimeline.swift`
-//! + `ToolExecutor+Search.swift`).
+//! INSPECT tool bodies — `inspect_media`, `inspect_timeline` (E7-S5; reference
+//! `ToolExecutor+InspectTimeline.swift`). `search_media` moved to [`crate::search`]
+//! when it went functional (E11-S10).
 //!
 //! ## `inspect_media` (Read, async)
 //! Looks at one source asset: an image's pixels + dimensions, video sample frames +
@@ -24,10 +24,6 @@
 //! available in this build (the schema/dispatch/cap math still compile + test
 //! GPU-free). With the feature ON, a box without a GPU returns a clean "no adapter"
 //! message rather than failing the call.
-//!
-//! ## `search_media` (Read, async — stubbed)
-//! Spoken backing = Epic 10 (M3), visual = Epic 11 (M4, SigLIP2). M2 returns empty
-//! hits with `status: not_indexed`.
 
 use serde_json::{json, Value};
 
@@ -343,30 +339,6 @@ mod gpu {
         }
         out
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// search_media (stub — Epic 10 spoken / Epic 11 visual)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// `search_media` (`query`, opt `scope`, `media_ref`, `limit ≤ 50 default 10`):
-/// content search. Spoken backing = Epic 10 (M3); visual = Epic 11 (M4, SigLIP2). In
-/// M2 returns empty hits with `status: not_indexed`. Reference `searchMedia`.
-pub fn search_media(_state: &EditorState, args: &Value) -> ToolResult {
-    let query = match args.get("query").and_then(Value::as_str) {
-        Some(s) => s,
-        None => return ToolResult::error("Missing required field 'query'"),
-    };
-    let scope = args.get("scope").and_then(Value::as_str).unwrap_or("both");
-    let body = json!({
-        "query": query,
-        "scope": scope,
-        "visual": { "moments": [], "status": "not_indexed" },
-        "spoken": { "moments": [] },
-        "note": "Search indexing is not yet available in this build (visual search lands \
-                 with the SigLIP2 index, spoken search with on-device transcription).",
-    });
-    ToolResult::ok(serde_json::to_string(&body).unwrap_or_default())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

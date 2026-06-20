@@ -31,6 +31,16 @@ palmier-gen = { path = "../palmier-gen", default-features = false }
 # palmier-transcribe; `FontRegistry`/`TextLayout` (caption measurement) in palmier-text.
 palmier-transcribe = { path = "../palmier-transcribe" }
 palmier-text = { path = "../palmier-text" }
+# E11-S10 `search_media`: the shared dispatcher composes the merged Epic 11 search
+# pieces — the E11-S6 `SearchIndexCoordinator` + `VisualStatus` (visual scope, via the
+# `VisualSearchGateway` seam the host wires), and `TranscriptSearch` (spoken scope,
+# sync, disk-only). Default features OFF: the tool layer needs only the search TYPES
+# (`Hit`/`TranscriptHit`/`VisualStatus`) + the sync transcript search, NOT the `ort`
+# ONNX encode — the real visual encoder is wired behind the gateway by the host
+# (`palmier-tauri`). The additive `ort` feature below forwards to palmier-search/ort so
+# a `--features ort` build of this crate brings the live encoder into the graph (for the
+# gated SM-12 visual test + the host build).
+palmier-search = { path = "../palmier-search", default-features = false }
 # `add_captions` mints the shared caption-group UUID for the placement batch.
 uuid = { workspace = true, features = ["v4"] }
 # The cache singleton (`TranscriptCache::shared`) is async (tokio `OnceCell`) and the
@@ -58,3 +68,7 @@ default = []
 # Compile the GPU compositor path for `inspect_timeline` (real composited frames). With
 # the feature off the tool reports rendering-unavailable and lists the sampled frames.
 gpu-inspect = ["dep:palmier-engine", "palmier-engine/wgpu-compositor", "dep:png"]
+# E11-S10: forward to palmier-search's `ort` feature so the live SigLIP2 encoder + the
+# real visual `search_media` path come into the graph (the gated SM-12 visual test +
+# the host build). Additive — the default build stays ONNX/DLL-free (visual = disabled).
+ort = ["palmier-search/ort"]

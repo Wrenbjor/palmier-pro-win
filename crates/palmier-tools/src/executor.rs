@@ -105,8 +105,8 @@ impl ToolExecutor {
             // ── READ — inspect (E7-S5) ─────────────────────────────────────
             ToolName::InspectMedia => crate::inspect::inspect_media(state, args),
             ToolName::InspectTimeline => crate::inspect::inspect_timeline(state, args),
-            // search_media stays stubbed (visual index = Epic 11/M4) ────────
-            ToolName::SearchMedia => crate::inspect::search_media(state, args),
+            // ── SEARCH (E11-S10 — spoken sync + visual via the gateway seam) ──
+            ToolName::SearchMedia => crate::search::search_media(state, args),
             // ── EDIT — clips (E7-S6 / E7-S4) ───────────────────────────────
             ToolName::AddClips => crate::clips::add_clips(state, args),
             ToolName::RemoveClips => crate::clips::remove_clips(state, args),
