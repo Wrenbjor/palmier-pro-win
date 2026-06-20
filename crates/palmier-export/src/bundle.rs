@@ -108,6 +108,14 @@ pub fn export_palmier_project(
     dest: &Path,
     temp_root: &Path,
 ) -> Result<Report, ExportError> {
+    // E11-S6 follow-up: pause visual-search indexing for the duration of this
+    // export run (reference: `ExportService.exportPalmierProject` sets
+    // `isExporting = true` → `SearchIndexCoordinator.exportDidBegin()`, with the
+    // matching end in its `defer`). The RAII guard ends the pause on drop —
+    // including any early `?` return or panic — so the counter can never get
+    // stuck and wedge indexing.
+    let _export_pause = palmier_search::ExportPauseGuard::begin();
+
     let staging = temp_root.join(format!("palmier-export-{}", uuid::Uuid::new_v4()));
     let media_dir = staging.join(MEDIA_DIRECTORY_NAME);
     fs::create_dir_all(&media_dir)?;
