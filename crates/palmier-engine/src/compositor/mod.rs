@@ -39,4 +39,8 @@ pub use texture_cache::{TexCacheStats, TexKey, TextureCache, DEFAULT_VRAM_CEILIN
 #[cfg(feature = "wgpu-compositor")]
 pub mod gpu;
 #[cfg(feature = "wgpu-compositor")]
+pub mod text_pass;
+#[cfg(feature = "wgpu-compositor")]
 pub use gpu::{Compositor, CompositorError};
+#[cfg(feature = "wgpu-compositor")]
+pub use text_pass::TextPass;

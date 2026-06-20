@@ -36,9 +36,13 @@ pub mod preview;
 pub mod transport;
 
 pub use composition::{
-    build_frame, refresh_visuals, CompositionFrame, CropRect, FrameRef, LayerRender, Mat3,
-    SourceInfo, SourceResolver, VisualLayer,
+    build_frame, build_text_layers, refresh_visuals, CompositionFrame, CropRect, FrameRef,
+    LayerRender, Mat3, SourceInfo, SourceResolver, TextLayer, VisualLayer,
 };
+// E5-S9 text layout: re-export the `palmier-text` handles callers need to build
+// text layers (the font registry + the layout engine) so the preview path speaks
+// one text vocabulary.
+pub use palmier_text::{FontRegistry, GlyphRun, LayoutBox, TextLayout};
 // E5-S8 wgpu compositor. Pure geometry/pixel/cache helpers are always available; the
 // GPU `Compositor` itself is behind the `wgpu-compositor` feature.
 pub use compositor::{

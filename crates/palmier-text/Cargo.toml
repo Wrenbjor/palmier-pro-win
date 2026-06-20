@@ -9,4 +9,11 @@ publish.workspace = true
 [dependencies]
 palmier-model = { path = "../palmier-model" }
 
-# Heavy deps (cosmic-text, fontdb) come per-story — see FOUNDATION §2 / §6.6.
+# E5-S9 text layout + shaping (FOUNDATION §6.6). `cosmic-text` does layout +
+# shaping + multi-line line-breaking and re-exports `fontdb` (font discovery: the
+# bundled reference fonts + the user's installed system fonts) and `swash` (the
+# glyph rasterizer the engine's text pass uses to fill the glyph atlas). It is
+# pure-Rust and always on — the layout half of this story is presentation-agnostic
+# and must build/test on a GPU-free box. `unicode-segmentation` is unused here;
+# cosmic-text pulls its own.
+cosmic-text = "0.14"
