@@ -36,7 +36,7 @@ All paths under `E:\projects\palmier-pro\Sources\PalmierPro\`.
 A bare encoder/decoder uses `.deferredToDate` (the documented Swift default). `.deferredToDate` encodes a Date as a JSON number = `Date.timeIntervalSinceReferenceDate` = a Double of seconds since the Apple reference epoch 2001-01-01T00:00:00Z (UTC). NOT Unix epoch, NOT milliseconds, NOT ISO-8601.
 
 Conversion: unix_seconds = apple_ref_seconds + 978307200 (seconds 1970-01-01 -> 2001-01-01).
-Worked example: 2024-01-01T00:00:00Z -> unix 1704067200 -> apple-ref 725846400.0. (Negative for pre-2001; typically fractional.)
+Worked example: 2024-01-01T00:00:00Z -> unix 1704067200 -> apple-ref **725760000.0** (= 1704067200 − 978307200). **Correction (E2-S5 review):** an earlier draft wrote 725846400.0, which is one day off (that value decodes to 2024-01-02). The committed `sample-payload.json` still uses 725846400.0 in its synthetic `createdAt` fields — harmless for the round-trip test (which asserts decode↔encode stability, not the calendar date) and to be regenerated when a real `/v1/samples` payload is captured (R-6). (Negative for pre-2001; typically fractional.)
 
 ### chat/<uuid>.json -> .iso8601 + pretty + sorted-keys
 `Agent/ChatSessionStore.swift:33-44`:
