@@ -66,6 +66,8 @@ converted artifact size is recorded (confirms the ≈0.8–1 GB §13.3 estimate;
 ## Stories
 
 ### E11-S1 — [SPIKE] SigLIP2 weight conversion + embedding-parity harness
+> **Note:** Satisfied by Spike S-3 (`spikes/s3-siglip2/`) — runtime = `ort` + ONNX (`onnx-community/siglip2-base-patch16-256-ONNX`); parity surface (preprocess/tokenize/L2-normalize/rank/.embed) proven, magic decision = keep `PALMEMB1`, bump `modelVersion` to 2.
+
 **Intent:** As the build, I want SigLIP2 base patch16-256 768-dim weights as ONNX/candle plus a parity
 harness, so visual indexing produces L2-normalized embeddings that keep the `0.05` floor / `0.85` cutoff
 valid (or so we decide to re-index with a new magic).
@@ -106,6 +108,8 @@ with transcript stories.
 ---
 
 ### E11-S2 — `.embed` binary store + cache-key identity (EmbeddingStore)
+> **Status:** DONE (story/E11-S2-embed-store) — PALMEMB1 byte-exact, modelVersion=2
+
 **Intent:** As `palmier-search`, I want a byte-faithful `.embed` reader/writer keyed by file identity, so
 indexes persist, reload cheaply, and re-index naturally on any file edit.
 

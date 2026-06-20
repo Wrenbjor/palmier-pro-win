@@ -9,4 +9,24 @@ publish.workspace = true
 [dependencies]
 palmier-model = { path = "../palmier-model" }
 
+# E11-S2 — `.embed` (PALMEMB1) binary store + cache-key identity (EmbeddingStore).
+# Ported byte-exact from Spike S-3 (`spikes/s3-siglip2/src/store.rs`), itself proven
+# against the macOS `EmbeddingStore.swift`. Kept minimal: no model/runtime here — the
+# embedder (ort/candle) lands per a later story (S-3 ruling: runtime = ort + ONNX).
+serde.workspace = true
+serde_json.workspace = true
+# IEEE-754 binary16 — bit-identical to Swift's `Float16`; on-disk vector storage.
+half = "2"
+# SHA256 for the file-identity cache key `SHA256(path|mtime|size)[:32]`.
+sha2 = "0.10"
+# Platform cache dir — `%APPDATA%\PalmierProWin\Cache\embeddings\` on Windows /
+# `~/.config/palmier-pro/Cache/embeddings/` on Linux. Same `dirs` convention the
+# rest of the workspace uses (palmier-project registry/samples).
+dirs.workspace = true
+# Error context for the store read/write/decode paths.
+anyhow = "1"
+
 # Heavy deps (candle/ort for SigLIP2/CLIP, tokenizers) come per-story — FOUNDATION §2 / §6.10.
+
+[dev-dependencies]
+tempfile = "3"
