@@ -3226,7 +3226,16 @@ dependencies = [
 name = "palmier-agent"
 version = "0.1.0"
 dependencies = [
+ "futures-core",
+ "futures-util",
+ "palmier-model",
  "palmier-tools",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "time",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
