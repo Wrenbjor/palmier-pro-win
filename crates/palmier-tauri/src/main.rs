@@ -30,6 +30,10 @@
 mod boot;
 mod commands;
 mod menu;
+// E5-S8 — the wgpu preview present seam (plan A1: wgpu swapchain on the Tauri window
+// HWND under a transparent WebView2 child). Self-contained to stay parallel-safe with
+// concurrent panel/overlay work (E5-S10).
+mod preview;
 mod project;
 mod settings;
 mod update;
@@ -90,6 +94,10 @@ fn main() {
             // E1-S8 — sample carousel (list / resolve+materialize+open).
             project::list_samples,
             project::open_sample,
+            // E5-S8 — preview present surface lifecycle (plan A1 wgpu-under-webview).
+            preview::preview_init,
+            preview::preview_resize,
+            preview::preview_teardown,
         ])
         .setup(move |app| {
             // E1-S7/E1-S8 — build the project lifecycle state BEFORE `auth` is moved
@@ -109,6 +117,9 @@ fn main() {
             // E1-S9 — the live (mutable) settings the General-tab toggles mutate +
             // persist, seeded from the boot snapshot.
             app.manage(SettingsState(Mutex::new(boot_ctx.settings.clone())));
+            // E5-S8 — the preview present session slot (None until a project window
+            // calls `preview_init`). Holds the wgpu compositor + decode owner.
+            app.manage(preview::PreviewState::default());
 
             // E1-S3 — build + install the full main menu (Palmier Pro / File /
             // Edit / View / Help) with the reference Windows/Linux accelerators
