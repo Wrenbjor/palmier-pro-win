@@ -138,18 +138,23 @@ pub fn init_telemetry(telemetry_pref: bool) -> palmier_telemetry::TelemetryHandl
     // `init` installs (1) Sentry [if enabled + DSN], (2) the tracing subscriber
     // [file rotation + stderr + Sentry layer], (3) the crash/panic hook. This is
     // the seam E1-S2/E1-S6 flagged: telemetry — not boot — owns subscriber setup.
-    let handle = palmier_telemetry::init(&config);
-
-    // Record the FIRST telemetry init's `file_logging` result for the seam test.
-    // Because the global tracing subscriber can be installed only once per
-    // process, only the first `init` across a test binary actually attaches the
-    // file layer; capturing it here lets the seam test assert deterministically
-    // (whichever test runs first) that telemetry — with no boot-owned stub
-    // subscriber shadowing it — does attach the rotated file logger.
+    //
+    // Under `#[cfg(test)]` the `init` call and the seam-test capture run inside a
+    // single critical section so the thread that **wins** the one-shot global
+    // subscriber install (`file_logging == true`) is the same thread that records
+    // `FIRST_FILE_LOGGING` — making the seam test deterministic under parallel
+    // `cargo test` (no winner/recorder race). Production has no such lock.
     #[cfg(test)]
-    {
-        let _ = tests::FIRST_FILE_LOGGING.set(handle.file_logging());
-    }
+    let handle = {
+        let _g = tests::TELEMETRY_TEST_LOCK
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let h = palmier_telemetry::init(&config);
+        let _ = tests::FIRST_FILE_LOGGING.set(h.file_logging());
+        h
+    };
+    #[cfg(not(test))]
+    let handle = palmier_telemetry::init(&config);
 
     tracing::debug!(
         target: "app",
@@ -283,8 +288,13 @@ pub fn run_sync_boot() -> BootContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, OnceLock};
     use std::time::Instant;
+
+    /// Serializes the `palmier_telemetry::init` + `FIRST_FILE_LOGGING` capture so
+    /// the thread that wins the one-shot global subscriber install is the one that
+    /// records the result — removing the winner/recorder race under parallel tests.
+    pub(super) static TELEMETRY_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     /// `file_logging` result of the **first** `init_telemetry` in this test
     /// binary (set in `init_telemetry` under `#[cfg(test)]`). The global tracing
