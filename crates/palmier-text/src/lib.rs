@@ -46,11 +46,13 @@
 //! assert!(!run.glyphs.is_empty());
 //! ```
 
+pub mod caption;
 pub mod layout;
 pub mod preroll;
 pub mod registry;
 pub mod style;
 
+pub use caption::{phrases, CaptionCase, Phrase, Segment, MIN_DISPLAY_DURATION};
 pub use layout::{GlyphRun, LayoutBox, PositionedGlyph, TextLayout};
 pub use preroll::{is_visible, preroll_window, PREROLL_FRAMES};
 pub use registry::{FontRegistry, BUNDLED_FONTS};

@@ -14,6 +14,12 @@ palmier-model = { path = "../palmier-model" }
 # bundled reference fonts + the user's installed system fonts) and `swash` (the
 # glyph rasterizer the engine's text pass uses to fill the glyph atlas). It is
 # pure-Rust and always on — the layout half of this story is presentation-agnostic
-# and must build/test on a GPU-free box. `unicode-segmentation` is unused here;
-# cosmic-text pulls its own.
+# and must build/test on a GPU-free box.
 cosmic-text = "0.14"
+
+# E10-S5 CaptionBuilder phrase algorithm: grapheme-cluster counts for the
+# duration distribution weighting must match Swift `String.count` / `Character`
+# (extended grapheme clusters), NOT `char`/scalar or byte counts. This is the
+# parity-critical oracle (SM-13), so the count source is pinned explicitly here
+# rather than relying on cosmic-text's transitive copy.
+unicode-segmentation = "1"
