@@ -1,0 +1,5 @@
+# The verbatim agent instructions are byte-for-byte contract text (ruling #2 / R-5)
+# embedded via include_str!. They MUST stay LF-only: CRLF on a Windows checkout would
+# change the byte length and break the verbatim-fidelity test (and silently alter the
+# prompt the LLM was tuned against). Pin LF regardless of the repo's `text=auto`.
+src/agent_instructions.txt text eol=lf
