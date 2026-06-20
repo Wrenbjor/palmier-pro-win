@@ -16,17 +16,26 @@
 //!
 //! Story E2-S1 lands the leaf enums every other shape depends on: [`ClipType`],
 //! [`Interpolation`], and [`AnimatableProperty`], plus the [`smoothstep`] / [`lerp`]
-//! helpers and the [`KeyframeInterpolatable`] trait. Later Epic 2 stories add
-//! `Transform`/`Crop` (E2-S2), keyframes + sampling (E2-S3), `VolumeScale` (E2-S4),
-//! and the `Timeline`/`Track`/`Clip` shapes.
+//! helpers and the [`KeyframeInterpolatable`] trait. E2-S2 adds [`Transform`]
+//! (center-based, ruling #7) + [`Crop`]; E2-S4 adds [`VolumeScale`] (linear↔dB,
+//! ruling #9); E3-S1 adds the edit value types the engines consume
+//! ([`FrameRange`], [`ClipShift`], [`GapSelection`], [`TimelineRangeSelection`])
+//! and confirms [`ClipType::is_compatible`] (ruling #12). Later Epic 2 stories add
+//! keyframes + sampling (E2-S3) and the `Timeline`/`Track`/`Clip` shapes.
 
 mod animatable_property;
 mod clip_type;
+mod edit_types;
 mod interpolation;
+mod transform;
+mod volume;
 
 pub use animatable_property::AnimatableProperty;
 pub use clip_type::ClipType;
+pub use edit_types::{ClipShift, FrameRange, GapSelection, TimelineRangeSelection};
 pub use interpolation::{lerp, smoothstep, Interpolation, KeyframeInterpolatable};
+pub use transform::{Crop, Transform};
+pub use volume::VolumeScale;
 
 /// Crate marker retained for the workspace skeleton smoke tests
 /// (`palmier-tauri`, `palmier-project` reference it). Real model types are the
