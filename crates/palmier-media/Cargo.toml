@@ -15,6 +15,8 @@ content-prefix-fallback = []
 
 [dependencies]
 palmier-model = { path = "../palmier-model" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # Cache infrastructure (E4-S2): SHA256 cache key, OS cache-dir resolution,
 # semaphore concurrency gates + in-flight dedup. Kept light — no ffmpeg/symphonia
@@ -22,6 +24,20 @@ palmier-model = { path = "../palmier-model" }
 sha2 = "0.10"
 dirs = "6"
 tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
+
+# Asset metadata loader (E4-S1) — LIGHTWEIGHT, pure-Rust, NO system FFmpeg.
+# `ffmpeg-next`/system-FFmpeg are intentionally NOT linked in this story; the
+# Windows FFmpeg toolchain isn't provisioned yet (that lands with the decode-heavy
+# E4-S3/S4/S5 pipelines). Fields that genuinely need a full decoder are returned
+# as `None` with a `// TODO(ffmpeg)` note rather than pulling ffmpeg-next here.
+#   * image — `image` crate for dimensions; `kamadak-exif` for EXIF orientation.
+#   * audio — `symphonia` (pure Rust) for duration / sample-rate / channel facts.
+#   * video (mp4/mov/m4v) — `mp4` crate (pure-Rust ISO-BMFF parser) for duration,
+#     dimensions, display-matrix rotation, and audio-track presence.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "webp"] }
+kamadak-exif = "0.6"
+symphonia = { version = "0.6", default-features = false, features = ["mp3", "wav", "aac", "isomp4", "pcm", "adpcm"] }
+mp4 = "0.14"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
