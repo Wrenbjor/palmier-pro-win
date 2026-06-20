@@ -10,4 +10,23 @@ publish.workspace = true
 palmier-model = { path = "../palmier-model" }
 palmier-media = { path = "../palmier-media" }
 
-# Heavy deps (wgpu, cpal, rubato, cosmic-text) come per-story — see FOUNDATION §2.
+# E5-S6 audio mixer (FOUNDATION §6.5 "Audio mixing", §2 locked stack):
+#   symphonia decode → rubato resample 48 kHz → speed time-stretch → envelope → cpal out.
+# `cpal` is feature-gated behind `audio-device` so the mixer's pure DSP (envelope, retime,
+# resample-plan) builds + tests headlessly — a real output device only exists behind that
+# feature (FOUNDATION §11.1: GPU/device paths run headless or are #[ignore]d). symphonia +
+# rubato are pure-Rust and always on.
+# NOTE: wgpu is NOT pulled here — E5-S6 is the presentation-agnostic audio story; the wgpu
+# 27.x pin (reconciliation #23) belongs to the GPU compositor stories (E5-S8).
+symphonia = { version = "0.5", default-features = false, features = ["wav", "mp3", "aac", "isomp4", "flac", "ogg", "vorbis", "pcm"] }
+rubato = "0.16"
+
+[dependencies.cpal]
+version = "0.16"
+optional = true
+
+[features]
+# Off by default so CI / headless agents build + test the pure DSP without an audio device.
+# Turn on for the live preview build (E5-S7 transport wires the device sink).
+default = []
+audio-device = ["dep:cpal"]
