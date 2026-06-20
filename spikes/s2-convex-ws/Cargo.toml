@@ -1,0 +1,86 @@
+# Spike S-2 — Convex WebSocket live-query (the AI-generation subscription).
+#
+# WHY THIS SPIKE (PRD §11 Spike S-2): Epic 9 (palmier-gen) needs a reactive
+# subscription to `generations:byId(jobId)` (queued→running→succeeded/failed) and
+# the `models:list` live catalog — exactly the Convex WebSocket sync protocol the
+# macOS reference gets "for free" from the ConvexMobile SDK. FOUNDATION §8.1 and
+# docs/reference/generation.md ASSUMED there is no native Rust Convex SDK and that
+# we'd hand-roll the WS sync protocol over tokio-tungstenite or fall back to HTTP.
+#
+# KEY FINDING (this spike): that assumption is WRONG. There is an OFFICIAL,
+# actively-maintained Rust client — the `convex` crate (get-convex/convex-rs,
+# v0.10.4, updated 2026-04-10, Apache-2.0) — that implements the full WS sync
+# protocol (Connect / ModifyQuerySet / Mutation / Authenticate ↔ Transition /
+# MutationResponse / Ping) on top of tokio-tungstenite, exposes `subscribe` as a
+# `futures::Stream`, and supports dynamic JWT auth via `set_auth_callback`
+# (refreshed on reconnect) — i.e. the Clerk-token seam palmier-auth needs.
+#
+# This spike therefore prototypes BOTH:
+#   1. (recommended) the `convex` crate path — bin `convex_client` — subscribe to
+#      generations:byId + models:list, mutate generations:submit, auth via callback.
+#   2. (fallback, transport-blocked) a `reqwest` HTTP path — bin `http_fallback` —
+#      /v1/models GET + a polling loop that re-queries generations:byId via the
+#      Convex HTTP query API when WS is blocked by a proxy/firewall.
+#
+# ISOLATION: declares its OWN empty `[workspace]` table so Cargo treats it as a
+# standalone workspace root — NOT a member of the 18-crate root workspace. Touches
+# NO prod crate, NO root Cargo.toml, NO knowledge-base file.
+#
+# BUILD (Windows): from inside this dir,
+#   pwsh -File ../../scripts/with-msvc.ps1 cargo build
+# Never bare `cargo` (MSVC linker not on PATH) or Git Bash (its `link` shadows
+# MSVC link.exe). See docs/windows-harness-notes.md.
+
+[workspace]
+
+[package]
+name = "s2-convex-ws"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Spike S-2: reproduce the Convex WS live-query (generations:byId + models:list) from a Rust client; HTTP polling fallback."
+
+[dependencies]
+# THE load-bearing dependency: the official Convex Rust client. Implements the WS
+# sync protocol (see FINDINGS §1) end to end — Connect handshake, ModifyQuerySet
+# subscriptions, Mutation, Authenticate, Transition application, ping/pong,
+# reconnect with query-set replay. `subscribe` -> `futures::Stream`.
+convex = "0.10"
+
+# tokio: the async runtime the convex crate is built on (it uses tokio-tungstenite
+# internally). We need the multi-thread runtime + macros + time for the demo.
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+
+# futures: `StreamExt::next()` to pump the subscription stream, and the dynamic
+# auth-callback future plumbing (set_auth_callback wants a boxed Future).
+futures = "0.3"
+
+# reqwest: the HTTP fallback transport (bin `http_fallback`). `/v1/models` GET and
+# the Convex HTTP query endpoint used by the polling loop. rustls so we don't need
+# a system OpenSSL on Windows. `json` for serde round-tripping.
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+
+# serde / serde_json: decode BackendGenerationJob + CatalogEntry shapes, build the
+# JSON args for mutations/queries. Mirrors the wire contract in generation.md.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# anyhow: the convex crate returns anyhow::Result; match it for ergonomic ? in the
+# demo binaries.
+anyhow = "1"
+
+# tracing: structured logging, parity with FOUNDATION §6.16 (target `generation`).
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[[bin]]
+name = "convex_client"
+path = "src/bin/convex_client.rs"
+
+[[bin]]
+name = "http_fallback"
+path = "src/bin/http_fallback.rs"
+
+[lib]
+name = "s2_convex_ws"
+path = "src/lib.rs"
