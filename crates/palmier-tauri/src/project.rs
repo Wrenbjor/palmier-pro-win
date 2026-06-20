@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_dialog::DialogExt;
 
 use palmier_project::{
@@ -213,7 +213,7 @@ pub fn create_project<R: Runtime>(
         entry_id_for_path(&reg, &path).ok_or("registered project not found")?
     };
 
-    set_active(&state, &id, path.clone(), snapshot)?;
+    set_active(&app, &state, &id, path.clone(), snapshot)?;
     window::open_project_window(&app, &id).map_err(|e| e.to_string())?;
     tracing::info!(target: "project", id = %id, path = %path.display(), "created project");
     Ok(Some(id))
@@ -245,7 +245,7 @@ pub fn open_project_dialog<R: Runtime>(
         entry_id_for_path(&reg, &path).ok_or("registered project not found")?
     };
 
-    set_active(&state, &id, path, snapshot)?;
+    set_active(&app, &state, &id, path, snapshot)?;
     window::open_project_window(&app, &id).map_err(|e| e.to_string())?;
     tracing::info!(target: "project", id = %id, "opened project from dialog");
     Ok(Some(id))
@@ -282,7 +282,7 @@ pub fn open_project<R: Runtime>(
         reg.register(&path).map_err(|e| e.to_string())?;
     }
 
-    set_active(&state, &project_id, path, snapshot)?;
+    set_active(&app, &state, &project_id, path, snapshot)?;
     window::open_project_window(&app, &project_id).map_err(|e| e.to_string())?;
     tracing::info!(target: "project", id = %project_id, "opened project");
     Ok(())
@@ -312,7 +312,12 @@ pub fn show_home<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, ProjectState>,
 ) -> Result<(), String> {
-    flush_active(&state)?;
+    flush_active(&app, &state)?;
+    // E8-S7: clear the agent panel's session state (the next project open reloads
+    // its own chat/). No project active ⇒ no chat tabs.
+    if let Some(agent) = app.try_state::<crate::agent::AgentState>() {
+        agent.clear_sessions();
+    }
     window::show_home(&app).map_err(|e| e.to_string())
 }
 
@@ -381,7 +386,7 @@ pub fn open_sample<R: Runtime>(
     snapshot.generation_log = loaded.generation_log;
 
     let window_id = format!("sample-{}", palmier_project::safe_name(&slug));
-    set_active(&state, &window_id, bundle, snapshot)?;
+    set_active(&app, &state, &window_id, bundle, snapshot)?;
     window::open_project_window(&app, &window_id).map_err(|e| e.to_string())?;
     tracing::info!(target: "project", slug = %slug, "opened sample (not registry-tracked)");
     Ok(())
@@ -391,27 +396,53 @@ pub fn open_sample<R: Runtime>(
 
 /// Make `id` the active project, **flushing the previously-active one first**
 /// (force-flush-on-switch — reference autosave-before-ordering-out).
-fn set_active(
+///
+/// E8-S7: after the previous project is flushed and the new one is installed, load
+/// the new project's chat sessions ([`AgentState::load_project_sessions`]) so the
+/// agent panel's tab bar / history shows that project's prior chats (newest-first,
+/// with a fresh empty current tab prepended — reference `loadSessions`).
+fn set_active<R: Runtime>(
+    app: &AppHandle<R>,
     state: &State<'_, ProjectState>,
     id: &str,
     path: PathBuf,
     snapshot: BundleSnapshot,
 ) -> Result<(), String> {
-    // Flush the previous active project before replacing it.
-    flush_active(state)?;
-    let mut active = state.active.lock().expect("active mutex");
-    *active = Some(ActiveProject {
-        id: id.to_string(),
-        document: ProjectDocument::new(Some(path)),
-        snapshot,
-    });
+    // Flush the previous active project before replacing it (also captures its
+    // chat into the bundle).
+    flush_active(app, state)?;
+    {
+        let mut active = state.active.lock().expect("active mutex");
+        *active = Some(ActiveProject {
+            id: id.to_string(),
+            document: ProjectDocument::new(Some(path.clone())),
+            snapshot,
+        });
+    }
+    // Load the new project's chat sessions into the agent panel (offline-safe: a
+    // missing chat/ dir ⇒ just the fresh current tab).
+    if let Some(agent) = app.try_state::<crate::agent::AgentState>() {
+        agent.load_project_sessions(&path);
+    }
     Ok(())
 }
 
 /// Force-flush the active document if dirty (no-op when clean / none active).
-fn flush_active(state: &State<'_, ProjectState>) -> Result<(), String> {
+///
+/// E8-S7: before flushing, refresh the active snapshot's `chat_files` from the
+/// agent's tab sessions ([`AgentState::capture_chat_snapshot`]) so the chat is
+/// persisted into the bundle's `chat/` dir on this save (ruling #4 — chat writes
+/// on document save). `app` is the handle used to reach the `AgentState`.
+fn flush_active<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &State<'_, ProjectState>,
+) -> Result<(), String> {
     let mut active = state.active.lock().expect("active mutex");
     if let Some(ap) = active.as_mut() {
+        // Pull the latest chat snapshot into the bundle snapshot before saving.
+        if let Some(agent) = app.try_state::<crate::agent::AgentState>() {
+            ap.snapshot.chat_files = agent.capture_chat_snapshot();
+        }
         let flushed = ap
             .document
             .flush_if_dirty(&ap.snapshot)
@@ -421,6 +452,29 @@ fn flush_active(state: &State<'_, ProjectState>) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// The active project's bundle root (`.palmier` dir), if a project is open. The
+/// chat sessions live under `<root>/chat/` (E8-S7).
+pub fn active_project_root<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    let state = app.try_state::<ProjectState>()?;
+    let active = state.active.lock().expect("active mutex");
+    active.as_ref().and_then(|ap| ap.document.path().map(Path::to_path_buf))
+}
+
+/// Mark the active document dirty because a **chat session changed** (ruling #4 —
+/// the reference `agentService.onSessionsChanged → updateChangeCount(.changeDone)`
+/// marks the doc dirty so the chat persists on the next save, NOT eagerly). A
+/// no-op when no project is active. Called by the agent tab commands + after each
+/// turn.
+pub fn mark_chat_dirty<R: Runtime>(app: &AppHandle<R>) {
+    let Some(state) = app.try_state::<ProjectState>() else {
+        return;
+    };
+    let mut active = state.active.lock().expect("active mutex");
+    if let Some(ap) = active.as_mut() {
+        ap.document.mark_chat_changed();
+    }
 }
 
 /// Open the Save-As dialog for a new `.palmier` bundle (reference `NSSavePanel`):

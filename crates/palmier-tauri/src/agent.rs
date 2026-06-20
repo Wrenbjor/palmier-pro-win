@@ -38,6 +38,7 @@
 //!   signed-in-without-key user gets the "proxied not yet available" error event.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
@@ -45,9 +46,9 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tokio_util::sync::CancellationToken;
 
 use palmier_agent::{
-    available_models, effective_model, parse_json_object, select_and_build_client, AgentClientError,
-    AgentLoop, AnthropicModel, AnthropicToolSchema, DispatchResult, SelectedBackend, Tier,
-    ToolDispatcher, ToolResultBlock,
+    available_models, effective_model, encode_session, load_sessions, parse_json_object,
+    select_and_build_client, AgentClientError, AgentLoop, AnthropicModel, AnthropicToolSchema,
+    ChatSession, DispatchResult, SelectedBackend, Tier, ToolDispatcher, ToolResultBlock,
 };
 use palmier_tools::{tool_definitions, Block, ToolContext, ToolDispatch, ToolExecutor, IdUniverse};
 
@@ -155,6 +156,15 @@ pub struct AgentState {
     /// The persisted model preference (config key `"agentModel"`; reference
     /// `UserDefaults`). `None` ⇒ fall back to the tier default.
     preferred_model: Mutex<Option<AnthropicModel>>,
+    /// **The tab/history list** (E8-S7) — the ordered [`ChatSession`]s shown in
+    /// the panel's tab bar + history dropdown. On project open this is
+    /// `load_sessions(<project>/chat/)` (non-empty, newest-first) with a fresh
+    /// empty open session **prepended as current** (reference `loadSessions`).
+    /// `index 0` is the current tab. Empty when no project is open.
+    tabs: Mutex<Vec<ChatSession>>,
+    /// The current (foreground) session id — the tab `agent_send` runs against
+    /// and the panel renders. `None` until a project opens / a session is created.
+    current_session: Mutex<Option<String>>,
 }
 
 impl AgentState {
@@ -176,6 +186,8 @@ impl AgentState {
             system: palmier_mcp::AGENT_INSTRUCTIONS.to_string(),
             sessions: Mutex::new(HashMap::new()),
             preferred_model: Mutex::new(None),
+            tabs: Mutex::new(Vec::new()),
+            current_session: Mutex::new(None),
         }
     }
 
@@ -199,6 +211,260 @@ impl AgentState {
             .expect("mcp mutex")
             .as_ref()
             .map(|s| s.local_addr().to_string())
+    }
+
+    // ─── Session / tab orchestration (E8-S7) ─────────────────────────────────
+
+    /// **Load on project open** (reference `loadSessions(projectURL)`): read
+    /// `<project>/chat/*.json` (empty-message sessions dropped, sorted
+    /// `updated_at` desc by [`palmier_agent::load_sessions`]), set them all
+    /// `is_open=false`, then **prepend a fresh empty open session as current**.
+    /// The prepended session's id becomes the [`current_session`](Self::current_session).
+    ///
+    /// A missing `chat/` dir ⇒ just the fresh session (offline-safe / new project).
+    /// Drops any prior live `SessionLoop` state (a new project ⇒ a clean slate).
+    pub fn load_project_sessions(&self, project_root: &Path) {
+        let mut prior = load_sessions(project_root);
+        for s in &mut prior {
+            s.is_open = false;
+        }
+        // Prepend a fresh empty open session as the current tab (reference: the
+        // panel always opens onto a new chat, with history behind it).
+        let fresh = ChatSession::new();
+        let current_id = fresh.id.to_string();
+        let mut tabs = Vec::with_capacity(prior.len() + 1);
+        tabs.push(fresh);
+        tabs.extend(prior);
+
+        *self.tabs.lock().expect("tabs mutex") = tabs;
+        *self.current_session.lock().expect("current mutex") = Some(current_id);
+        // A project switch resets the live per-tab loop state.
+        self.sessions.lock().expect("sessions mutex").clear();
+        tracing::info!(
+            target: "agent",
+            project = %project_root.display(),
+            "loaded chat sessions for project"
+        );
+    }
+
+    /// Clear all session state (returning Home / no project active).
+    pub fn clear_sessions(&self) {
+        self.tabs.lock().expect("tabs mutex").clear();
+        *self.current_session.lock().expect("current mutex") = None;
+        self.sessions.lock().expect("sessions mutex").clear();
+    }
+
+    /// Ensure `session_id` exists as an open tab and is the current/foreground
+    /// session (`agent_send`'s pre-step). If the id is unknown — e.g. the frontend
+    /// minted a fresh uuid for a brand-new chat, or there is no project open yet —
+    /// a new [`ChatSession`] with that id is prepended so the conversation appears
+    /// in the tab bar and is captured on the next save.
+    fn ensure_tab_is_current(&self, session_id: &str) {
+        {
+            let mut tabs = self.tabs.lock().expect("tabs mutex");
+            match tabs.iter_mut().find(|t| t.id.to_string() == session_id) {
+                Some(tab) => tab.is_open = true,
+                None => {
+                    // Adopt the frontend-minted id (parse it; fall back to a fresh
+                    // uuid only if it isn't a valid uuid, which the panel never sends).
+                    let mut fresh = ChatSession::new();
+                    if let Ok(id) = uuid::Uuid::parse_str(session_id) {
+                        fresh.id = id;
+                    }
+                    tabs.insert(0, fresh);
+                }
+            }
+        }
+        *self.current_session.lock().expect("current mutex") = Some(session_id.to_string());
+    }
+
+    /// Copy the live loop messages of `session_id` into its tab [`ChatSession`],
+    /// bumping `updated_at` + auto-deriving the title (reference
+    /// `syncMessagesIntoCurrentSession`). No-op if the tab / loop is absent.
+    fn sync_messages_into_session(&self, session_id: &str) {
+        let messages = {
+            let sessions = self.sessions.lock().expect("sessions mutex");
+            match sessions.get(session_id) {
+                Some(s) => s.loop_state.messages.clone(),
+                None => return,
+            }
+        };
+        let mut tabs = self.tabs.lock().expect("tabs mutex");
+        if let Some(tab) = tabs.iter_mut().find(|t| t.id.to_string() == session_id) {
+            tab.sync_messages(messages);
+        }
+    }
+
+    /// **Capture the save snapshot** (reference `captureSaveSnapshot`): encode
+    /// each **non-empty** tab session to `<uuid>.json` bytes for the bundle's
+    /// `chat/` dir. Empty-message sessions are filtered (matching the load-side
+    /// filter — `agent-panel.md` lines 157-161). First syncs every live loop's
+    /// messages into its tab so the snapshot reflects the current conversation.
+    ///
+    /// Returns `(filename, bytes)` pairs the bundle writer drops into `chat/`.
+    pub fn capture_chat_snapshot(&self) -> Vec<(String, Vec<u8>)> {
+        // Sync every live loop into its tab first (so in-flight conversations
+        // persist), then encode the non-empty tabs.
+        let session_ids: Vec<String> = self
+            .sessions
+            .lock()
+            .expect("sessions mutex")
+            .keys()
+            .cloned()
+            .collect();
+        for id in session_ids {
+            self.sync_messages_into_session(&id);
+        }
+
+        let tabs = self.tabs.lock().expect("tabs mutex");
+        tabs.iter()
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| {
+                let bytes = encode_session(s)
+                    .map_err(|e| {
+                        tracing::warn!(target: "agent", error = %e, "failed to encode chat session");
+                    })
+                    .ok()?;
+                Some((format!("{}.json", s.id), bytes.into_bytes()))
+            })
+            .collect()
+    }
+
+    /// A summary row for the panel's tab bar / history dropdown.
+    fn session_summaries(&self) -> Vec<SessionSummary> {
+        let current = self.current_session.lock().expect("current mutex").clone();
+        let tabs = self.tabs.lock().expect("tabs mutex");
+        tabs.iter()
+            .map(|s| SessionSummary {
+                id: s.id.to_string(),
+                title: s.title.clone(),
+                updated_at: s.updated_at.unix_timestamp(),
+                is_open: s.is_open,
+                is_current: current.as_deref() == Some(&s.id.to_string()),
+                message_count: s.messages.len(),
+            })
+            .collect()
+    }
+
+    /// The current session id (for tests / callers).
+    fn current_id(&self) -> Option<String> {
+        self.current_session.lock().expect("current mutex").clone()
+    }
+
+    /// **new_session** (reference `newChat`): sync the outgoing current tab, then
+    /// prepend a fresh empty open session and make it current. Returns its id.
+    fn new_session(&self) -> String {
+        if let Some(cur) = self.current_id() {
+            self.sync_messages_into_session(&cur);
+        }
+        let fresh = ChatSession::new();
+        let id = fresh.id.to_string();
+        self.tabs.lock().expect("tabs mutex").insert(0, fresh);
+        *self.current_session.lock().expect("current mutex") = Some(id.clone());
+        id
+    }
+
+    /// **open_session** (reference `selectSession`): cancel the outgoing turn + sync
+    /// it, then make `session_id` the current open tab. `Err` if the id is unknown.
+    fn open_session(&self, session_id: &str) -> Result<(), String> {
+        if let Some(cur) = self.current_id() {
+            self.cancel_session_turn(&cur);
+            self.sync_messages_into_session(&cur);
+        }
+        {
+            let mut tabs = self.tabs.lock().expect("tabs mutex");
+            let Some(tab) = tabs.iter_mut().find(|t| t.id.to_string() == session_id) else {
+                return Err(format!("unknown session id: {session_id}"));
+            };
+            tab.is_open = true;
+        }
+        *self.current_session.lock().expect("current mutex") = Some(session_id.to_string());
+        Ok(())
+    }
+
+    /// **close_session** (reference `closeTab`): mark the tab not-open (it stays in
+    /// history + on disk). If it was current, focus the next open tab — or open a
+    /// fresh one if it was the last open tab (reference: last open tab → `newChat`).
+    fn close_session(&self, session_id: &str) -> Result<(), String> {
+        self.cancel_session_turn(session_id);
+        self.sync_messages_into_session(session_id);
+        let was_current = self.current_id().as_deref() == Some(session_id);
+
+        let next_open = {
+            let mut tabs = self.tabs.lock().expect("tabs mutex");
+            let Some(tab) = tabs.iter_mut().find(|t| t.id.to_string() == session_id) else {
+                return Err(format!("unknown session id: {session_id}"));
+            };
+            tab.is_open = false;
+            if was_current {
+                tabs.iter()
+                    .find(|t| t.is_open && t.id.to_string() != session_id)
+                    .map(|t| t.id.to_string())
+            } else {
+                None
+            }
+        };
+
+        if was_current {
+            match next_open {
+                Some(id) => *self.current_session.lock().expect("current mutex") = Some(id),
+                None => self.set_fresh_current(),
+            }
+        }
+        Ok(())
+    }
+
+    /// **delete_session** (reference `deleteSession`): drop the session from the tab
+    /// list + its live loop state. Deleting the current tab focuses the next open
+    /// tab (or a fresh one). `Err` if unknown. The on-disk file delete is the
+    /// caller's job (it needs the project root).
+    fn delete_session(&self, session_id: &str) -> Result<(), String> {
+        self.cancel_session_turn(session_id);
+        let was_current = self.current_id().as_deref() == Some(session_id);
+        {
+            let mut tabs = self.tabs.lock().expect("tabs mutex");
+            let before = tabs.len();
+            tabs.retain(|t| t.id.to_string() != session_id);
+            if tabs.len() == before {
+                return Err(format!("unknown session id: {session_id}"));
+            }
+        }
+        self.sessions.lock().expect("sessions mutex").remove(session_id);
+        if was_current {
+            let next = self
+                .tabs
+                .lock()
+                .expect("tabs mutex")
+                .iter()
+                .find(|t| t.is_open)
+                .map(|t| t.id.to_string());
+            match next {
+                Some(id) => *self.current_session.lock().expect("current mutex") = Some(id),
+                None => self.set_fresh_current(),
+            }
+        }
+        Ok(())
+    }
+
+    /// Prepend a fresh empty session and make it current (the "no open tab left"
+    /// fallback shared by close/delete — reference last-tab → `newChat`).
+    fn set_fresh_current(&self) {
+        let fresh = ChatSession::new();
+        let id = fresh.id.to_string();
+        self.tabs.lock().expect("tabs mutex").insert(0, fresh);
+        *self.current_session.lock().expect("current mutex") = Some(id);
+    }
+
+    /// Cancel the in-flight turn for `session_id` (if any) — the "cancel before
+    /// switching/closing" step (reference `selectSession`).
+    fn cancel_session_turn(&self, session_id: &str) {
+        let token = {
+            let sessions = self.sessions.lock().expect("sessions mutex");
+            sessions.get(session_id).and_then(|s| s.cancel.clone())
+        };
+        if let Some(token) = token {
+            token.cancel();
+        }
     }
 }
 
@@ -304,6 +570,25 @@ pub struct BackendStatus {
     pub effective_model: String,
     /// The wire model ids the user may pick, given their tier.
     pub available_models: Vec<String>,
+}
+
+/// A tab/history row the panel renders in the floating tab bar + the history
+/// dropdown (mirrors the frontend `ChatSessionSummary`; camelCase).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionSummary {
+    /// The session uuid (the key the tab commands take).
+    pub id: String,
+    /// The display title (auto-derived from the first user text, else "New chat").
+    pub title: String,
+    /// Last-updated as Unix seconds (history sorts newest-first by this).
+    pub updated_at: i64,
+    /// Whether this session is an open tab (vs history only).
+    pub is_open: bool,
+    /// Whether this is the current (foreground) session.
+    pub is_current: bool,
+    /// Number of messages (0 ⇒ a fresh empty session, never persisted).
+    pub message_count: usize,
 }
 
 /// One `agent://event` payload streamed to the webview (camelCase; mirrors the
@@ -479,6 +764,11 @@ pub fn agent_send<R: Runtime>(
         }
     };
 
+    // Ensure this session_id is a tab (so it appears in the tab bar + is captured on
+    // save) and is the current/foreground tab. A frontend-minted session_id that
+    // isn't yet a tab (e.g. the very first message of a brand-new chat) is adopted.
+    agent.ensure_tab_is_current(&session_id);
+
     // Append the user turn to the (per-session) loop + install a fresh cancel token.
     let cancel = CancellationToken::new();
     {
@@ -583,11 +873,18 @@ async fn run_agent_turn<R: Runtime>(
 
     // Write the resulting conversation back + clear the cancel token.
     if let Some(agent_state) = app.try_state::<AgentState>() {
-        let mut sessions = agent_state.sessions.lock().expect("sessions mutex");
-        if let Some(entry) = sessions.get_mut(&session_id) {
-            entry.loop_state = working;
-            entry.cancel = None;
+        {
+            let mut sessions = agent_state.sessions.lock().expect("sessions mutex");
+            if let Some(entry) = sessions.get_mut(&session_id) {
+                entry.loop_state = working;
+                entry.cancel = None;
+            }
         }
+        // Sync the live loop into its tab session (bumps updated_at + auto-derives
+        // the title) and mark the active document dirty so the next save persists
+        // the chat (ruling #4 — sessions write on document save, not eagerly).
+        agent_state.sync_messages_into_session(&session_id);
+        crate::project::mark_chat_dirty(&app);
     }
 }
 
@@ -680,6 +977,96 @@ fn stop_reason_wire(reason: palmier_agent::AnthropicStopReason) -> &'static str 
 /// A human-readable message for a client error (the panel surfaces it).
 fn backend_error_message(err: &AgentClientError) -> String {
     err.to_string()
+}
+
+// ─── Tab orchestration commands (E8-S7) ──────────────────────────────────────────
+//
+// The panel's floating tab bar + history dropdown call these; each maps to the
+// `AgentState` tab list + the live per-session loop. They mutate in-memory state
+// and mark the active document dirty so the chat persists on the next save
+// (ruling #4 — sessions are NOT written eagerly). The actual file write happens in
+// `project::flush_active` / save, which pulls `AgentState::capture_chat_snapshot`.
+
+/// `agent_list_sessions` — the tab bar + history rows (current first; history
+/// newest-first behind it). The panel renders open tabs and the history dropdown
+/// from this.
+#[tauri::command]
+pub fn agent_list_sessions(agent: State<'_, AgentState>) -> Vec<SessionSummary> {
+    agent.session_summaries()
+}
+
+/// `agent_new_session` — open a fresh empty chat tab and make it current
+/// (reference `newChat`). Syncs the outgoing current tab first. Returns the new
+/// session id. Does NOT itself write a file (the empty session is never persisted
+/// until it has messages).
+#[tauri::command]
+pub fn agent_new_session(agent: State<'_, AgentState>) -> String {
+    let id = agent.new_session();
+    tracing::info!(target: "agent", session_id = %id, "new chat session");
+    id
+}
+
+/// `agent_open_session` — switch the current tab to `session_id` (reference
+/// `selectSession`: cancel the in-flight turn + sync the outgoing session first).
+/// Marks the session open. `Err` if the id is unknown.
+#[tauri::command]
+pub fn agent_open_session(
+    agent: State<'_, AgentState>,
+    session_id: String,
+) -> Result<(), String> {
+    agent.open_session(&session_id)?;
+    tracing::info!(target: "agent", session_id = %session_id, "opened chat session");
+    Ok(())
+}
+
+/// `agent_close_session` — close the tab for `session_id` (reference `closeTab`):
+/// mark it not-open; closing the **current** tab moves focus to the next open tab,
+/// or opens a fresh one if it was the last open tab (reference: closing the last
+/// open tab → `newChat`). The session stays in history (and on disk) — closing a
+/// tab does not delete it. Marks the document dirty (the close is a session change).
+#[tauri::command]
+pub fn agent_close_session<R: Runtime>(
+    app: AppHandle<R>,
+    agent: State<'_, AgentState>,
+    session_id: String,
+) -> Result<(), String> {
+    agent.close_session(&session_id)?;
+    crate::project::mark_chat_dirty(&app);
+    tracing::info!(target: "agent", session_id = %session_id, "closed chat tab");
+    Ok(())
+}
+
+/// `agent_delete_session` — remove the session entirely (reference
+/// `deleteSession`): drop it from the tab list AND delete its `<uuid>.json` from
+/// the project's `chat/` dir. Deleting the current tab opens a fresh one. Marks the
+/// document dirty so the next save reflects the removal.
+#[tauri::command]
+pub fn agent_delete_session<R: Runtime>(
+    app: AppHandle<R>,
+    agent: State<'_, AgentState>,
+    session_id: String,
+) -> Result<(), String> {
+    agent.delete_session(&session_id)?;
+    // Delete the on-disk session file from the active project's chat/ dir, if any.
+    delete_session_file(&app, &session_id);
+    crate::project::mark_chat_dirty(&app);
+    tracing::info!(target: "agent", session_id = %session_id, "deleted chat session");
+    Ok(())
+}
+
+/// Delete `<project>/chat/<session_id>.json` from the active project, if a project
+/// is open and the file exists. Best-effort + lenient (a missing file / no project
+/// is fine — the in-memory removal is the source of truth on the next save).
+fn delete_session_file<R: Runtime>(app: &AppHandle<R>, session_id: &str) {
+    let Some(root) = crate::project::active_project_root(app) else {
+        return;
+    };
+    let path = palmier_agent::chat_dir(&root).join(format!("{session_id}.json"));
+    match std::fs::remove_file(&path) {
+        Ok(()) => tracing::info!(target: "agent", path = %path.display(), "deleted chat session file"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!(target: "agent", error = %e, "failed to delete chat session file"),
+    }
 }
 
 /// Emit one `agent://event` to all webviews. Logged-but-non-fatal on failure.
@@ -856,5 +1243,221 @@ mod tests {
         assert_eq!(v["hasApiKey"], true);
         assert_eq!(v["effectiveModel"], "claude-sonnet-4-6");
         assert_eq!(v["availableModels"], json!(["claude-sonnet-4-6"]));
+    }
+
+    // ─── E8-S7 — session persistence + tab orchestration ─────────────────────────
+
+    use palmier_agent::{AgentContentBlock, AgentMessage, ChatSession, Role};
+    use std::path::PathBuf;
+
+    /// A unique temp project root for a test.
+    fn temp_project() -> PathBuf {
+        std::env::temp_dir().join(format!("palmier-e8s7-{}", uuid::Uuid::new_v4()))
+    }
+
+    /// Add `text` as a user message to the live loop for `session_id` so a sync
+    /// captures it into the tab (simulating what `agent_send` accumulates).
+    fn push_user_turn(state: &AgentState, session_id: &str, text: &str) {
+        let mut sessions = state.sessions.lock().expect("sessions mutex");
+        let entry = sessions.entry(session_id.to_string()).or_insert_with(|| SessionLoop {
+            loop_state: AgentLoop::new(
+                palmier_agent::DEFAULT_MODEL,
+                state.system.clone(),
+                state.tools.clone(),
+            ),
+            cancel: None,
+        });
+        entry.loop_state.messages.push(AgentMessage::new(
+            Role::User,
+            vec![AgentContentBlock::text(text)],
+        ));
+    }
+
+    /// load_project_sessions: a missing chat/ dir yields exactly one fresh empty
+    /// current session (offline-safe), with no history.
+    #[test]
+    fn load_missing_chat_dir_yields_one_fresh_current() {
+        let state = AgentState::new();
+        let root = temp_project(); // never created
+        state.load_project_sessions(&root);
+        let tabs = state.tabs.lock().expect("tabs mutex");
+        assert_eq!(tabs.len(), 1);
+        assert!(tabs[0].is_empty());
+        assert!(tabs[0].is_open);
+        assert_eq!(state.current_id(), Some(tabs[0].id.to_string()));
+    }
+
+    /// Round-trip: create + capture-save a session, reload it on the next project
+    /// open → identical content, history sorted newest-first, with a fresh current
+    /// prepended. (create → save → reload → identical, sorted desc.)
+    #[test]
+    fn session_round_trip_create_save_reload_identical_sorted_desc() {
+        let root = temp_project();
+        std::fs::create_dir_all(&root).unwrap();
+
+        // Pre-seed two prior sessions directly on disk (older + newer).
+        let mut older = ChatSession::new();
+        older.title = "older chat".to_string();
+        older.updated_at = time::macros::datetime!(2026-06-18 09:00:00 UTC);
+        older.messages.push(AgentMessage::new(Role::User, vec![AgentContentBlock::text("a")]));
+        let mut newer = ChatSession::new();
+        newer.title = "newer chat".to_string();
+        newer.updated_at = time::macros::datetime!(2026-06-19 09:00:00 UTC);
+        newer.messages.push(AgentMessage::new(Role::User, vec![AgentContentBlock::text("b")]));
+        palmier_agent::write_session(&root, &older).unwrap();
+        palmier_agent::write_session(&root, &newer).unwrap();
+
+        // Open the project → load history + a fresh current.
+        let state = AgentState::new();
+        state.load_project_sessions(&root);
+        {
+            let tabs = state.tabs.lock().expect("tabs mutex");
+            // [fresh-current, newer, older] — history sorted updated_at DESC.
+            assert_eq!(tabs.len(), 3);
+            assert!(tabs[0].is_empty(), "current is the fresh empty session");
+            assert_eq!(tabs[1].title, "newer chat");
+            assert_eq!(tabs[2].title, "older chat");
+            // History sessions are not open (panel shows them as history rows).
+            assert!(!tabs[1].is_open && !tabs[2].is_open);
+        }
+
+        // The capture snapshot encodes the two NON-EMPTY history sessions (the fresh
+        // current is empty ⇒ skipped). Reload them and assert identical content.
+        let snapshot = state.capture_chat_snapshot();
+        assert_eq!(snapshot.len(), 2, "fresh empty current is not persisted");
+        // Write them back into a clean dir and reload → identical to the originals.
+        let root2 = temp_project();
+        std::fs::create_dir_all(palmier_agent::chat_dir(&root2)).unwrap();
+        for (name, bytes) in &snapshot {
+            std::fs::write(palmier_agent::chat_dir(&root2).join(name), bytes).unwrap();
+        }
+        let reloaded = palmier_agent::load_sessions(&root2);
+        assert_eq!(reloaded.len(), 2);
+        // Sorted desc: newer first.
+        assert_eq!(reloaded[0].title, "newer chat");
+        assert_eq!(reloaded[1].title, "older chat");
+        assert_eq!(reloaded[0].messages, newer.messages);
+        assert_eq!(reloaded[1].messages, older.messages);
+
+        std::fs::remove_dir_all(&root).ok();
+        std::fs::remove_dir_all(&root2).ok();
+    }
+
+    /// capture_chat_snapshot skips empty-message sessions (matching the load filter)
+    /// and syncs a live loop's messages into its tab so an in-flight chat persists.
+    #[test]
+    fn capture_skips_empty_and_syncs_live_loop() {
+        let state = AgentState::new();
+        let root = temp_project();
+        state.load_project_sessions(&root); // one fresh empty current
+
+        let current = state.current_id().unwrap();
+        // No messages yet ⇒ snapshot is empty (the only tab is the empty current).
+        assert!(state.capture_chat_snapshot().is_empty());
+
+        // Push a user turn into the live loop, then capture: the tab is synced +
+        // persisted (title auto-derives), the empty case is gone.
+        push_user_turn(&state, &current, "trim the intro please");
+        let snapshot = state.capture_chat_snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert!(snapshot[0].0.ends_with(".json"));
+        // The tab's title derived from the first user text.
+        let tabs = state.tabs.lock().expect("tabs mutex");
+        assert_eq!(tabs[0].title, "trim the intro please");
+    }
+
+    /// new_session: prepends a fresh empty current tab, keeping the prior tab in the
+    /// list (as history once it has content).
+    #[test]
+    fn new_session_prepends_fresh_current() {
+        let state = AgentState::new();
+        state.load_project_sessions(&temp_project());
+        let first = state.current_id().unwrap();
+        let second = state.new_session();
+        assert_ne!(first, second);
+        assert_eq!(state.current_id(), Some(second.clone()));
+        let tabs = state.tabs.lock().expect("tabs mutex");
+        assert_eq!(tabs[0].id.to_string(), second, "new session is at index 0");
+        assert_eq!(tabs.len(), 2);
+    }
+
+    /// open_session: switches current; unknown id errors.
+    #[test]
+    fn open_session_switches_current_and_errors_unknown() {
+        let state = AgentState::new();
+        state.load_project_sessions(&temp_project());
+        let first = state.current_id().unwrap();
+        let second = state.new_session();
+        // Switch back to the first.
+        state.open_session(&first).unwrap();
+        assert_eq!(state.current_id(), Some(first));
+        let _ = second;
+        // Unknown id errors.
+        assert!(state.open_session("not-a-session").is_err());
+    }
+
+    /// close_session: closing the current (and only open) tab opens a fresh one;
+    /// the closed session stays in the list as history. Closing the LAST open tab →
+    /// newChat (reference).
+    #[test]
+    fn close_last_open_tab_opens_fresh() {
+        let state = AgentState::new();
+        state.load_project_sessions(&temp_project());
+        let current = state.current_id().unwrap();
+        // Give it content so it survives as history.
+        push_user_turn(&state, &current, "hello");
+
+        state.close_session(&current).unwrap();
+        // A fresh current was opened (different id), and the closed one is still in
+        // the list but not open.
+        let new_current = state.current_id().unwrap();
+        assert_ne!(new_current, current);
+        let tabs = state.tabs.lock().expect("tabs mutex");
+        let closed = tabs.iter().find(|t| t.id.to_string() == current).unwrap();
+        assert!(!closed.is_open, "closed session is history, not deleted");
+    }
+
+    /// delete_session: drops the session from the list entirely; deleting the
+    /// current opens a fresh one; unknown id errors.
+    #[test]
+    fn delete_session_removes_and_errors_unknown() {
+        let state = AgentState::new();
+        state.load_project_sessions(&temp_project());
+        let current = state.current_id().unwrap();
+        push_user_turn(&state, &current, "doomed");
+
+        // Delete the current → it's gone, a fresh current exists.
+        state.delete_session(&current).unwrap();
+        {
+            let tabs = state.tabs.lock().expect("tabs mutex");
+            assert!(tabs.iter().all(|t| t.id.to_string() != current), "deleted session removed");
+            assert!(state.current_id().is_some(), "a fresh current was opened");
+        }
+        // Unknown id errors.
+        assert!(state.delete_session("not-a-session").is_err());
+    }
+
+    /// ensure_tab_is_current adopts a frontend-minted uuid as a new tab so an
+    /// agent_send against a brand-new chat id appears in the tab list + is captured.
+    #[test]
+    fn ensure_tab_adopts_frontend_session_id() {
+        let state = AgentState::new();
+        let id = uuid::Uuid::new_v4().to_string();
+        state.ensure_tab_is_current(&id);
+        assert_eq!(state.current_id(), Some(id.clone()));
+        let tabs = state.tabs.lock().expect("tabs mutex");
+        assert_eq!(tabs.len(), 1);
+        assert_eq!(tabs[0].id.to_string(), id, "the minted id is adopted verbatim");
+    }
+
+    /// clear_sessions wipes all tab + current state (returning Home).
+    #[test]
+    fn clear_sessions_wipes_state() {
+        let state = AgentState::new();
+        state.load_project_sessions(&temp_project());
+        assert!(state.current_id().is_some());
+        state.clear_sessions();
+        assert!(state.current_id().is_none());
+        assert!(state.tabs.lock().expect("tabs mutex").is_empty());
     }
 }

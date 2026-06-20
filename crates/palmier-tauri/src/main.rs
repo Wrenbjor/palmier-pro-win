@@ -128,6 +128,14 @@ fn main() {
             agent::agent_cancel,
             agent::agent_status,
             agent::agent_set_pref,
+            // E8-S7 — agent chat session persistence + tab orchestration. The panel's
+            // tab bar + history dropdown call these; sessions load on project open and
+            // persist into the bundle's chat/ dir on document save (ruling #4).
+            agent::agent_list_sessions,
+            agent::agent_new_session,
+            agent::agent_open_session,
+            agent::agent_close_session,
+            agent::agent_delete_session,
         ])
         .setup(move |app| {
             // E1-S7/E1-S8 — build the project lifecycle state BEFORE `auth` is moved
