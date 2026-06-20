@@ -41,7 +41,9 @@
 //! the pure [`SamplerState`] / [`candidate_times`] core (`samplerVersion = 1`,
 //! matching [`spec::SAMPLER_VERSION`]) so it tests without a decoder.
 
+pub mod coordinator;
 pub mod embedder;
+pub mod export_pause;
 pub mod indexer;
 pub mod manifest;
 pub mod model_loader;
@@ -76,6 +78,13 @@ pub mod spec {
     pub const RELATIVE_CUTOFF: f32 = 0.85;
 }
 
+pub use coordinator::{
+    CoordinatorAsset, QueryEncoder, SearchIndexCoordinator, VisualStatus, DEFAULT_SEARCH_LIMIT,
+};
+pub use export_pause::{
+    export_active, export_did_begin, export_did_end, ExportPauseGuard, RefcountedExportYield,
+    EXPORT_POLL_INTERVAL,
+};
 pub use indexer::{
     ExportYield, FrameEmbedder, Indexed, NoExportYield, VisualIndexer,
 };
@@ -99,3 +108,19 @@ pub use manifest::{ManifestFile, OnnxFiles, OnnxManifest};
 pub use model_loader::{InstalledModel, ModelState, VisualModelLoader};
 pub use preprocess::{pixel_values_from_path, pixel_values_from_rgb, to_pixel_values};
 pub use tokenize::SiglipTokenizer;
+
+/// Crate-wide test serialization lock. The export-pause refcount
+/// ([`export_pause`]) and the coordinator fan-out registry ([`coordinator`]) are
+/// **process-global** (parity with the reference statics), so any two tests that
+/// touch them — across *both* modules — must not run concurrently. Both modules
+/// acquire this one lock so a coordinator worker polling the export counter never
+/// races an `export_pause` test that has bumped it.
+#[cfg(test)]
+pub(crate) static TEST_GLOBAL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Acquire [`TEST_GLOBAL_LOCK`], recovering from a poisoned lock (a prior test panic
+/// must not wedge every later test).
+#[cfg(test)]
+pub(crate) fn test_guard() -> std::sync::MutexGuard<'static, ()> {
+    TEST_GLOBAL_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+}
