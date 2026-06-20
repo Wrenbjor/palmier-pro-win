@@ -281,6 +281,12 @@ spoken path), E11-S1 (model loader). Export-pause refcount shared with Epic 6.
 ---
 
 ### E11-S7 — `palmier-transcribe` `TranscriptCache` (disk+memory JSON cache)
+**Status:** SUBSUMED by the merged **E10-S4** (`palmier_transcribe::TranscriptCache`). E10-S4 already
+ships the disk+memory JSON cache with the disk-only, never-transcribe query read
+(`has_cached_on_disk` / `transcript(file, model_id, language, range)`); no second cache was built.
+E11-S8 consumes E10-S4 directly. (Note: E10-S4's key is the FOUNDATION content key
+`sha256(content)+model+language` per ruling #19, not the reference `path|mtime|size` named below.)
+
 **Intent:** As transcript search, I want full transcripts cached on disk + in memory keyed by file
 identity, so spoken search reads cached transcripts without re-transcribing at query time.
 
@@ -307,6 +313,13 @@ generation not required for keyword search, which reads whatever is cached).
 ---
 
 ### E11-S8 — TranscriptSearch (exact keyword, all-terms, diacritic-insensitive)
+**Status:** DONE — branch `story/E11-S8-transcript-search`. `crates/palmier-search/src/transcript_search.rs`
+(`TranscriptSearch::search` / `TranscriptHit`); reads disk-only via the merged **E10-S4**
+`TranscriptCache` (E11-S7 subsumed — no second cache). Diacritic+case fold via `unicode-normalization`
+(NFD + strip combining marks + lowercase). SM-12 spoken exit asserted: 100% keyword recall +
+café/cafe + US/us insensitivity. `model_id`/`language` default to `ggml-small.en`/`en`
+(`search_with` lets the E11-S6 coordinator pass the real pair).
+
 **Intent:** As `search_media` (spoken scope), I want exact keyword search over cached transcript segments,
 so spoken hits work with no model download and 100% keyword recall.
 
