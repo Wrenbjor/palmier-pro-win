@@ -50,6 +50,8 @@ Checked 2026-06-20 on this box:
   **`pwsh -File scripts/with-msvc.ps1 <cargo|pnpm tauri ...>`** (verified: a trivial crate links cleanly
   through it). Do NOT run bare `cargo build`/`cargo test` for this repo — they'll fail at link.
   (Don't run Rust builds from Git Bash either: its coreutils `link` shadows MSVC `link.exe`.)
+  **Gotcha:** PowerShell eats `-p` as an ambiguous param to the wrapper — use the long form
+  `--package <crate>` (not `cargo build -p <crate>`) when building a single crate through it.
 - Install **gh** (`winget install GitHub.cli`) when the PR/merge phase needs it (not yet installed).
 
 ## Timeline
