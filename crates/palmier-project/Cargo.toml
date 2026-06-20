@@ -10,4 +10,7 @@ publish.workspace = true
 palmier-model = { path = "../palmier-model" }
 serde.workspace = true
 serde_json.workspace = true
+# Used for unique temp-dir names during atomic whole-directory save (the
+# write-to-sibling-temp-then-atomic-rename swap). No other runtime dep is needed:
+# the bundle reader/writer is pure `std::fs` + `serde_json`.
 uuid.workspace = true
