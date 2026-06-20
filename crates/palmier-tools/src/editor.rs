@@ -66,6 +66,12 @@ pub struct EditorState {
     /// bodies return "backend not available" when it is absent. Kept private so the
     /// generate bodies route through [`EditorState::generation_gateway`].
     generation_gateway: Option<Box<dyn crate::generate::GenerationGateway>>,
+    /// The visual-search seam (E11-S10). `None` until the host wires a
+    /// [`SearchIndexCoordinator`](palmier_search::SearchIndexCoordinator) + a real
+    /// `ort` query-encoder behind it; `search_media`'s visual scope reports
+    /// `visual_status: disabled` / empty when it is absent (default build). The spoken
+    /// scope needs no gateway (it reads the disk-only transcript cache directly).
+    visual_search_gateway: Option<Box<dyn crate::search::VisualSearchGateway>>,
 }
 
 /// Which agent undo stack an agent edit landed on (timeline vs whole-library). The
@@ -95,6 +101,7 @@ impl EditorState {
             last_agent_edit: None,
             can_generate: false,
             generation_gateway: None,
+            visual_search_gateway: None,
         }
     }
 
@@ -108,6 +115,7 @@ impl EditorState {
             last_agent_edit: None,
             can_generate: false,
             generation_gateway: None,
+            visual_search_gateway: None,
         }
     }
 
@@ -136,5 +144,20 @@ impl EditorState {
     /// through this; `None` ⇒ "backend not available").
     pub fn generation_gateway(&self) -> Option<&dyn crate::generate::GenerationGateway> {
         self.generation_gateway.as_deref()
+    }
+
+    /// Wire the visual-search backend seam (E11-S10). Called by the host once the
+    /// `palmier-search` coordinator + `ort` query-encoder are built; tests inject a mock.
+    pub fn set_visual_search_gateway(
+        &mut self,
+        gateway: Box<dyn crate::search::VisualSearchGateway>,
+    ) {
+        self.visual_search_gateway = Some(gateway);
+    }
+
+    /// The wired visual-search gateway, if any (`search_media`'s visual scope routes
+    /// through this; `None` ⇒ `visual_status: disabled` / empty hits).
+    pub fn visual_search_gateway(&self) -> Option<&dyn crate::search::VisualSearchGateway> {
+        self.visual_search_gateway.as_deref()
     }
 }

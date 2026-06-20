@@ -551,15 +551,19 @@ fn inspect_timeline_gpu_renders_or_skips_cleanly() {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// E7-S9 — search_media stub
+// E11-S10 — search_media (functional: visual disabled without a gateway, spoken real)
 // ════════════════════════════════════════════════════════════════════════════
 
 #[test]
-fn search_media_reports_not_indexed() {
+fn search_media_visual_disabled_on_default_build() {
+    // No visual-search gateway wired (default build, no ort) ⇒ visual reports
+    // `disabled` with empty moments — the documented default-build contract.
     let exec = ToolExecutor::new();
     let (err, text) = call(&exec, "search_media", json!({ "query": "harbor at sunset" }));
     assert!(!err, "{text}");
     let v: Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(v["visual"]["status"], json!("not_indexed"));
+    assert_eq!(v["visual"]["status"], json!("disabled"));
     assert_eq!(v["visual"]["moments"], json!([]));
+    // `both` is the default scope ⇒ spoken group is present (empty, no assets/cache).
+    assert!(v.get("spoken").is_some());
 }

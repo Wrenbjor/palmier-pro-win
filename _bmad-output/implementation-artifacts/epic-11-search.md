@@ -419,6 +419,17 @@ without breaking SM-12.
 ---
 
 ### E11-S10 — `search_media` tool wiring (palmier-tools)
+> **Status:** DONE — branch `story/E11-S10-search-media`. `crates/palmier-tools/src/search.rs` (new).
+> `search_media` is now FUNCTIONAL: **spoken** scope dispatches sync to
+> `palmier_search::TranscriptSearch::search` over the disk-only transcript cache (no model download —
+> SM-12 spoken green); **visual** scope dispatches through a new `VisualSearchGateway` seam on
+> `EditorState` (the host wires a `SearchIndexCoordinator` + `ort` query-encoder behind it), defaulting
+> to `visual_status: disabled` / empty on the default (non-ort) build. `media_ref` scopes to one asset;
+> ShortId prefix resolution is handled by the executor (E7-S4) before the body runs. Tool count stays
+> EXACTLY **30** (29/30 now functional — only the live visual encode is gated on `--features ort` +
+> downloaded weights; SM-12 visual is `#[ignore]`d). Additive `palmier-tools/ort` feature forwards to
+> `palmier-search/ort`. Default + `--features ort` builds both green; full `cargo test` green.
+
 **Intent:** As an MCP/agent client, I want one `search_media(query, scope?, media_ref?, limit?)` tool, so
 the agent can find visual + spoken moments across the library (UJ-2).
 
