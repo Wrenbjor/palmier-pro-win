@@ -37,51 +37,29 @@ milestone, and a parallel-safe flag; sprint plan has the dependency DAG + M1–M
 **Phase 4 — Build: IN PROGRESS (M1).** Workspace **scaffold merged to main** (`d7b36c0`) — 18 crates
 compile + test green, `src-ui` builds (independently verified). Toolchain via `scripts/with-msvc.ps1`.
 
-**Wave 0 + Wave 1: COMPLETE** — all 5 workers merged green on main:
-- **S-1 RESOLVED** — wgpu→WebView = native surface composited under a transparent webview (zero-copy,
-  SM-2 met); wgpu 27.x pinned; WRY-integration sub-spike deferred to E5-S8 start. [[phase0-reconciliation]] #23.
-- **E2-S1** palmier-model · **E1-S1** palmier-tauri (real Tauri 2.11 runtime, clean Windows build) ·
-  **E3-S8** palmier-history · **E4-S2** palmier-media cache.
+_(Per-wave history → `## Timeline` below. This block = concise current state.)_
 
-**Wave 2: COMPLETE** — all 5 merged green on main (37d8637): E2-S2/E2-S4/E3-S1 (model: center Transform #7,
-VolumeScale #9, edit types), E1-S6 (palmier-auth), E1-S2 (palmier-telemetry), E5-S6 (palmier-engine audio
-mixer), **S-1b** (Convex Date codec decided — [[phase0-reconciliation]] Date entry, unblocks E2-S8).
+**M1 build — ~29 stories + 2 spikes merged & green on main (`c76f22d`).** What's in:
+- **Epic 2 (model + project I/O): COMPLETE** — Timeline/Track/Clip/keyframes/MediaAsset/dates; save/load
+  (atomic), registry, autosave, 3 golden `.palmier` bundles (SM-7/SM-1b gates). `f64::round` parity locked.
+- **Epic 3 (edit): COMPLETE** — pure engines (ripple/overwrite/split/snap) + orchestration (atomic apply,
+  undo grouping) + interactive timeline input controller (E7 command seam).
+- **Epic 4 (media):** cache + metadata + ffmpeg thumbnails + waveform.
+- **Epic 6 (export):** XMEML emitter + golden fixtures (video export E6-S5 pending).
+- **Epic 1 (app shell):** runtime, menu, windows, settings, updater, telemetry+auth wired.
+- **Epic 5 (preview):** only the audio mixer (E5-S6) so far.
+- **Infra:** MSVC build wrapper, **FFmpeg-on-Windows toolchain** (ffmpeg-next 7.1, env auto-sourced).
+- **Decided:** wgpu→WebView mechanism (S-1), Convex Date codec (S-1b).
 
-**Carry-forwards to honor in later stories:**
-- **E2-S5** must implement Clip frame derivations with `f64::round` ties-away + the rounding-parity test (E3-S1 dep).
-- **Telemetry boot seam:** boot stub installs its own tracing subscriber → file logging won't attach until the
-  integration removes it and holds the `TelemetryHandle` from `palmier_telemetry::init`. (palmier-tauri touch.)
-- **E5-S6** local `AudioClip`/`VolumeKeyframe` → convert to `From<&Clip>` adapter once E2-S5 lands.
-- **palmier-auth** Convex HTTP path strings inferred; confirm against the live deployment (S-2 window).
-- **E2-S8** implements `palmier-model/src/serde_date.rs` per `spikes/s1b-convex-date/FINDINGS.md`.
+**Open carry-forward:** palmier-auth Convex HTTP paths inferred — confirm vs the live deployment (S-2 window).
 
-**Wave 2b: COMPLETE** (b69f057) — E2-S3/S5/S8 (model: keyframes/Clip/serde_date, f64::round parity locked),
-E3-S2..S5 (edit engines), E4-S1 (media metadata), E1-S3 (menu + telemetry/auth boot integration; subscriber
-seam resolved). All verified green.
+**Wave 6: IN PROGRESS** — **E5-S2** (ffmpeg decode/frame source — preview-pipeline root) · spike
+**E5-S8 WRY-integration** (prove the wgpu-composited-surface mechanism) · **E1-S7+E1-S8** (Recent/registry
++ sample materialization). 
 
-**M1 status:** ~20 stories + 2 spikes merged. In: model layer (through Clip/keyframes/dates), app shell
-(runtime/menu/boot/telemetry/auth), edit engines, history, media cache+metadata, audio mixer.
-
-**Wave 3: COMPLETE** (5bc0494) — E2-S6/S7 (Track/Timeline + MediaAsset/Manifest; Epic-2 model done), E3-S9
-(timeline canvas, frontend), E1-S4/S9/S10 (windows/settings/updater + a capabilities-file fix). All green.
-
-**M1 status:** ~23 stories + 2 spikes merged. Model layer complete; app shell (runtime/menu/windows/settings/
-boot/telemetry/auth/updater); edit engines + history; media cache+metadata; audio mixer; timeline canvas (UI).
-
-**Wave 4: COMPLETE** (25eed3c) — E2-S9 (project save/load spine), E6-S1/S7 (XMEML + goldens), E3-S6/S7
-(edit orchestration w/ atomic apply + undo; drag-state), and **FFmpeg-on-Windows RESOLVED** (ffmpeg-next 7.1
-builds via the wrapper; env in scripts/ffmpeg-env.ps1; LGPL → HW encoders for H.264/H.265, ProRes fine —
-[[windows-harness-notes]]). All verified green.
-
-**M1 status:** ~26 stories + 2 spikes. Backend largely complete: model, edit engines+orchestration, project
-save/load, XMEML export, audio mixer, app shell, timeline canvas. FFmpeg unblocked.
-
-**Wave 5: DISPATCHING** (disjoint crates):
-- palmier-media **E4-S3+E4-S4+E4-S5** (sprite-sheet thumbnails [ffmpeg], waveform, image thumbnails; backfill E4-S1 TODO fps)
-- palmier-project **E2-S10+E2-S11+E2-S12** (bundle round-trip golden SM-7, ProjectRegistry, media-path/autosave)
-- palmier-edit+src-ui **E3-S10** (timeline input controller — wires canvas→drag→orchestration; makes the timeline interactive)
-Held for Wave 6: the preview stack (E5-S2 decode → E5-S3/S4/S5 layers → E5-S7 transport → E5-S8 GPU present +
-the WRY-integration sub-spike) and E6-S5 video export (HW encoders).
+**Remaining for M1:** the preview stack — E5-S3/S4/S5 (composition layers) → E5-S7 (transport) → E5-S8 (GPU
+present) → E5-S9/S10/S11 — then E6-S5 (video export, HW encoders), then the hand-edit e2e gate → **M1 EXIT → M2**
+(Epics 7-8: MCP server + agent).
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -125,3 +103,5 @@ the WRY-integration sub-spike) and E6-S5 video export (HW encoders).
 2026-06-20 | E6-S1/S7 + E3-S6/S7 merged (e4ee262) — XMEML emitter + 3 golden fixtures (SM-7 byte gate; 27 tests) + bundle export; edit orchestration (Clip↔view adapter, ripple/split/move with ATOMIC validate-before-mutate, one-undo-per-edit) + drag-state machine (90 tests). Green on main. Wave-4 remaining: FFmpeg infra (then Wave 5 decode/export).
 2026-06-20 | FFmpeg toolchain RESOLVED + merged (25eed3c) — ffmpeg-next 7.1 builds via the wrapper (independently verified PROBE_SUCCESS from clean env); FFmpeg 7.1 LGPL shared @C:\ffmpeg + libclang wheel; env auto-sourced. Note: LGPL excludes x264/x265 → HW encoders for H.264/H.265 (E6-S5), ProRes fine. Wave 4 COMPLETE. Dispatching Wave 5.
 2026-06-20 | E3-S10 merged (40c83f6) — interactive timeline input controller (src-ui/editor): tools V/C, selection/marquee, drag-move/trim/split, sticky-snap 1.5×, transport, undo/redo; local-optimistic with an EditController.dispatch seam for E7 Tauri commands. pnpm build green. Wave-5 remaining: E4-S3/S4/S5, E2-S10/S11/S12.
+2026-06-20 | E2-S10/S11/S12 merged (a463c23) — ProjectRegistry + media-path resolver + ProjectDocument autosave + 3 golden .palmier fixtures (SM-7/SM-1b gates); 43 tests. Epic-2 project I/O COMPLETE.
+2026-06-20 | E4-S3/S4/S5 merged (c76f22d) — ffmpeg sprite thumbnails + waveform (150/s cap 20000) + image thumbnails; ffmpeg-next 7.1 linked first-try via the wrapper (toolchain validated); E4-S1 fps backfilled; 56 tests. Wave 5 COMPLETE (~29 stories). Dispatching Wave 6 (E5-S2 decode, E5-S8 WRY sub-spike, E1-S7/S8 home/registry/samples).
