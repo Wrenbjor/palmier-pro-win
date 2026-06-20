@@ -18,5 +18,8 @@ serde_json.workspace = true
 sha2.workspace = true
 dirs.workspace = true
 tokio.workspace = true
+# E10-S3: OS locale for "best supported locale" auto-detect (replaces Apple
+# `Locale.preferredLanguages` / `Locale.current`). Small, no transitive heavy deps.
+sys-locale = "0.3"
 
 # Heavy deps (whisper-rs, tokenizers) come per-story — see FOUNDATION §2 / §6.9.

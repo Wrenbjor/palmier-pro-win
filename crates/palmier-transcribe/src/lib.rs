@@ -11,8 +11,20 @@
 
 mod cache;
 mod error;
+mod locale;
 mod model;
+mod profanity;
 
 pub use cache::TranscriptCache;
 pub use error::TranscriptionError;
 pub use model::{TranscriptionResult, TranscriptionSegment, TranscriptionWord};
+
+// E10-S3: locale resolution (prefer user → OS auto-detect → error) and profanity
+// censoring (bracketed-equivalent replacement). The engine (E10-S2) consumes
+// `resolve_locale_en` for `.en` models and `censor_result` when `censor_profanity`;
+// orchestration (E10-S6) consumes the general `resolve_locale` / `LocaleTag` surface.
+pub use locale::{
+    best_supported_locale, english_only_supported, match_locale, os_candidate_locales,
+    resolve_locale, resolve_locale_en, LocaleTag,
+};
+pub use profanity::{censor_result, censor_result_with, censor_text, censor_text_with};
