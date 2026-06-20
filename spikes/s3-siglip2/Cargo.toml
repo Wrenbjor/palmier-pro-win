@@ -1,0 +1,110 @@
+# Spike S-3 — SigLIP2 visual-search encoder in Rust (de-risks M4 Epic 11).
+#
+# WHY THIS SPIKE (PRD §11 Spike S-3): Epic 11 (palmier-search visual search) needs
+# the reference's SigLIP2 image/text encoder running in Rust to reproduce the
+# `.embed` index (magic PALMEMB1) within cosine tolerance. The macOS reference uses
+# a CoreML model (palmier-io/siglip2-base-coreml); the port (FOUNDATION §2.2, ruling
+# #13) must use `candle` or `ort` (ONNX Runtime). It is SigLIP2 base patch16-256,
+# 768-dim — NOT OpenAI CLIP (embeddings not interchangeable).
+#
+# KEY FINDING (this spike): use **`ort` (ONNX Runtime 2.0) + the ready-made
+# `onnx-community/siglip2-base-patch16-256-ONNX` export** (vision_model.onnx +
+# text_model.onnx + the Gemma tokenizer.json). candle has SigLIP1 but SigLIP2 is
+# still an OPEN, unmerged PR (huggingface/candle #3510) — higher risk. The ONNX
+# `pooler_output` is the 768-dim pooled embedding but is NOT L2-normalized, so the
+# port MUST add an explicit L2-normalize step (the reference's CoreML `embedding`
+# output IS pre-normalized; ranking does a raw dot product). See FINDINGS.md.
+#
+# WHAT THIS CRATE PROVES WITHOUT THE HEAVY RUNTIME (default features, no weights):
+#   - the image preprocessing (256x256 squash, no crop, black fill, sRGB, [-1,1])
+#   - the tokenizer pad-to-64 with id 0, no mask (via the `tokenizers` crate)
+#   - L2-normalization + raw-dot-product ranking with the reference cutoffs
+#     (cosine floor 0.05, relative cutoff 0.85, best-per-shot dedupe)
+#   - the `.embed` (PALMEMB1) binary format reader/writer — byte-exact round-trip
+#       (magic + LE u32 json len + JSON header + count*(3xf64 + dim*f16))
+# All of the above is covered by `cargo test` and needs no model download.
+#
+# THE `ort` ENCODE PATH is behind `--features ort` so the default build does not
+# pull / link the ONNX Runtime libs. With `--features ort` AND the two .onnx files +
+# tokenizer.json present (env SIGLIP_MODEL_DIR), the `siglip_encode` bin runs a REAL
+# image+text encode and prints the cosine similarity (live parity confirmation).
+#
+# ISOLATION: declares its OWN empty `[workspace]` table so Cargo treats it as a
+# standalone workspace root — NOT a member of the root workspace. Touches NO prod
+# crate, NO root Cargo.toml, NO knowledge-base file.
+#
+# BUILD (Windows): from inside this dir,
+#   pwsh -File ../../scripts/with-msvc.ps1 cargo build
+#   pwsh -File ../../scripts/with-msvc.ps1 cargo test
+#   pwsh -File ../../scripts/with-msvc.ps1 cargo build --features ort        # heavy
+# Never bare `cargo` (MSVC linker not on PATH) or Git Bash (its `link` shadows
+# MSVC link.exe). See docs/windows-harness-notes.md.
+
+[workspace]
+
+[package]
+name = "s3-siglip2"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Spike S-3: SigLIP2 base patch16-256 image/text encoder in Rust (ort/ONNX) reproducing the reference .embed (PALMEMB1) index within cosine tolerance."
+
+[features]
+# Default build is the parity-logic core ONLY — no ONNX Runtime, no large libs to
+# link, no model download. This is what `cargo test` exercises.
+default = []
+# `ort` pulls in ONNX Runtime + ndarray for the real encode path (siglip_encode bin
+# + VisualEmbedder::encode_*). DirectML (Windows GPU) + CPU fallback are wired here.
+ort = ["dep:ort", "dep:ndarray"]
+
+[dependencies]
+# `half`: f16 storage for the `.embed` rows — reproduces the reference's Float16
+# vector storage byte-for-byte (24-byte row prefix f64 x3 + dim x f16). Reference:
+# EmbeddingStore.swift stores `Float16(vector)` per dim; we use `half::f16`.
+half = "2"
+
+# `tokenizers`: the HuggingFace tokenizers crate (FOUNDATION L93). Loads the SAME
+# tokenizer.json the reference's AutoTokenizer reads (Gemma SentencePiece). We then
+# replicate the reference's pad-to-contextLength(64) with id 0, no attention mask.
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+
+# `image`: decode + squash-resize a still to 256x256 (no aspect crop) for the image
+# preprocessing parity check. Replaces the reference's CGImage/CVPixelBuffer path.
+# `fast_image_resize` is the production choice; `image`'s resize is fine for the spike.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+
+# `serde` / `serde_json`: the `.embed` JSON header {model,modelVersion,samplerVersion,
+# dim,count} and the new download manifest. Mirrors EmbeddingStore.Header exactly.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# `sha2`: the cache-key identity hash SHA256("<path>|<mtime>|<size>")[:32] (reference
+# EmbeddingStore.key) and the manifest file verification. Replaces CryptoKit SHA256.
+sha2 = "0.10"
+
+# `anyhow`: ergonomic ? in the demo bin + tests.
+anyhow = "1"
+
+# --- ort feature only (the real ONNX encode) -------------------------------------
+# `ort` 2.0: Rust bindings to ONNX Runtime. `directml` = Windows GPU EP (DX12, works
+# on this AMD box); CPU fallback is automatic when an EP can't be registered.
+# `load-dynamic` loads onnxruntime.dll at runtime (ORT_DYLIB_PATH) so we don't fight
+# static linking on Windows. `ndarray` gives the Array<->Value bridge.
+ort = { version = "=2.0.0-rc.10", optional = true, default-features = false, features = [
+    "ndarray",
+    "directml",
+    "load-dynamic",
+] }
+ndarray = { version = "0.16", optional = true }
+
+[[bin]]
+# Real image+text encode + cosine similarity. Requires `--features ort` AND
+# SIGLIP_MODEL_DIR pointing at a dir with vision_model.onnx, text_model.onnx,
+# tokenizer.json. Without the feature it is not built.
+name = "siglip_encode"
+path = "src/bin/siglip_encode.rs"
+required-features = ["ort"]
+
+[lib]
+name = "s3_siglip2"
+path = "src/lib.rs"
