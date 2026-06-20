@@ -495,6 +495,30 @@ registered in the Epic 7 catalogue (M2) but returns visual_status=`disabled`/emp
 > `{ hits: [...] }` (the adapter accepts camelCase or snake_case / `media_ref`).
 > "Use as B-roll" drop-at-playhead rides the existing Epic 3/E4 drag-URI contract
 > (timeline `parsePayload`); no new path added here.
+>
+> **RECONCILED with the merged E11-S10 `search_media` (branch
+> `fix/search-ui-wire-shape`):** the guessed flat `{ hits: [...] }` contract above
+> was WRONG — the merged tool (`crates/palmier-tools/src/search.rs`) follows the
+> reference `searchMedia` shape (PARITY AUTHORITY,
+> `ToolExecutor+Search.swift`). The UI adapter in `src-ui/src/media-panel/search.ts`
+> now adapts to the tool's real wire shape (the tool is parity-correct and was NOT
+> changed):
+> `{ query, scope, visual: { status, moments: [ {mediaRef,name,score,startSeconds,endSeconds} (video) | {mediaRef,name,score,type:"image"} (still) ] }, spoken: [ {mediaRef,name,startSeconds,endSeconds,text} ] }`.
+> Mapping: `runVisualSearch` reads `response.visual.moments[]` → `VisualHit`
+> (`mediaRef→assetID`; video `startSeconds→shotStart & time`, `endSeconds→shotEnd`;
+> still `type:"image"` → `shotStart=shotEnd=time=0`, drags as a plain asset since the
+> renderer keys stills off the asset's own `type==="image"`); `runSpokenSearch` reads
+> `response.spoken[]` → `SpokenHit` (`mediaRef→assetID`, `startSeconds→start`,
+> `endSeconds→end`, `text`). The renderer still owns the
+> `[start, max(end, start+0.1)]` range floor + the `secondsToFrame` tap nav, so the
+> drag/tap/debounce contracts are UNCHANGED. New: `response.visual.status` (snake_case
+> wire string) is surfaced — `runVisualSearch` returns it alongside the hits,
+> `scheduleMomentSearch` threads it through, and the controller maps it via
+> `indexStatusFromWire` into the existing `IndexStatusPill` (`ready` = steady state;
+> `disabled/preparing/indexing/downloading_model/model_not_installed/failed` drive the
+> pill state/CTA). `corepack pnpm build` green (tsc --noEmit clean + vite);
+> `MEDIA PARITY OK` (no parity-check edits needed — they assert helper math, not the
+> wire shape).
 
 **Intent:** As a user, I want Moments (frame grid) and Spoken (transcript rows) sections in the Media panel
 with click-to-jump and drag-to-timeline, so I can place searched moments by hand (UJ-2).

@@ -13,6 +13,7 @@
 import {
   assembleResults,
   fileMatches,
+  indexStatusFromWire,
   momentSearchCandidates,
   scheduleMomentSearch,
 } from "./search";
@@ -229,6 +230,10 @@ export class MediaPanelController {
         this.store.setSearchResults(
           assembleResults(assets, query, r.moments, r.spoken),
         );
+        // Surface the live visual-index status into the pill. `ready` is the steady
+        // state (no affordance needed); anything else (disabled/preparing/indexing/
+        // downloading/failed/model-not-installed) drives the pill's status/CTA.
+        this.store.setIndexStatus(indexStatusFromWire(r.visualStatus));
       },
     );
   }
