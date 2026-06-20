@@ -10,18 +10,30 @@
 //! - **E6-S7 — `.palmier` self-contained bundle export**
 //!   ([`bundle::export_palmier_project`]): collects all media into a portable
 //!   `.palmier` directory and rewrites references (FR-23).
+//! - **E6-S5 — video export pipeline** ([`video`]): render the composition to a
+//!   real media file via FFmpeg (per output frame: `build_frame` → offscreen
+//!   wgpu render → readback RGBA → HW encoder; audio mix → AAC; mux). The
+//!   **HW-encoder selection** ([`video::select_encoder`]), even-snapped
+//!   [`render_size`](video::render_size) and [`frame_count`](video::frame_count)
+//!   math are pure (always compiled); the real encode is behind the
+//!   **`gpu-export`** feature (pulls `ffmpeg-next` + the engine's
+//!   `wgpu-compositor`). LGPL build → **no libx264/libx265**: H.264/H.265 use
+//!   HW encoders (NVENC/QSV/AMF/MediaFoundation), ProRes 422 uses `prores_ks`.
 //!
-//! The video-encode pipeline (E6-S5/S6) and the social sidecar (E6-S8) are
-//! later, ffmpeg-gated stories and are intentionally absent here (no ffmpeg
-//! dependency in this crate yet).
+//! The social sidecar (E6-S8) is a later story and intentionally absent here.
 
 pub mod bundle;
 pub mod resolver;
+pub mod video;
 pub mod xmeml;
 pub mod xml;
 
 pub use bundle::{export_palmier_project, ExportError, Missing, Report};
 pub use resolver::{file_url_string, ManifestResolver, MediaResolver};
+pub use video::{
+    frame_count, render_size, select_encoder, EncoderPlan, ExportFormat, ExportResolution,
+    HwVendor, VideoExportError,
+};
 pub use xmeml::{format_timecode, Builder};
 
 use palmier_model::Timeline;

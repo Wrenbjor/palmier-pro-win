@@ -3683,10 +3683,13 @@ dependencies = [
 name = "palmier-export"
 version = "0.1.0"
 dependencies = [
+ "ffmpeg-next",
  "palmier-engine",
+ "palmier-media",
  "palmier-model",
  "serde",
  "serde_json",
+ "tempfile",
  "uuid",
 ]
 
