@@ -22,10 +22,19 @@
 
 use serde_json::Value;
 
+use palmier_edit::{
+    generate_captions, CaptionCase, CaptionRequest, GENERATE_CAPTIONS_UNDO_NAME,
+};
 use palmier_model::{
     Clip, ClipType, FontName, Rgba, TextAlignment, TextStyle, Timeline, Transform,
 };
+use palmier_text::{caption_theme, FontRegistry, TextLayout};
+use palmier_transcribe::TranscriptionError;
 
+use crate::caption_transcribe::{
+    acquire_cache, build_runtime, resolve_cache_language, transcribe_blocking, validate_language,
+    LibraryAssets, WHISPER_MODEL_ID,
+};
 use crate::clips::{clear_region, insert_track};
 use crate::editor::EditorState;
 use crate::result::ToolResult;
@@ -285,43 +294,202 @@ fn place_text_clip(timeline: &mut Timeline, track_index: usize, spec: &TextSpec)
 // add_captions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// `add_captions` (optional `clip_ids`, `language`, `font_name`, `font_size` default
-/// 48, `color`, `center_x` default .5, `center_y` default .9, `text_case ∈ {auto,
-/// upper, lower}` (ruling #18), `censor_profanity`): on-device transcribe + styled
-/// caption clips on a new track. **Async**. Reference `addCaptions`.
+/// `add_captions` (optional `clipIds`, `language`, `fontName`, `fontSize` default 48,
+/// `color`, `centerX` default .5, `centerY` default .9, `textCase ∈ {auto, upper,
+/// lower}` (ruling #18), `censorProfanity`): on-device transcribe + styled caption
+/// clips on a **new video track at index 0**, as ONE undoable agent action named
+/// `"Generate Captions"`. Reference `addCaptions` → `EditorViewModel.generateCaptions`.
 ///
-/// The real Whisper + CaptionBuilder backing is **Epic 10 (M3)**. M2 validates the
-/// styling/placement args (so a malformed call is rejected with the same messages the
-/// reference emits) and then reports that on-device transcription is not yet
-/// available — the reference returns caption-clip ids once Epic 10's pipeline lands.
+/// Wraps E10-S6's [`generate_captions`]: this body parses the styling/placement args,
+/// builds the [`CaptionRequest`], and supplies the `transcribe` closure that applies
+/// the **cache-vs-bypass** rule and runs the (blocking) whisper engine on a blocking
+/// thread (see [`crate::caption_transcribe`]). The undo-group name is matched verbatim
+/// (`GENERATE_CAPTIONS_UNDO_NAME`) for agent-undo parity.
 pub fn add_captions(state: &mut EditorState, args: &Value) -> ToolResult {
-    let _ = state;
     let obj = match args.as_object() {
         Some(o) => o,
         None => return ToolResult::error("add_captions: arguments must be a JSON object"),
     };
 
-    // Validate the optional styling/placement args up front (parity with the
-    // reference, which parses these before kicking off transcription).
-    if let Some(c) = obj.get("color").and_then(Value::as_str) {
-        if let Err(e) = parse_rgba(c) {
-            return ToolResult::error(e.message);
-        }
+    // ── Parse + validate the styling/placement args (parity: the reference parses
+    // these before kicking off transcription; a malformed call rejects with no work).
+
+    // clipIds: empty ⇒ auto-detect the dominant speech track.
+    let clip_ids: Vec<String> = obj
+        .get("clipIds")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+
+    // Style: defaults Helvetica-Bold (reference falls back to bold system font) at the
+    // caption default font size 48; white. Overrides from fontName/fontSize/color.
+    let mut style = TextStyle::default();
+    style.font_name = FontName::from_str(DEFAULT_FONT_NAME);
+    style.font_size = caption_theme::DEFAULT_FONT_SIZE;
+    if let Some(f) = obj.get("fontName").and_then(Value::as_str) {
+        style.font_name = FontName::from_str(f);
     }
-    // ruling #18: text_case is auto | upper | lower — NO title-case.
-    if let Some(tc) = obj.get("textCase").and_then(Value::as_str) {
-        if !matches!(tc, "auto" | "upper" | "lower") {
-            return ToolResult::error(format!(
-                "add_captions: textCase must be auto, upper, or lower (got {tc})"
-            ));
+    if let Some(s) = obj.get("fontSize").and_then(Value::as_f64) {
+        style.font_size = s;
+    }
+    if let Some(c) = obj.get("color").and_then(Value::as_str) {
+        match parse_rgba(c) {
+            Ok((r, g, b, a)) => {
+                style.color =
+                    Rgba::new(r as f64 / 255.0, g as f64 / 255.0, b as f64 / 255.0, a as f64 / 255.0);
+            }
+            Err(e) => return ToolResult::error(e.message),
         }
     }
 
-    // The transcription backend (Whisper + CaptionBuilder) lands in Epic 10 (M3).
-    // Until then there is nothing to transcribe; report it the way the reference's
-    // "no speech / not available" path would, so the agent tells the user.
-    ToolResult::error(
-        "add_captions: on-device transcription is not yet available in this build \
-         (the caption pipeline lands in a later milestone). To add text by hand, use add_texts.",
-    )
+    // language (BCP-47): validate against the on-device model's supported set, exactly
+    // like the reference (`matchLocale … ?? throw`). `None` ⇒ system/auto.
+    let locale: Option<String> = match obj.get("language").and_then(Value::as_str) {
+        Some(lang) => match validate_language(lang) {
+            Ok(_) => Some(lang.to_string()),
+            Err(msg) => return ToolResult::error(msg),
+        },
+        None => None,
+    };
+
+    // center: default (0.5, 0.9), the lower third.
+    let mut center = caption_theme::DEFAULT_CENTER;
+    if let Some(x) = obj.get("centerX").and_then(Value::as_f64) {
+        center.0 = x;
+    }
+    if let Some(y) = obj.get("centerY").and_then(Value::as_f64) {
+        center.1 = y;
+    }
+
+    // textCase: ruling #18 — auto | upper | lower ONLY. "title" is rejected verbatim.
+    let text_case = match obj.get("textCase").and_then(Value::as_str) {
+        None => CaptionCase::Auto,
+        Some("auto") => CaptionCase::Auto,
+        Some("upper") => CaptionCase::Upper,
+        Some("lower") => CaptionCase::Lower,
+        Some(other) => {
+            return ToolResult::error(format!(
+                "add_captions: textCase must be auto, upper, or lower (got {other})"
+            ))
+        }
+    };
+
+    let censor_profanity = obj.get("censorProfanity").and_then(Value::as_bool).unwrap_or(false);
+
+    let request = CaptionRequest {
+        source_clip_ids: clip_ids.clone(),
+        auto_detect: clip_ids.is_empty(),
+        style,
+        center,
+        text_case,
+        censor_profanity,
+        locale: locale.clone(),
+    };
+
+    // ── Build the transcription plumbing BEFORE entering agent_edit (which borrows
+    // `state.library.timeline` mutably): the runtime, the cache handle, and an owned
+    // snapshot of the asset catalog (has-audio / is-video / file path per media_ref).
+    let runtime = match build_runtime() {
+        Ok(r) => r,
+        Err(e) => {
+            return ToolResult::error(format!(
+                "add_captions: failed to start the transcription runtime: {e}"
+            ))
+        }
+    };
+    let cache = runtime.block_on(acquire_cache());
+    let assets = LibraryAssets::snapshot(&state.library);
+
+    // The cache-vs-bypass decision is fixed per request (reference: bypass when
+    // `censorProfanity || locale != nil`). `cache_language` is the tag the PLAIN path
+    // reads/writes under so the read in get_transcript matches.
+    let bypass_cache = censor_profanity || locale.is_some();
+    let cache_language = resolve_cache_language(locale.as_deref());
+
+    // Mint the shared caption-group UUID inside generate_captions via this closure.
+    let new_group_id = || uuid::Uuid::new_v4().to_string();
+
+    // FontRegistry/TextLayout: caption measurement state (natural size / line-fits).
+    // Bundled-only fonts (no OS font enumeration) — parity with the caption pipeline.
+    let mut registry = FontRegistry::bundled_only();
+    let mut layout = TextLayout::new();
+
+    // ── One undoable agent action named "Generate Captions". generate_captions
+    // registers its own user-swap on the scratch history; agent_edit captures the ONE
+    // agent step from the before/after timeline diff under this exact name.
+    agent_edit(state, GENERATE_CAPTIONS_UNDO_NAME, |timeline, history| {
+        let transcribe = |media_ref: &str,
+                          range: Option<&std::ops::RangeInclusive<f64>>,
+                          is_video: bool|
+         -> Result<palmier_transcribe::TranscriptionResult, TranscriptionError> {
+            let Some(file) = assets.file(media_ref).cloned() else {
+                // Unknown asset → nothing to transcribe (skipped by generate_captions).
+                return Err(TranscriptionError::AnalysisFailed(format!(
+                    "no source file for media '{media_ref}'"
+                )));
+            };
+            let range_owned = range.cloned();
+
+            if bypass_cache {
+                // BYPASS: request-specific (censor and/or locale) → engine directly,
+                // never cached.
+                return runtime.block_on(transcribe_blocking(
+                    file,
+                    censor_profanity,
+                    locale.clone(),
+                    range_owned,
+                    is_video,
+                ));
+            }
+
+            // PLAIN PATH → through the cache. Read first (filtered to range, never
+            // transcribes). On a miss, transcribe the WHOLE file, store it, then filter.
+            if let Ok(Some(hit)) =
+                cache.transcript(&file, WHISPER_MODEL_ID, &cache_language, range_owned.as_ref())
+            {
+                return Ok(hit);
+            }
+            // Miss: transcribe the full file (no range) so the stored artifact is
+            // reusable, store it, then filter to the requested range.
+            let full = runtime.block_on(transcribe_blocking(
+                file.clone(),
+                false,
+                locale.clone(),
+                None,
+                is_video,
+            ))?;
+            let _ = cache.store(&file, WHISPER_MODEL_ID, &cache_language, &full);
+            Ok(match range_owned {
+                Some(r) => palmier_transcribe::TranscriptCache::filter(&full, &r),
+                None => full,
+            })
+        };
+
+        match generate_captions(
+            timeline,
+            history,
+            &request,
+            &assets,
+            &mut registry,
+            &mut layout,
+            transcribe,
+            new_group_id,
+        ) {
+            Ok(out) => {
+                let n = out.clip_ids.len();
+                if n == 0 {
+                    // No speech detected → reference throws ToolError("No speech detected
+                    // to caption."). Surface as the error shape (registers no undo).
+                    Err("No speech detected to caption.".to_string())
+                } else {
+                    Ok(ToolResult::ok(format!(
+                        "Added {n} caption{}.",
+                        if n == 1 { "" } else { "s" }
+                    )))
+                }
+            }
+            // CaptionError::NoSource → "No audio clips to caption." (verbatim Display).
+            Err(e) => Err(e.to_string()),
+        }
+    })
 }

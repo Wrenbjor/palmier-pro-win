@@ -392,6 +392,23 @@ siblings. Run after S2/S4/S5 land.
 
 ### E10-S7 — `add_captions` + `get_transcript` tool bodies in `palmier-tools`
 
+> **Status:** DONE (story/E10-S7-caption-tools) — `crates/palmier-tools/src/caption_transcribe.rs` (new):
+> the shared cache-vs-bypass + `spawn_blocking` plumbing — `WHISPER_MODEL_ID` (`small.en`),
+> `validate_language`/`resolve_cache_language`, an owned `LibraryAssets` snapshot (`AssetInfo` impl, file
+> resolution), `acquire_cache` (`PALMIER_TRANSCRIPT_CACHE_DIR`-overridable, else `TranscriptCache::shared`),
+> `transcribe_blocking` (whisper on a `spawn_blocking` thread), and a per-call multi-thread tokio runtime.
+> **`add_captions`** (`texts.rs`) wraps E10-S6 `generate_captions`: parses style/case/locale/censor args,
+> rejects `textCase:"title"` (ruling #18) and unsupported BCP-47 languages, builds the `transcribe`
+> closure — **plain path → `TranscriptCache` (read; miss → full-file engine + `store` + filter)**, **bypass
+> (`censorProfanity || language`) → engine directly, never cached** — placed as ONE undo step named exactly
+> `"Generate Captions"` via `agent_edit`. **`get_transcript`** (`read.rs`) now reads the transcript cache
+> per unique source (read-only — never transcribes; UJ-1 empty path preserved), attributes words by
+> visible-window midpoint, maps via `span_frames`, window-filters, caps at 10000 words with `nextStartFrame`
+> paging (`TRANSCRIPT_SEGMENT_CAP=400` documented as the distinct inspect-media class). Descriptions
+> verbatim (schema.rs untouched); 30-tool count intact. 6 new tests (`tests/caption_tools.rs`) + the 2
+> updated `add_captions` tests — happy + 2 error cases per tool — green; full workspace `cargo build` +
+> `cargo test` green.
+
 **Intent:** As a dev agent, I want the `add_captions` and `get_transcript` tool bodies implemented in the
 single shared `palmier-tools` dispatcher, so both the MCP server and the in-app agent can transcribe and
 caption via the same code path.
