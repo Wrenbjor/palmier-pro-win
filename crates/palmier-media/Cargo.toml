@@ -25,19 +25,26 @@ sha2 = "0.10"
 dirs = "6"
 tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
 
-# Asset metadata loader (E4-S1) — LIGHTWEIGHT, pure-Rust, NO system FFmpeg.
-# `ffmpeg-next`/system-FFmpeg are intentionally NOT linked in this story; the
-# Windows FFmpeg toolchain isn't provisioned yet (that lands with the decode-heavy
-# E4-S3/S4/S5 pipelines). Fields that genuinely need a full decoder are returned
-# as `None` with a `// TODO(ffmpeg)` note rather than pulling ffmpeg-next here.
-#   * image — `image` crate for dimensions; `kamadak-exif` for EXIF orientation.
-#   * audio — `symphonia` (pure Rust) for duration / sample-rate / channel facts.
-#   * video (mp4/mov/m4v) — `mp4` crate (pure-Rust ISO-BMFF parser) for duration,
-#     dimensions, display-matrix rotation, and audio-track presence.
+# Asset metadata loader (E4-S1) + image-thumbnail pipeline (E4-S5).
+#   * image — `image` crate for dimensions + EXIF-aware thumbnail resize.
+#   * audio — `symphonia` (pure Rust) for duration / sample-rate / channels and
+#     the E4-S4 waveform decode (PCM downsample).
+#   * video (mp4/mov/m4v) — `mp4` crate (pure-Rust ISO-BMFF parser) for the fast
+#     duration/dimensions/display-matrix/audio-track probe; `ffmpeg-next` covers
+#     frame extraction (E4-S3) and the VFR fps backfill the `mp4` crate can't do.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "webp"] }
 kamadak-exif = "0.6"
 symphonia = { version = "0.6", default-features = false, features = ["mp3", "wav", "aac", "isomp4", "pcm", "adpcm"] }
 mp4 = "0.14"
+
+# Video decode/thumbnail pipeline (E4-S3) + the E4-S1 `// TODO(ffmpeg)` fps
+# backfill. The Windows FFmpeg toolchain is now provisioned (FFmpeg 7.1 LGPL
+# shared at C:\ffmpeg + libclang for bindgen) and auto-sourced by
+# scripts/with-msvc.ps1, so `ffmpeg-next` 7.1 builds & links through the wrapper
+# (docs/windows-harness-notes.md). Used for: sprite-sheet frame extraction
+# (seek + scale to 120×68) and avg/r_frame_rate reads for VFR/edit-list
+# containers the pure-Rust `mp4` parser reports as 0/garbage.
+ffmpeg-next = "7"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time"] }
