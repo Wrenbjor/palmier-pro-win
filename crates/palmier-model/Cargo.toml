@@ -10,3 +10,5 @@ publish.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
+# E2-S8 Date codec seam (Apple reference-epoch doubles + ISO-8601).
+time.workspace = true

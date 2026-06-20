@@ -20,20 +20,37 @@
 //! (center-based, ruling #7) + [`Crop`]; E2-S4 adds [`VolumeScale`] (linear↔dB,
 //! ruling #9); E3-S1 adds the edit value types the engines consume
 //! ([`FrameRange`], [`ClipShift`], [`GapSelection`], [`TimelineRangeSelection`])
-//! and confirms [`ClipType::is_compatible`] (ruling #12). Later Epic 2 stories add
-//! keyframes + sampling (E2-S3) and the `Timeline`/`Track`/`Clip` shapes.
+//! and confirms [`ClipType::is_compatible`] (ruling #12).
+//!
+//! E2-S3 adds the keyframe storage + sampling ([`Keyframe`], [`KeyframeTrack`],
+//! [`AnimPair`], the clip-relative↔absolute [`to_abs`]/[`to_offset`] seam);
+//! E2-S5 adds the [`Clip`] core entity (all stored fields + the derived
+//! `end_frame`/`source_frames_consumed`/… and the value-sampling math), plus a
+//! minimal [`TextStyle`]; E2-S8 adds the per-field [`serde_date`] codec seam
+//! (Apple reference-epoch doubles + ISO-8601). The `Timeline`/`Track` shapes are
+//! E2-S6.
 
 mod animatable_property;
+mod clip;
 mod clip_type;
 mod edit_types;
 mod interpolation;
+mod keyframe;
+pub mod serde_date;
+mod text_style;
 mod transform;
 mod volume;
 
 pub use animatable_property::AnimatableProperty;
+pub use clip::{Clip, FadeEdge};
 pub use clip_type::ClipType;
 pub use edit_types::{ClipShift, FrameRange, GapSelection, TimelineRangeSelection};
 pub use interpolation::{lerp, smoothstep, Interpolation, KeyframeInterpolatable};
+pub use keyframe::{
+    clamp_keyframes_to_duration, rescale_keyframes, to_abs, to_offset, AnimPair, Keyframe,
+    KeyframeTrack,
+};
+pub use text_style::{Fill, FontName, Rgba, Shadow, TextAlignment, TextStyle};
 pub use transform::{Crop, Transform};
 pub use volume::VolumeScale;
 
