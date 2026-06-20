@@ -18,6 +18,13 @@ import {
 } from "./search";
 import type { MediaPanelStore } from "./store";
 import { buildView, folderPath, type FilterState } from "./logic";
+import { parsePayload } from "./drag";
+import {
+  copyPathsToClipboard,
+  pickRelinkPath,
+  readClipboardImportablePaths,
+  revealInExplorer,
+} from "./media-actions";
 import type {
   GenJob,
   MediaFolderView,
@@ -101,6 +108,96 @@ export class MediaPanelController {
     return;
   }
 
+  /**
+   * Paste from the clipboard (`mediaPanelPasteRequestTick` / Ctrl+V): import any
+   * file URLs on the clipboard into the current folder. Image-data paste
+   * (`.png`/`.tiff`) lands with the real import flow at Epic 7.
+   * TODO(E7): the import itself is still the `importPaths` stub.
+   */
+  async pasteFromClipboard(): Promise<void> {
+    const paths = await readClipboardImportablePaths();
+    if (paths.length > 0) await this.importPaths(paths);
+  }
+
+  // --- In-panel + drag-out drag-drop (E4-S12) --------------------------------
+
+  /**
+   * `resolveTextDrop` (MediaTab+Drag.swift): a text/URI payload dropped on a
+   * folder/breadcrumb/section target. Splits the newline-joined payload, routes
+   * folder ids → `moveFoldersToFolder` (cycle-guarded), asset ids → `moveAssetsToFolder`.
+   * Moment URIs carry a segment that is meaningless for an in-panel move, so they
+   * reparent the underlying asset.
+   * TODO(E6/E7): route through palmier-model moves with one snapshot-undo entry
+   * (palmier-history) instead of the local store mutation.
+   */
+  resolveTextDrop(payload: string, targetFolderId: string | null): void {
+    const parts = parsePayload(payload);
+    const folderIds: string[] = [];
+    const assetIds: string[] = [];
+    for (const p of parts) {
+      if (p.kind === "folder") folderIds.push(p.id);
+      else assetIds.push(p.id); // asset | moment → reparent the asset
+    }
+    if (folderIds.length > 0) this.store.moveFolders(folderIds, targetFolderId);
+    if (assetIds.length > 0) this.store.moveAssets(assetIds, targetFolderId);
+  }
+
+  /**
+   * `handleProviderDrop` (MediaTab+Drag.swift): a native drop. A file-URL provider
+   * (OS files / external) imports; a text/URI provider (in-panel drag) routes moves.
+   * `files` are absolute paths from the Tauri `tauri://drag-drop` event; `text` is
+   * the in-panel drag payload from `dataTransfer`.
+   */
+  async handleProviderDrop(
+    drop: { files?: string[]; text?: string },
+    targetFolderId: string | null,
+  ): Promise<void> {
+    if (drop.files && drop.files.length > 0) {
+      await this.importPaths(drop.files);
+      return;
+    }
+    if (drop.text && drop.text.trim().length > 0) {
+      this.resolveTextDrop(drop.text, targetFolderId);
+    }
+  }
+
+  // --- OS actions (E4-S12): Reveal / Copy-Path / Relink ----------------------
+
+  /** Reveal an asset in Explorer/Finder (Tauri `opener`). No-op outside Tauri. */
+  async revealAsset(assetId: string): Promise<void> {
+    const a = this.store.getState().snapshot.assets.find((x) => x.id === assetId);
+    if (a?.path) await revealInExplorer(a.path);
+  }
+
+  /**
+   * Copy the path(s) of the given asset to the clipboard, newline-joined. If the
+   * asset is part of the current selection, copies every selected asset's path
+   * (reference Copy-Path on a multi-selection).
+   */
+  async copyAssetPath(assetId: string): Promise<void> {
+    const s = this.store.getState();
+    const sel = s.selection;
+    const ids =
+      sel.has(assetId) && sel.size > 1 ? Array.from(sel) : [assetId];
+    const byId = new Map(s.snapshot.assets.map((a) => [a.id, a]));
+    const paths = ids
+      .map((id) => byId.get(id)?.path)
+      .filter((p): p is string => !!p);
+    if (paths.length > 0) await copyPathsToClipboard(paths);
+  }
+
+  /**
+   * Relink a missing asset: open the OS picker (Tauri `dialog`) to repoint the
+   * source file, then update the asset path + clear its missing flag.
+   * TODO(E7): persist the repointed path through palmier-project.
+   */
+  async relinkAsset(assetId: string): Promise<void> {
+    const a = this.store.getState().snapshot.assets.find((x) => x.id === assetId);
+    if (!a) return;
+    const picked = await pickRelinkPath(a.name);
+    if (picked) this.store.relinkAsset(assetId, picked);
+  }
+
   // --- Search (E10 local + E11 backend seam) ---------------------------------
 
   /**
@@ -136,6 +233,18 @@ export class MediaPanelController {
   /** File-name matches helper (exposed for tests / the Files section). */
   fileMatches(query: string) {
     return fileMatches(this.store.getState().snapshot.assets, query);
+  }
+
+  /**
+   * `selectMediaAsset(atSourceFrame:)` (MediaTab+Search.swift): tapping a moment /
+   * spoken hit selects the underlying asset and focuses it. `sourceSeconds` is the
+   * hit's source time the reference scrubs the preview to.
+   * TODO(E5/E6): seek the preview/inspector to `sourceSeconds` once the preview
+   * surface owns a source-time cursor; today it selects + focuses the asset.
+   */
+  selectMediaAtSource(assetId: string, _sourceSeconds: number): void {
+    this.store.setSelection([assetId]);
+    this.store.setFocused(assetId);
   }
 
   // --- Selection / view derivation -------------------------------------------

@@ -1,31 +1,112 @@
-// Captions tab — minimal form shell so the rail (E4-S8) has a Captions body.
+// Captions tab — the full caption-generation form (E4-S14). The form is real and
+// validating; the GENERATION backend (`generate_captions` + `CaptionBuilder`) lands
+// in Epic 10, so Generate stays disabled with "backend not available".
 //
-// The FULL captions form (Source / Language / Style / Placement + the
-// `generate_captions` command) is E4-S14, wired to its real backend in Epic 10.
-// This shell renders the form scaffold and a disabled Generate ("backend not
-// available") so the rail switches to a real surface, not a blank panel.
+// Form parity (docs/reference/media-panel.md §"Captions tab", CaptionTab.swift):
+//   Source     — auto (selected clips else all captionable audio) | pick a track
+//   Language   — Auto-detect + a locale list (Whisper-equivalent of
+//                Transcription.supportedLocales(); the real list is sourced in Epic 10)
+//   Style      — font / size / color / background / case / profanity-censor.
+//                CASE = auto/upper/lower ONLY (ruling #18 — no title-case).
+//   Placement  — center X / center Y (0..1) with center-snap guides + threshold.
+// Agent-mode hands a prompt draft to the agent panel (no compute) — surfaced as a
+// hint here; the agent-panel handoff is wired with the agent surface.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Spacing, Theme } from "./theme";
 
+/** A locale option for the language picker. */
+interface Locale {
+  code: string;
+  label: string;
+}
+
+// A representative subset of the Whisper language set. Epic 10 replaces this with the
+// real `Transcription.supportedLocales()` equivalent sourced from palmier-transcribe.
+const LOCALES: Locale[] = [
+  { code: "en", label: "English" },
+  { code: "es", label: "Spanish" },
+  { code: "fr", label: "French" },
+  { code: "de", label: "German" },
+  { code: "it", label: "Italian" },
+  { code: "pt", label: "Portuguese" },
+  { code: "ja", label: "Japanese" },
+  { code: "ko", label: "Korean" },
+  { code: "zh", label: "Chinese" },
+];
+
+const FONTS = ["Inter", "Arial", "Helvetica", "Georgia", "Courier New"];
+
+/** Center-snap threshold (placement snaps to 0.5 within this distance). */
+const SNAP_THRESHOLD = 0.04;
+function snapToCenter(v: number): number {
+  return Math.abs(v - 0.5) <= SNAP_THRESHOLD ? 0.5 : v;
+}
+
+/** Mirrors the Rust `CaptionRequest` the Epic-10 `generate_captions` command takes. */
+export interface CaptionRequest {
+  source: "auto" | "track";
+  language: string; // "auto" or a locale code
+  style: {
+    font: string;
+    size: number;
+    color: string;
+    background: string;
+    case: "auto" | "upper" | "lower";
+    censorProfanity: boolean;
+  };
+  placement: { centerX: number; centerY: number };
+}
+
 export function CaptionsTab() {
-  const [source, setSource] = useState("auto");
+  const [source, setSource] = useState<"auto" | "track">("auto");
   const [language, setLanguage] = useState("auto");
-  // case = auto/upper/lower only (ruling #18 — no title-case)
+  const [font, setFont] = useState(FONTS[0]);
+  const [size, setSize] = useState(28);
+  const [color, setColor] = useState("#ffffff");
+  const [background, setBackground] = useState("#000000");
+  // case = auto/upper/lower only (ruling #18 — no title-case).
   const [caseMode, setCaseMode] = useState<"auto" | "upper" | "lower">("auto");
+  const [censor, setCensor] = useState(false);
+  const [centerX, setCenterX] = useState(0.5);
+  const [centerY, setCenterY] = useState(0.85);
+
+  const request: CaptionRequest = useMemo(
+    () => ({
+      source,
+      language,
+      style: { font, size, color, background, case: caseMode, censorProfanity: censor },
+      placement: { centerX, centerY },
+    }),
+    [source, language, font, size, color, background, caseMode, censor, centerX, centerY],
+  );
+
+  // Form is valid when size is sane and placement is within the frame.
+  const valid =
+    size >= 8 &&
+    size <= 200 &&
+    centerX >= 0 &&
+    centerX <= 1 &&
+    centerY >= 0 &&
+    centerY <= 1;
+
+  const onGenerate = () => {
+    // TODO(E10): await invoke('generate_captions', { request }); real CaptionBuilder.
+    void request;
+  };
 
   return (
     <div style={formStyle}>
       <h2 style={headingStyle}>Captions</h2>
       <p style={noteStyle}>
-        Transcribe and place captions. Generation lands in Epic 10 (E4-S14 wires
-        the full form).
+        Transcribe and place captions. Generation lands in Epic 10; the form below is
+        live.
       </p>
 
       <Field label="Source">
         <select
           value={source}
-          onChange={(e) => setSource(e.target.value)}
+          onChange={(e) => setSource(e.target.value as "auto" | "track")}
           style={inputStyle}
         >
           <option value="auto">Auto (selected clips or all audio)</option>
@@ -39,13 +120,55 @@ export function CaptionsTab() {
           onChange={(e) => setLanguage(e.target.value)}
           style={inputStyle}
         >
-          {/* TODO(E10): Whisper-equivalent of Transcription.supportedLocales(). */}
           <option value="auto">Auto-detect</option>
-          <option value="en">English</option>
-          <option value="es">Spanish</option>
-          <option value="fr">French</option>
+          {LOCALES.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.label}
+            </option>
+          ))}
         </select>
       </Field>
+
+      <SectionLabel>Style</SectionLabel>
+
+      <Field label="Font">
+        <select value={font} onChange={(e) => setFont(e.target.value)} style={inputStyle}>
+          {FONTS.map((f) => (
+            <option key={f} value={f}>
+              {f}
+            </option>
+          ))}
+        </select>
+      </Field>
+
+      <Field label={`Size (${size}px)`}>
+        <input
+          type="range"
+          min={8}
+          max={200}
+          value={size}
+          onChange={(e) => setSize(Number(e.target.value))}
+        />
+      </Field>
+
+      <div style={{ display: "flex", gap: Spacing.md }}>
+        <Field label="Text color">
+          <input
+            type="color"
+            value={color}
+            onChange={(e) => setColor(e.target.value)}
+            style={colorInputStyle}
+          />
+        </Field>
+        <Field label="Background">
+          <input
+            type="color"
+            value={background}
+            onChange={(e) => setBackground(e.target.value)}
+            style={colorInputStyle}
+          />
+        </Field>
+      </div>
 
       <Field label="Case">
         <div style={{ display: "flex", gap: Spacing.sm }}>
@@ -56,8 +179,7 @@ export function CaptionsTab() {
               style={{
                 ...inputStyle,
                 cursor: "pointer",
-                background:
-                  caseMode === c ? Theme.accent : Theme.background.base,
+                background: caseMode === c ? Theme.accent : Theme.background.base,
                 color: caseMode === c ? "#000" : Theme.text.secondary,
               }}
             >
@@ -67,9 +189,51 @@ export function CaptionsTab() {
         </div>
       </Field>
 
-      <button disabled title="Caption generation lands in Epic 10" style={generateDisabledStyle}>
+      <label style={checkboxRowStyle}>
+        <input
+          type="checkbox"
+          checked={censor}
+          onChange={(e) => setCensor(e.target.checked)}
+        />
+        <span>Censor profanity</span>
+      </label>
+
+      <SectionLabel>Placement</SectionLabel>
+
+      <Field label={`Center X (${centerX.toFixed(2)}${centerX === 0.5 ? " · snapped" : ""})`}>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={centerX}
+          onChange={(e) => setCenterX(snapToCenter(Number(e.target.value)))}
+        />
+      </Field>
+      <Field label={`Center Y (${centerY.toFixed(2)}${centerY === 0.5 ? " · snapped" : ""})`}>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={centerY}
+          onChange={(e) => setCenterY(snapToCenter(Number(e.target.value)))}
+        />
+      </Field>
+
+      <button
+        disabled
+        onClick={onGenerate}
+        title="Caption generation lands in Epic 10"
+        style={{ ...generateDisabledStyle, opacity: valid ? 1 : 0.6 }}
+      >
         Generate (backend not available)
       </button>
+
+      <p style={agentHintStyle}>
+        Tip: agent-mode can refine captions (remove fillers, fix names, translate) —
+        it hands a prompt draft to the agent panel.
+      </p>
     </div>
   );
 }
@@ -80,6 +244,23 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span style={{ fontSize: 11, color: Theme.text.muted }}>{label}</span>
       {children}
     </label>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        fontSize: 11,
+        fontWeight: 600,
+        color: Theme.text.secondary,
+        marginTop: Spacing.sm,
+        textTransform: "uppercase",
+        letterSpacing: 0.4,
+      }}
+    >
+      {children}
+    </div>
   );
 }
 
@@ -101,6 +282,12 @@ const noteStyle = {
   color: Theme.text.muted,
   margin: 0,
 } as const;
+const agentHintStyle = {
+  fontSize: 10,
+  color: Theme.text.tertiary,
+  margin: 0,
+  marginTop: Spacing.xs,
+} as const;
 const inputStyle = {
   fontSize: 12,
   color: Theme.text.primary,
@@ -108,6 +295,22 @@ const inputStyle = {
   border: `1px solid ${Theme.border.primary}`,
   borderRadius: 6,
   padding: "5px 8px",
+} as const;
+const colorInputStyle = {
+  width: 48,
+  height: 28,
+  padding: 0,
+  border: `1px solid ${Theme.border.primary}`,
+  borderRadius: 6,
+  background: "transparent",
+  cursor: "pointer",
+} as const;
+const checkboxRowStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: Spacing.sm,
+  fontSize: 12,
+  color: Theme.text.secondary,
 } as const;
 const generateDisabledStyle = {
   fontSize: 12,

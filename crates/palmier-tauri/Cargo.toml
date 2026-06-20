@@ -32,8 +32,14 @@ serde_json = { workspace = true }
 tauri-plugin-window-state = "2"
 # E1-S7: native Save-As / Open file dialogs for New/Open project (reference
 # NSSavePanel/NSOpenPanel → tauri-plugin-dialog). The frontend drives the picker and
-# hands the chosen `.palmier` path to `create_project`/`open_project`.
+# hands the chosen `.palmier` path to `create_project`/`open_project`. Also backs the
+# E4-S12 media-panel Relink picker (reference NSOpenPanel relink).
 tauri-plugin-dialog = "2"
+# E4-S12: media-panel OS actions. Reveal in Explorer (reference NSWorkspace
+# activateFileViewerSelecting → opener `reveal_item_in_dir`) + Copy Path / clipboard
+# paste (reference NSPasteboard → clipboard-manager write_text/read_text).
+tauri-plugin-opener = "2"
+tauri-plugin-clipboard-manager = "2"
 # E1-S10: real updater plugin, only compiled with the `updater-plugin` feature.
 tauri-plugin-updater = { version = "2", optional = true }
 # Settings/log dir resolution (%APPDATA%\PalmierProWin / ~/.config/palmier-pro).

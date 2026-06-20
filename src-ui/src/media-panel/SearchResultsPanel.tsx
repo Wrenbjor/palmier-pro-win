@@ -8,11 +8,12 @@
 // `thumbnail(media_ref, source_seconds, max_size)` command (TODO(E11)); here they
 // render a type-colored placeholder keyed `path@time`.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import { Spacing, Theme, typeColor } from "./theme";
 import { formatTimecode } from "./search";
 import { momentUri } from "./drag";
+import { momentThumbnail } from "./media-actions";
 import type {
   MediaAssetView,
   SearchResults,
@@ -149,6 +150,21 @@ function MomentCard({
   asset?: MediaAssetView;
   onClick: () => void;
 }) {
+  // Async moment thumbnail keyed `path@time` (E4-S3 `thumbnail` command seam).
+  // Returns undefined until the palmier-media pipeline + Epic 11 land → falls back
+  // to a type-colored placeholder.
+  const [thumb, setThumb] = useState<string | undefined>(asset?.thumbnailUrl);
+  useEffect(() => {
+    if (!asset?.path) return;
+    let active = true;
+    void momentThumbnail(asset.path, hit.time).then((url) => {
+      if (active && url) setThumb(url);
+    });
+    return () => {
+      active = false;
+    };
+  }, [asset?.path, hit.time]);
+
   return (
     <button
       onClick={onClick}
@@ -170,11 +186,13 @@ function MomentCard({
     >
       <div
         style={{
-          // Moment thumbnail keyed path@time (TODO(E11): real thumbnail command).
+          // Moment thumbnail keyed path@time (E4-S3 command; placeholder until then).
           height: 68,
-          background: asset
-            ? typeColor(asset.type, 0.3)
-            : Theme.background.prominent,
+          background: thumb
+            ? `center / cover no-repeat url(${thumb})`
+            : asset
+              ? typeColor(asset.type, 0.3)
+              : Theme.background.prominent,
         }}
       />
       <div style={{ padding: 4, fontSize: 10, color: Theme.text.tertiary }}>

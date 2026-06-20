@@ -69,6 +69,12 @@ export function MediaTab({ store, controller }: MediaTabProps) {
             store.setSelection([a.id]);
             store.setFocused(a.id);
           }}
+          onSelectMoment={(hit) =>
+            controller.selectMediaAtSource(hit.assetID, hit.shotStart)
+          }
+          onSelectSpoken={(hit) =>
+            controller.selectMediaAtSource(hit.assetID, hit.start)
+          }
         />
       ) : (
         <MediaGrid
@@ -86,6 +92,12 @@ export function MediaTab({ store, controller }: MediaTabProps) {
           onRenameFolder={(id, name) => controller.renameFolder(id, name)}
           onRenameAsset={(id, name) => controller.renameAsset(id, name)}
           onToggleSection={(fid) => store.toggleSectionCollapsed(fid)}
+          onDropOnFolder={(target, drop) =>
+            void controller.handleProviderDrop(drop, target)
+          }
+          onRevealAsset={(id) => void controller.revealAsset(id)}
+          onCopyAssetPath={(id) => void controller.copyAssetPath(id)}
+          onRelinkAsset={(id) => void controller.relinkAsset(id)}
         />
       )}
 
