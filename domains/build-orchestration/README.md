@@ -72,14 +72,19 @@ pnpm). ~47 stories + 5 spikes, 18 crates. wgpu→WebView solved + HW-proven; **S
 4K30=529fps); ProRes export proven. QA follow-ups (need a display/NVIDIA): live-window composite confirm,
 §11.3 driven e2e, H.264/H.265 HW encode. Parked: ProRes 422, accept-GPLv3.
 
-**M2 IN PROGRESS (Epics 7–8 — the strategic centerpiece). In:** MCP 30-tool registry + executor (EditorState) +
-read tool bodies + arg validation + edit tool bodies + agent undo (E7-S1..S4, S12); agent message/session model +
-request builder + SSE parser + real AnthropicClient (E8-S1..S3).
+**M2 IN PROGRESS (Epics 7–8 — the strategic centerpiece). In:** the MCP 30-tool registry + executor + ALL
+non-generation tool bodies (read/edit/library/text/inspect — 24 of 30 functional; generate=M3, search=M4 stubbed);
+the **MCP HTTP server** (E7-S11, 127.0.0.1:19789, verbatim AgentInstructions, external clients connect); the agent
+message model + request/SSE + real AnthropicClient + **run loop** (E8-S1..S4) + the **chat panel UI**.
 
-**M2 REMAINING (next waves):** E7-S5..S10 (generate/inspect/search/library/text tool bodies) · E7-S11 (axum/rmcp
-MCP server on 127.0.0.1:19789 + Origin/content-type/protocol validators + verbatim AgentInstructions) · E7-S13
-(.mcpb). E8-S4 (streaming tool-execution loop + orphan-tool_use repair) · E8-S5..S9 (mentions/PalmierClient/tabs/
-agent-cut e2e) · the agent PANEL UI (src-ui/agent-panel). Then **M3** (gen+transcription) · **M4** (search) · **M5** (polish+release).
+**IN FLIGHT (3 workers):**
+- **M2 integration** (a26c5fcc — wire MCP server boot + the agent command/event surface + the ToolDispatcher adapter
+  over ToolExecutor + mount the panel; MCP server & agent share ONE EditorState; palmier-tauri+src-ui) — the keystone.
+- **E8-S5** (a3524880 — agent mentions/context-hints + image inlining, palmier-agent)
+- **Spike S-2** (afb04362 — Convex WS live-query for generations:by_id; M3 prep, isolated)
+
+**M2 REMAINING after integration:** E7-S13 (.mcpb + shared prompt module + Help MCP-instructions) · E8-S6 (PalmierClient,
+needs S-2) · E8-S7 (tab orchestration/save) · E8-S9 (agent-cut e2e). Then **M3** (gen+transcription) · **M4** (search) · **M5** (polish+release).
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -135,6 +140,7 @@ agent-cut e2e) · the agent PANEL UI (src-ui/agent-panel). Then **M3** (gen+tran
 2026-06-20 | E5-S5/S7 merged (698bb45) — preview transport (play/pause/seek/step/tick → TransportEvent Render/SeekDecode/CurrentFrameChanged; shared transport + per-tab state) + RenderFrame/PreviewTab model for E5-S8; SeekMode/throttle reused from E5-S2; 76 tests. E5-S8 unblocked → DISPATCHED EARLY (a98b18d9) the wgpu compositor present (build on proven A1).
 2026-06-20 | E4-S12/S13/S14 merged (cbe7110) — panel drag-out/cycle-guarded moves + OS actions (reveal/copy/relink/clipboard via tauri-plugin-opener/clipboard-manager) + Captions/Music forms (#18 case, #14 Music=gen form). cargo+pnpm green. **Epic 4 (media) COMPLETE** (~38 stories). Only E5-S8 in flight (watch palmier-tauri merge conflict).
 2026-06-20 | heartbeat — M1 critical path fully serialized behind E5-S8 (everything else depends on/conflicts with it). To use idle capacity, dispatched M2 FOUNDATION in parallel (disjoint crates, safe regardless of E5-S8): E7-S1 (palmier-tools MCP registry/dispatch/ShortId, af837a44) + E8-S1 (palmier-agent message/session/client scaffold, a8c6511f).
+2026-06-20 | E7-S5/S8/S10 merged (69fb90e) — MCP tool bodies: add_texts/add_captions, library tools (import/folders, dual-shape, MediaLibrary agent-undo stack), inspect_media/inspect_timeline (gpu-inspect feature, real GPU frames); 136 tests. 24 of 30 tools functional (generate=M3, search=M4 stubbed). Dispatching M2 integration + E8-S5 + Spike S-2.
 2026-06-20 | **E7-S11 MCP SERVER merged (2e92360)** — palmier-mcp axum HTTP server on 127.0.0.1:19789 (loopback-only), the 3 validators (Origin/content-type/protocol), Initialize identity (name palmier-pro, **instructions = verbatim AgentInstructions 8694 bytes**, .gitattributes LF-pinned for byte-fidelity), tools/list = exactly 30, 2 resources, single+batched JSON-RPC, well-known endpoint; McpServer::start/stop boot seam; 36+9 tests. **External MCP clients (Claude Desktop/Code/Cursor/Codex) can now connect.** (M2 centerpiece)
 2026-06-20 | agent-panel-ui merged (e2e4b34) — the in-app agent chat panel (src-ui/agent-panel: collapsible shell, session tabs+history, message blocks [text/toolUse/toolResult], @mention autocomplete, model picker #20, 7 starter prompts; MockAgentStream + AgentPanelController integration seam); pnpm green. (M2)
 2026-06-20 | E8-S4 merged (587f866) — agent tool-execution loop (AgentLoop::run_turn drives a turn across tool rounds: stream→accumulate→dispatch tool_use→resume→end_turn) + orphan-tool_use repair (prepend/insert Cancelled) + clean cancellation; ToolDispatcher trait seam (mock-testable); 96+5 tests. The agent's run loop works end-to-end vs a mock; real ToolExecutor wiring = integration. (M2)
