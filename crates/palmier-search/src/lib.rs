@@ -17,7 +17,19 @@
 //! the format/magic is preserved but [`spec::MODEL_VERSION`] is **2** to force a clean
 //! re-index — ONNX (ort) vectors are not bit-equivalent to the reference CoreML vectors,
 //! so a macOS-built index is treated as stale on the port.
+//!
+//! ## E11-S3 — `FrameSampler` (shot detection + keep cadence) ([`sampler`])
+//!
+//! The [`sampler`] module ports `FrameSampler.swift`: a shot-aware frame stream
+//! over a video ([`FrameSampler::frames`]) that decodes candidate times via Epic
+//! 4's shared FFmpeg path ([`palmier_media::extract_frame_timed`] — no second
+//! decode path), fingerprints each frame with an 8×8 BT.601 [`LumaGrid`], starts
+//! a new shot on a luma scene change (`meanDiff > promoteDiff`), and keeps frames
+//! on either a new shot or the 8 s coverage floor. The cadence/shot logic lives in
+//! the pure [`SamplerState`] / [`candidate_times`] core (`samplerVersion = 1`,
+//! matching [`spec::SAMPLER_VERSION`]) so it tests without a decoder.
 
+pub mod sampler;
 pub mod store;
 pub mod visual_search;
 
@@ -45,5 +57,9 @@ pub mod spec {
     pub const RELATIVE_CUTOFF: f32 = 0.85;
 }
 
+pub use sampler::{
+    candidate_times, effective_interval, Frame, FrameSampler, LumaGrid, Options, SampleError,
+    SamplerState, SAMPLER_VERSION,
+};
 pub use store::{AssetIndex, EmbeddingStore, Header, Row};
 pub use visual_search::{search as visual_search, Hit};

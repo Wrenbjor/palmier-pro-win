@@ -144,6 +144,10 @@ load-bearing contract, the directory is a port choice.
 ---
 
 ### E11-S3 — FrameSampler (shot detection + keep cadence)
+> **Status:** DONE (story/E11-S3-framesampler) — 8×8 BT.601 LumaGrid, promoteDiff=12,
+> coverage-floor 8s, interval-doubling ≥3000px, samplerVersion=1. Reuses Epic 4
+> `palmier_media::extract_frame_timed` (one FFmpeg seek+decode+scale path, returns frame + actual PTS).
+
 **Intent:** As the visual indexer, I want a frame-sampling stream over a video that emits distinct,
 shot-aware frames, so embeddings cover scenes without flooding near-duplicates.
 

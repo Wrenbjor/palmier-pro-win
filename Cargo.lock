@@ -4097,6 +4097,8 @@ dependencies = [
  "anyhow",
  "dirs 5.0.1",
  "half",
+ "image",
+ "palmier-media",
  "palmier-model",
  "serde",
  "serde_json",
