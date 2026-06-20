@@ -66,7 +66,21 @@ converted artifact size is recorded (confirms the ≈0.8–1 GB §13.3 estimate;
 ## Stories
 
 ### E11-S1 — [SPIKE] SigLIP2 weight conversion + embedding-parity harness
-> **Note:** Satisfied by Spike S-3 (`spikes/s3-siglip2/`) — runtime = `ort` + ONNX (`onnx-community/siglip2-base-patch16-256-ONNX`); parity surface (preprocess/tokenize/L2-normalize/rank/.embed) proven, magic decision = keep `PALMEMB1`, bump `modelVersion` to 2.
+> **Status:** DONE-production-port (story/E11-S1-embedder-port) — Spike S-3 ported into
+> production `palmier-search`: `preprocess` (256×256 squash, black-fill, sRGB, [-1,1]
+> CHW), `tokenize` (Gemma pad-to-64 id-0 no-mask), `embedder` (explicit **L2-normalize**
+> → raw dot == cosine; `VisualEmbedder::{encode_image, encode_text}`), `model_loader`
+> (state machine `unknown → notInstalled | preparing → ready | downloading | failed`,
+> `prepare()` never downloads, `download_stub()` left for E11-S6), `manifest`
+> (`siglip2-base-patch16-256`, modelVersion **2**, SHA/size placeholders + base-URL const).
+> The **`ort` ONNX encode path is FEATURE-GATED** (`--features ort`, OFF by default) so
+> default builds need no `onnxruntime.dll`; under the feature it uses ort 2.0.0-rc.10 with
+> DirectML + CPU fallback (type-checks). 52 unit/integration tests pass with no weights;
+> the **live ort encode + real cosine is gated on downloading ~750 MB weights +
+> onnxruntime.dll** — left as an `#[ignore]`d `live_encode_cosine_sanity` test with the
+> exact run command. Magic decision = keep `PALMEMB1`, modelVersion = 2 (consumes E11-S2).
+>
+> **Original note:** Satisfied by Spike S-3 (`spikes/s3-siglip2/`) — runtime = `ort` + ONNX (`onnx-community/siglip2-base-patch16-256-ONNX`); parity surface (preprocess/tokenize/L2-normalize/rank/.embed) proven, magic decision = keep `PALMEMB1`, bump `modelVersion` to 2.
 
 **Intent:** As the build, I want SigLIP2 base patch16-256 768-dim weights as ONNX/candle plus a parity
 harness, so visual indexing produces L2-normalized embeddings that keep the `0.05` floor / `0.85` cutoff
