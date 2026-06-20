@@ -59,12 +59,17 @@ _(Per-wave history → `## Timeline` below. This block = concise current state.)
 **Wave 7: COMPLETE** — E5-S3/S4 (composition graph + sampling), E4-S8..S11 (media-panel UI), E4-S6/S7 (folder
 model + import; re-dispatched after a stall). All green.
 
-**Wave 8: IN PROGRESS** — **E5-S5+E5-S7** (palmier-engine: composited-frame finalize + transport: play/pause/
-seek/step/current_frame) · **E4-S12..S14** (media-panel polish: drag-out/reveal/relink/clipboard + Captions/Music forms).
+**Wave 8: COMPLETE** — E5-S5/S7 (transport), E4-S12..S14 (panel polish). **Epics 1-4 done; Epic 6 XMEML done.**
 
-**Remaining for M1:** **E5-S8** (GPU compositor present — build on the proven A1 mechanism, after E5-S5) →
-E5-S9/S10/S11; **E6-S5** (video export, HW encoders); then the hand-edit e2e gate → **M1 EXIT → M2** (Epics 7-8:
-MCP server [30 tools] + agent).
+**IN FLIGHT (3 workers):**
+- **E5-S8** (a98b18d9) — the wgpu compositor present (the M1 keystone; build on proven A1). **M1's sole remaining
+  critical-path story** — E5-S9/S10/S11 + E6-S5 all depend on or conflict with it, so they wait.
+- **M2 foundation, started in parallel** (disjoint crates, independent of the preview, safe regardless of E5-S8):
+  **E7-S1** (af837a44 — palmier-tools: MCP 30-tool registry + dispatch + ShortId) · **E8-S1** (a8c6511f —
+  palmier-agent: message/session model + client trait + StreamEvent).
+
+**Remaining for M1:** E5-S8 → E5-S9/S10/S11 (overlays/aspect-quality/perf gate SM-2) → E6-S5 (video export, HW
+encoders) → hand-edit e2e gate → **M1 EXIT**. Then M2 proceeds (E7 tool bodies + E8 streaming loop).
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -119,3 +124,4 @@ MCP server [30 tools] + agent).
 2026-06-20 | E4-S6/S7 merged (a4c7ae3) — folder model + cycle-guarded moves + snapshot-undo (palmier-model/project/history) + import orchestration (one undo step, recursive folder→hierarchy, byte-exact drag payload; palmier-media); new dep edges (project→history, media→project), no cycle; 112+89+89 tests. Wave 7 COMPLETE (~36 stories). Dispatching Wave 8 (E5-S5/S7 transport, E4-S12..S14 panel polish).
 2026-06-20 | E5-S5/S7 merged (698bb45) — preview transport (play/pause/seek/step/tick → TransportEvent Render/SeekDecode/CurrentFrameChanged; shared transport + per-tab state) + RenderFrame/PreviewTab model for E5-S8; SeekMode/throttle reused from E5-S2; 76 tests. E5-S8 unblocked → DISPATCHED EARLY (a98b18d9) the wgpu compositor present (build on proven A1).
 2026-06-20 | E4-S12/S13/S14 merged (cbe7110) — panel drag-out/cycle-guarded moves + OS actions (reveal/copy/relink/clipboard via tauri-plugin-opener/clipboard-manager) + Captions/Music forms (#18 case, #14 Music=gen form). cargo+pnpm green. **Epic 4 (media) COMPLETE** (~38 stories). Only E5-S8 in flight (watch palmier-tauri merge conflict).
+2026-06-20 | heartbeat — M1 critical path fully serialized behind E5-S8 (everything else depends on/conflicts with it). To use idle capacity, dispatched M2 FOUNDATION in parallel (disjoint crates, safe regardless of E5-S8): E7-S1 (palmier-tools MCP registry/dispatch/ShortId, af837a44) + E8-S1 (palmier-agent message/session/client scaffold, a8c6511f).
