@@ -13,20 +13,39 @@
 //! classification + probing layer:
 //! * [`clip`] — the case-insensitive ClipType **extension gate** and the Lottie
 //!   content **second-gate** sniff (`classify_path`).
-//! * [`metadata`] — the lightweight, **pure-Rust** asset metadata loader
-//!   (`load_metadata`) returning duration / width / height / fps / has_audio.
-//!   It links NO system FFmpeg — fields needing a full decoder are `None` with a
-//!   `// TODO(ffmpeg)` note for the E4-S3+ decode stories.
+//! * [`metadata`] — the asset metadata loader (`load_metadata`) returning
+//!   duration / width / height / fps / has_audio. The pure-Rust `mp4` parser is
+//!   the fast path; the E4-S1 `// TODO(ffmpeg)` fps fields are now **backfilled**
+//!   via `ffmpeg-next` (avg/r_frame_rate) for VFR/edit-list containers
+//!   ([`metadata::ffmpeg_frame_rate`]).
+//!
+//! The [`thumbnail`] (E4-S3 + E4-S5) and [`waveform`] (E4-S4) modules provide the
+//! visual-cache decode pipelines that build on the [`cache`] infrastructure:
+//! * [`thumbnail::video`] — `ffmpeg-next` video **sprite-sheet** strips
+//!   (120×68, ≤ 50-col JPEG sprite + `.thumbs.json` sidecar; ungated, #16) and
+//!   the single-frame `extract_frame` for Epic 11's moment thumbnails.
+//! * [`thumbnail::image_thumb`] — EXIF-aware **image** thumbnails (gated 4, #16).
+//! * [`waveform`] — `symphonia` **waveform** decode → 150 samples/s cap 20000
+//!   `Vec<f32>` (gated 2, #16).
 
 pub mod cache;
 pub mod clip;
 pub mod metadata;
+pub mod thumbnail;
+pub mod waveform;
 
 pub use clip::{
     classify_path, clip_type_for_extension, clip_type_for_path, is_lottie, is_lottie_bytes,
     ClipType,
 };
 pub use metadata::{load_metadata, load_metadata_as, AssetMetadata, MetadataError};
+pub use thumbnail::{
+    extract_frame, make_image_thumbnail, video_thumbnail_times, ImageThumbnailCache,
+    ThumbnailFrame, ThumbnailSidecar, VideoThumbnailCache,
+};
+pub use waveform::{
+    downsample_rms, generate_waveform, waveform_sample_count, WaveformCache, WaveformError,
+};
 
 /// Placeholder for the media subsystem.
 pub fn placeholder() -> &'static str {

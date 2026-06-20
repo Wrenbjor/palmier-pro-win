@@ -6,26 +6,24 @@
 //! presence. The Swift original drives this off `AVURLAsset.load` (video/audio),
 //! `ImageIO` (image), and the Lottie parser (lottie).
 //!
-//! ## Toolchain constraint (E4-S1): NO system FFmpeg
-//! The Windows FFmpeg toolchain isn't provisioned yet — it lands with the
-//! decode-heavy thumbnail/waveform stories (E4-S3/S4/S5). So this loader uses a
-//! **lightweight, pure-Rust** path and *never* links `ffmpeg-next`:
+//! ## Backend matrix (E4-S1, fps backfilled in E4-S3)
+//! The pure-Rust `mp4` parser is the fast path; `ffmpeg-next` now backfills the
+//! fps the parser can't derive (the E4-S1 `// TODO(ffmpeg)` debt):
 //!
 //! | type  | backend                | duration | w/h | fps | has_audio |
 //! |-------|------------------------|:--------:|:---:|:---:|:---------:|
 //! | image | `image` + `kamadak-exif`|   n/a*  | yes | n/a | n/a       |
 //! | audio | `symphonia`            |   yes**  | n/a | n/a | yes(true) |
-//! | video | `mp4` (ISO-BMFF)       |   yes    | yes |yes† | yes       |
+//! | video | `mp4` + `ffmpeg-next`  |   yes    | yes |yes† | yes       |
 //!
 //! \* image duration is a fixed still-image default in the reference, set by the
 //!    UI layer (`Defaults.imageDurationSeconds`), not probed here.
 //! \** audio duration from the container/codec params when available.
-//! † video fps is read from the `mp4` track when the container exposes a sane
-//!    timescale/sample count; for `.mov`/`.m4v` variants where it can't be derived
-//!    without a full decoder it is returned as `None` with a `// TODO(ffmpeg)`
-//!    note — the E4-S3+ decode stories will backfill it via ffprobe/ffmpeg-next.
-//!
-//! Any field that *genuinely* needs a full decoder is `None` here, never faked.
+//! † video fps comes from the `mp4` track when the container exposes a sane
+//!    timescale/sample count; for VFR/edit-list `.mov`/`.m4v` variants where it
+//!    reads as 0/garbage, [`ffmpeg_frame_rate`] reads the stream's
+//!    `avg_frame_rate` (then `r_frame_rate`) — the parity replacement for the
+//!    Swift `nominalFrameRate`.
 //!
 //! See `docs/reference/media-panel.md` §"macOS/Apple APIs to replace"
 //! (AVURLAsset→ffprobe, ImageIO→`image`, DSWaveformImage→symphonia) and
@@ -303,10 +301,8 @@ fn load_video_metadata(path: &Path) -> Result<AssetMetadata, MetadataError> {
                 // fps: the `mp4` crate exposes `frame_rate()` derived from
                 // sample count / duration. It's reliable for constant-frame-rate
                 // mp4; for some `.mov`/`.m4v` variants (variable frame rate, edit
-                // lists) it can be 0/garbage and a precise value needs a full
-                // decoder.
-                // TODO(ffmpeg): replace with ffprobe `r_frame_rate` /
-                // `avg_frame_rate` in the E4-S3+ decode stories for exact VFR fps.
+                // lists) it can be 0/garbage. When that happens we backfill via
+                // ffmpeg-next's stream `avg_frame_rate`/`r_frame_rate` below.
                 let r = track.frame_rate();
                 if r.is_finite() && r > 0.0 {
                     fps = Some(r);
@@ -317,6 +313,14 @@ fn load_video_metadata(path: &Path) -> Result<AssetMetadata, MetadataError> {
         }
     }
 
+    // E4-S3 fps backfill: if the pure-Rust parser couldn't derive a sane fps
+    // (VFR / edit-list containers report 0/garbage), read it from ffmpeg-next's
+    // stream `avg_frame_rate` / `r_frame_rate`. This closes the E4-S1
+    // `// TODO(ffmpeg)` debt now that the FFmpeg toolchain is provisioned.
+    if fps.is_none() {
+        fps = ffmpeg_frame_rate(path);
+    }
+
     Ok(AssetMetadata {
         duration,
         width,
@@ -324,6 +328,38 @@ fn load_video_metadata(path: &Path) -> Result<AssetMetadata, MetadataError> {
         fps,
         has_audio,
     })
+}
+
+/// Read a video file's nominal frame rate via `ffmpeg-next`, preferring the
+/// stream's `avg_frame_rate` (the playback-accurate average over the whole clip,
+/// the right choice for VFR) and falling back to `r_frame_rate` (the base/raw
+/// rate). Returns `None` if ffmpeg can't open the file, there's no video stream,
+/// or neither rate is a positive finite number.
+///
+/// This is the parity replacement for the Swift `nominalFrameRate` read off
+/// `AVAssetTrack`. It is only consulted when the lightweight `mp4` parser fails
+/// to produce a value, so the common constant-frame-rate path never pays the
+/// ffmpeg open cost.
+pub fn ffmpeg_frame_rate(path: &Path) -> Option<f64> {
+    // ffmpeg::init is idempotent; ignore a re-init error.
+    let _ = ffmpeg_next::init();
+    let ictx = ffmpeg_next::format::input(&path).ok()?;
+    let stream = ictx.streams().best(ffmpeg_next::media::Type::Video)?;
+
+    let to_f64 = |r: ffmpeg_next::Rational| -> Option<f64> {
+        let (num, den) = (r.numerator(), r.denominator());
+        if den == 0 {
+            return None;
+        }
+        let v = num as f64 / den as f64;
+        if v.is_finite() && v > 0.0 {
+            Some(v)
+        } else {
+            None
+        }
+    };
+
+    to_f64(stream.avg_frame_rate()).or_else(|| to_f64(stream.rate()))
 }
 
 /// Rotation (in degrees, normalized to {0,90,180,270}) encoded by an mp4 track's
@@ -405,6 +441,21 @@ mod tests {
     fn unsupported_path_errors() {
         let err = load_metadata("C:/x/file.zip").unwrap_err();
         assert!(matches!(err, MetadataError::UnsupportedType));
+    }
+
+    #[test]
+    #[ignore = "needs a real video fixture via PALMIER_TEST_VIDEO"]
+    fn ffmpeg_frame_rate_reads_real_video() {
+        // Exercises the E4-S1 fps backfill (ffmpeg avg/r_frame_rate). Run with:
+        //   PALMIER_TEST_VIDEO=C:\clip.mp4 cargo test -p palmier-media -- --ignored
+        let Ok(path) = std::env::var("PALMIER_TEST_VIDEO") else {
+            return;
+        };
+        let fps = ffmpeg_frame_rate(std::path::Path::new(&path));
+        assert!(fps.is_some_and(|f| f > 0.0), "real video has a positive fps");
+        // And the full loader surfaces it (mp4 path or ffmpeg backfill).
+        let meta = load_metadata(&path).unwrap();
+        assert!(meta.fps.is_some_and(|f| f > 0.0));
     }
 
     #[test]
