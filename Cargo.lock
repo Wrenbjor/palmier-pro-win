@@ -3836,6 +3836,7 @@ name = "palmier-tauri"
 version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
+ "palmier-agent",
  "palmier-auth",
  "palmier-engine",
  "palmier-mcp",
@@ -3844,6 +3845,7 @@ dependencies = [
  "palmier-project",
  "palmier-telemetry",
  "palmier-text",
+ "palmier-tools",
  "palmier-update",
  "raw-window-handle",
  "serde",
@@ -3855,6 +3857,8 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-updater",
  "tauri-plugin-window-state",
+ "tokio",
+ "tokio-util",
  "tracing",
 ]
 

@@ -27,6 +27,7 @@
 // On Windows release builds, suppress the extra console window. Harmless in debug.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod agent;
 mod boot;
 mod commands;
 mod media;
@@ -120,6 +121,13 @@ fn main() {
             preview::preview_seek,
             preview::preview_step,
             preview::preview_set_tab,
+            // M2 boot integration — the in-app agent command surface (the panel's
+            // agent_send/agent_cancel + agent_status/agent_set_pref seam). Tool
+            // dispatch routes into the SAME shared executor the MCP server uses.
+            agent::agent_send,
+            agent::agent_cancel,
+            agent::agent_status,
+            agent::agent_set_pref,
         ])
         .setup(move |app| {
             // E1-S7/E1-S8 — build the project lifecycle state BEFORE `auth` is moved
@@ -143,6 +151,12 @@ fn main() {
             // calls `preview_init`). Holds the wgpu compositor + decode owner.
             app.manage(preview::PreviewState::default());
 
+            // M2 boot integration — the agent state owns the ONE shared
+            // `Arc<ToolExecutor>` (single `EditorState`) that BOTH the loopback MCP
+            // server and the in-app agent drive. Managed BEFORE the MCP start so
+            // step 6 can clone the shared executor into the server.
+            app.manage(agent::AgentState::new());
+
             // E1-S3 — build + install the full main menu (Palmier Pro / File /
             // Edit / View / Help) with the reference Windows/Linux accelerators
             // and wire the single menu-event router.
@@ -153,6 +167,15 @@ fn main() {
             // delay reaching Home (FR-1 / SM-1).
             let handle = tauri::async_runtime::handle();
             boot::spawn_model_catalog_load(&handle);
+
+            // Step 6 (real) — start the loopback MCP server over the SHARED executor
+            // if `io.palmier.pro.mcp.enabled` (ruling #6, absent ⇒ ON). The bind
+            // returns as soon as the listener is up (serving runs on a background
+            // task), and a bind FAILURE is logged-not-fatal — so this cannot stall
+            // cold start or break boot. `get_mcp_status` reads the live state.
+            let mcp_running =
+                agent::start_mcp(&app.handle().clone(), boot_ctx.settings.mcp_enabled);
+            tracing::info!(target: "mcp", mcp_running, "boot 6/7: MCP start (live)");
 
             // Step 7 — show the Home window. The window is declared in
             // tauri.conf.json (label "home", 1200×1200 / min 760×480) and is
@@ -188,6 +211,13 @@ fn main() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // M2 boot integration — stop the loopback MCP server gracefully on exit
+            // so its background serving task + bound port are released cleanly.
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                agent::stop_mcp(app_handle);
+            }
+        });
 }

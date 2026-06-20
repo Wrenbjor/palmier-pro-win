@@ -1,26 +1,26 @@
 // AgentPanelController — the single command seam for the agent panel's side effects
-// (E8-S8). Mirrors the media-panel's `MediaPanelController` boundary convention.
+// (E8-S8 + M2 boot integration). Mirrors the media-panel's `MediaPanelController`
+// boundary convention.
 //
-// Today every command runs against the local store + a `MockAgentStream` so the panel
-// animates without a backend. When the real Tauri agent commands land they REPLACE the
-// local apply:
-//   - `send()`        → `await invoke('agent_send', { text, mentions })` then subscribe
-//                        to the `agent://event` stream (text_delta / tool_use_complete /
-//                        message_stop). The run loop + tool dispatch is palmier-agent
-//                        E8-S4; the Tauri bridge is later.
-//   - `cancel()`      → `await invoke('agent_cancel')`.
-//   - tool dispatch   → handled backend-side by `palmier_tools::execute` (NOT here —
-//                        the frontend never touches HTTP / keyring / filesystem; PRD
-//                        cross-cutting "Strict layering", FOUNDATION §4).
-//   - model/backend   → `await invoke('agent_status')` seeds `BackendStatus`; the
-//                        selected model persists via `await invoke('set_pref', ...)`.
-// Each such seam is marked `// TODO(integration): Tauri agent commands`.
+// Two transports, picked at runtime:
+//   - **Real (in a Tauri webview):** `send()` → `invoke('agent_send', …)` and the
+//     `agent://event` subscription drives the message list; `cancel()` →
+//     `invoke('agent_cancel', …)`; the model preference persists via
+//     `invoke('agent_set_pref', …)`; backend status seeds from `invoke('agent_status')`.
+//     Tool dispatch happens backend-side in `palmier_tools::execute` over the SHARED
+//     `EditorState` (the same one the MCP server drives) — the frontend never touches
+//     HTTP / keyring / filesystem (PRD "Strict layering", FOUNDATION §4).
+//   - **Mock (plain `vite dev` / tests, outside a Tauri webview):** the original
+//     `MockAgentStream` drives a fake assistant turn so the panel animates with no
+//     backend.
 //
-// The frontend models the loop's three events exactly (agent-panel.md lines 33-38), so
-// swapping the MockAgentStream for the real Tauri event subscription is a transport
-// change, not a re-model.
+// The frontend models the loop's events exactly (agent-panel.md lines 33-38), so the
+// real `agent://event` payload maps 1:1 onto the same `onStreamEvent` handler the mock
+// feeds — swapping the transport is not a re-model.
 
-import { appendTextDelta, effectiveModel, isEmptyAssistantTurn } from "./logic";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { appendTextDelta, effectiveModel, isEmptyAssistantTurn, referencedMentions } from "./logic";
 import {
   MOCK_TOOL_RESULT_TEXT,
   mockClosingTurn,
@@ -30,18 +30,40 @@ import {
   type MockStreamHandle,
 } from "./mock-stream";
 import type { AgentPanelStore } from "./store";
-import { MODEL_PREF_KEY, type AgentMention, type AgentMessage } from "./types";
+import {
+  MODEL_PREF_KEY,
+  type AgentMention,
+  type AgentMessage,
+  type BackendStatus,
+} from "./types";
 
-/** Generate a local UUID-ish id (replaced by backend ids when commands land). */
+/** Generate a local UUID-ish id (used for optimistic user/assistant messages). */
 export function localId(prefix = "id"): string {
   const rnd = Math.random().toString(36).slice(2, 10);
   return `${prefix}-${rnd}-${Date.now().toString(36)}`;
 }
 
+/** Whether we're running inside a Tauri webview (real agent backend available). */
+function isTauri(): boolean {
+  return typeof globalThis !== "undefined" && "__TAURI_INTERNALS__" in globalThis;
+}
+
+/** The wire shape of an `agent://event` payload from `palmier-tauri`. */
+type AgentBackendEvent =
+  | { type: "text_delta"; sessionId: string; text: string }
+  | { type: "tool_use_complete"; sessionId: string; id: string; name: string; inputJson: string }
+  | { type: "tool_result"; sessionId: string; toolUseId: string; isError: boolean; text: string }
+  | { type: "done"; sessionId: string; stopReason: string }
+  | { type: "error"; sessionId: string; message: string };
+
 export class AgentPanelController {
   private stream: MockStreamHandle | null = null;
   /** The assistant message id currently being streamed into (for delta routing). */
   private streamingAssistantId: string | null = null;
+  /** Unsubscribe for the live `agent://event` listener (real transport). */
+  private unlisten: (() => void) | null = null;
+  /** The session id whose turn is in flight (real transport). */
+  private streamingSessionId: string | null = null;
 
   constructor(private store: AgentPanelStore) {}
 
@@ -58,12 +80,17 @@ export class AgentPanelController {
   // --- Model picker -----------------------------------------------------------
 
   /**
-   * Persist the selected model.
-   * TODO(integration): Tauri agent commands — `await invoke('set_pref', { key:
-   * "agentModel", value })`; today it persists to localStorage (best-effort).
+   * Persist the selected model. In a Tauri webview this calls
+   * `agent_set_pref` (config key `"agentModel"`); always mirrors to localStorage as a
+   * best-effort fallback for plain `vite dev`.
    */
   setModel(model: import("./types").AgentModelId): void {
     this.store.setPreferredModel(model);
+    if (isTauri()) {
+      void invoke("agent_set_pref", { model }).catch((err) =>
+        console.debug("[agent] agent_set_pref failed:", err),
+      );
+    }
     try {
       globalThis.localStorage?.setItem(MODEL_PREF_KEY, model);
     } catch {
@@ -84,11 +111,9 @@ export class AgentPanelController {
    * and kick off the streaming loop. Guarded on `canSend` by the UI; this also no-ops
    * on an empty draft / mid-stream as a safety net.
    *
-   * TODO(integration): Tauri agent commands — replace the MockAgentStream with
-   *   await invoke('agent_send', { text, mentions: referencedMentions(...) });
-   *   const unlisten = await listen('agent://event', (e) => this.onStreamEvent(e.payload));
-   * The orphan-tool repair, 2-cache-breakpoint body, and tool dispatch all happen
-   * backend-side in palmier-agent (E8-S4) — the frontend only renders the event stream.
+   * Real transport: `invoke('agent_send', { sessionId, userText, mentions, model })`
+   * then render the `agent://event` stream. The orphan-tool repair, 2-cache-breakpoint
+   * body, and tool dispatch all happen backend-side in palmier-agent / palmier-tools.
    */
   send(): void {
     const s = this.store.getState();
@@ -102,10 +127,16 @@ export class AgentPanelController {
       mentions: s.mentions.length > 0 ? s.mentions.slice() : undefined,
     };
     this.store.appendMessage(userMsg);
+    const referenced = referencedMentions(text, s.mentions);
     this.store.setDraft("");
     this.store.setMentions([]);
     this.store.setStreamError(null);
-    this.kickOffStream(text);
+
+    if (isTauri()) {
+      void this.kickOffRealStream(text, referenced);
+    } else {
+      this.kickOffStream(text);
+    }
   }
 
   /** Send a starter prompt directly (empty-state click). */
@@ -116,19 +147,102 @@ export class AgentPanelController {
 
   /**
    * `cancel()` (agent-panel.md lines 109-110): cancel the in-flight stream and drop the
-   * empty assistant turn (no half-written tool_use committed).
-   * TODO(integration): Tauri agent commands — `await invoke('agent_cancel')`.
+   * empty assistant turn (no half-written tool_use committed). Real transport calls
+   * `agent_cancel`; the backend drops the empty assistant turn server-side.
    */
   cancel(): void {
+    if (isTauri() && this.streamingSessionId) {
+      const sessionId = this.streamingSessionId;
+      void invoke("agent_cancel", { sessionId }).catch((err) =>
+        console.debug("[agent] agent_cancel failed:", err),
+      );
+    }
     this.stream?.cancel();
     this.stream = null;
     this.dropEmptyAssistantTurn();
-    this.streamingAssistantId = null;
-    this.store.setStreaming(false);
-    this.store.syncMessagesIntoCurrentSession();
+    this.endStream();
   }
 
-  // --- Streaming loop (MockAgentStream stand-in for palmier-agent E8-S4) ------
+  // --- Real Tauri transport (M2 boot integration) ----------------------------
+
+  /**
+   * Kick off a live agent turn via `agent_send` and subscribe to `agent://event`.
+   * The backend run loop streams text deltas, tool activity, and a terminal `done`.
+   */
+  private async kickOffRealStream(
+    text: string,
+    mentions: AgentMention[],
+  ): Promise<void> {
+    const sessionId = this.store.getState().currentSessionId;
+    this.streamingSessionId = sessionId;
+    this.store.setStreaming(true);
+
+    const assistant: AgentMessage = { id: localId("msg-a"), role: "assistant", blocks: [] };
+    this.store.appendMessage(assistant);
+    this.streamingAssistantId = assistant.id;
+
+    try {
+      // Subscribe BEFORE invoking so no early event is missed.
+      this.unlisten = await listen<AgentBackendEvent>("agent://event", (e) => {
+        if (e.payload.sessionId !== sessionId) return;
+        this.onBackendEvent(e.payload);
+      });
+
+      await invoke("agent_send", {
+        sessionId,
+        userText: text,
+        mentions: mentions.map((m) => m.displayName),
+        model: this.currentModel(),
+      });
+    } catch (err) {
+      this.store.setStreamError({ kind: "upstream", message: String(err) });
+      this.endStream();
+    }
+  }
+
+  /** Map a backend `agent://event` onto the panel's message list. */
+  private onBackendEvent(event: AgentBackendEvent): void {
+    const assistantId = this.streamingAssistantId;
+    switch (event.type) {
+      case "text_delta":
+        if (assistantId)
+          this.store.updateMessage(assistantId, (m) => appendTextDelta(m, event.text));
+        break;
+      case "tool_use_complete":
+        if (assistantId)
+          this.store.updateMessage(assistantId, (m) => ({
+            ...m,
+            blocks: [
+              ...m.blocks,
+              { kind: "toolUse", id: event.id, name: event.name, inputJson: event.inputJson },
+            ],
+          }));
+        break;
+      case "tool_result":
+        // Render the tool result as a user message block (matching the loop's shape).
+        this.store.appendMessage({
+          id: localId("msg-u"),
+          role: "user",
+          blocks: [
+            {
+              kind: "toolResult",
+              toolUseId: event.toolUseId,
+              isError: event.isError,
+              content: [{ kind: "text", text: event.text }],
+            },
+          ],
+        });
+        break;
+      case "error":
+        this.store.setStreamError({ kind: "upstream", message: event.message });
+        break;
+      case "done":
+        this.endStream();
+        break;
+    }
+  }
+
+  // --- Streaming loop (MockAgentStream stand-in, non-Tauri) -------------------
 
   private kickOffStream(prompt: string): void {
     this.store.setStreaming(true);
@@ -151,9 +265,9 @@ export class AgentPanelController {
   }
 
   /**
-   * Handle one stream event — the exact three the real loop consumes (agent-panel.md
-   * lines 33-38). On `message_stop(tool_use)` it dispatches the pending tool (mock) and
-   * resumes; on any other stop it ends the turn.
+   * Handle one MOCK stream event (the exact three the real loop consumes,
+   * agent-panel.md lines 33-38). On `message_stop(tool_use)` it dispatches the pending
+   * tool (mock) and resumes; on any other stop it ends the turn.
    */
   private onStreamEvent(event: AgentStreamEvent): void {
     const assistantId = this.streamingAssistantId;
@@ -187,12 +301,10 @@ export class AgentPanelController {
   }
 
   /**
-   * `runPendingToolUses` (agent-panel.md lines 111-114): collect the assistant's
-   * `.toolUse` blocks, dispatch each (here: a canned mock result; real:
-   * `palmier_tools::execute` backend-side), append ONE user message of results, then
-   * resume the stream.
-   * TODO(integration): Tauri agent commands — tool dispatch is backend-side; the
-   * frontend just receives the follow-on event stream.
+   * `runPendingToolUses` (agent-panel.md lines 111-114), MOCK transport only: collect
+   * the assistant's `.toolUse` blocks, dispatch each (canned mock result), append ONE
+   * user message of results, then resume the stream. (In the real transport this is
+   * backend-side; the frontend just receives the follow-on event stream.)
    */
   private runPendingToolUses(assistantId: string): void {
     const s = this.store.getState();
@@ -237,8 +349,11 @@ export class AgentPanelController {
   }
 
   private endStream(): void {
+    this.unlisten?.();
+    this.unlisten = null;
     this.stream = null;
     this.streamingAssistantId = null;
+    this.streamingSessionId = null;
     this.store.setStreaming(false);
     this.store.syncMessagesIntoCurrentSession();
   }
@@ -280,12 +395,25 @@ export class AgentPanelController {
   // --- Backend status (E8-S6 seam) -------------------------------------------
 
   /**
-   * Seed the backend status (key present / signed-in / plan / catalog).
-   * TODO(integration): Tauri agent commands — `this.store.setBackend(await
-   * invoke('agent_status'))`; a `.anthropicAPIKeyChanged` event re-seeds it
-   * (agent-panel.md line 56).
+   * Seed the backend status (key present / signed-in / plan / catalog). Real transport
+   * reads `agent_status`; otherwise sets the passed snapshot directly. Call
+   * `refreshBackend()` on mount and on `anthropic-api-key-changed` to re-seed.
    */
-  setBackend(status: import("./types").BackendStatus): void {
+  setBackend(status: BackendStatus): void {
     this.store.setBackend(status);
+  }
+
+  /**
+   * Pull the live backend status from the Tauri command surface (M2 boot integration).
+   * No-op outside a Tauri webview (the fixture/seeded status stands in).
+   */
+  async refreshBackend(): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      const status = await invoke<BackendStatus>("agent_status");
+      this.store.setBackend(status);
+    } catch (err) {
+      console.debug("[agent] agent_status failed:", err);
+    }
   }
 }
