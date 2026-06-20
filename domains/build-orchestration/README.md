@@ -55,8 +55,21 @@ mixer), **S-1b** (Convex Date codec decided — [[phase0-reconciliation]] Date e
 - **palmier-auth** Convex HTTP path strings inferred; confirm against the live deployment (S-2 window).
 - **E2-S8** implements `palmier-model/src/serde_date.rs` per `spikes/s1b-convex-date/FINDINGS.md`.
 
-**Wave 2b: DISPATCHING** (disjoint crates): palmier-model **E2-S3+E2-S5+E2-S8** · palmier-edit
-**E3-S2+E3-S3+E3-S4+E3-S5** (pure engines) · palmier-media **E4-S1+E5-S2** · palmier-tauri **E1-S3 + telemetry/auth boot wiring**.
+**Wave 2b: COMPLETE** (b69f057) — E2-S3/S5/S8 (model: keyframes/Clip/serde_date, f64::round parity locked),
+E3-S2..S5 (edit engines), E4-S1 (media metadata), E1-S3 (menu + telemetry/auth boot integration; subscriber
+seam resolved). All verified green.
+
+**M1 status:** ~20 stories + 2 spikes merged. In: model layer (through Clip/keyframes/dates), app shell
+(runtime/menu/boot/telemetry/auth), edit engines, history, media cache+metadata, audio mixer.
+
+**Wave 3: DISPATCHING** (disjoint): palmier-model **E2-S6+E2-S7** (Track/Timeline + MediaAsset/Manifest) ·
+src-ui/editor **E3-S9** (timeline canvas, frontend, mocked data) · palmier-tauri+src-ui **E1-S4+E1-S9+E1-S10**
+(windows/settings/updater).
+
+**NEXT INFRA (orchestrator, before decode stories):** provision **FFmpeg-on-Windows** for `ffmpeg-next`
+(system FFmpeg dev libs + LLVM/libclang; FFMPEG_DIR/LIBCLANG_PATH; bake into the build wrapper; verify a
+trivial ffmpeg-next build). Gates E5-S2, E4-S3/S4/S5 (thumbnails/waveform/decode), E6-S5 (video export).
+Held for Wave 4: palmier-export E6-S1/S7 (needs Timeline E2-S6), and the ffmpeg decode stories.
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -92,3 +105,4 @@ mixer), **S-1b** (Convex Date codec decided — [[phase0-reconciliation]] Date e
 2026-06-20 | Wave 2 COMPLETE (37d8637) — model trio (E2-S2/S4/E3-S1, 38 tests), E1-S6 auth (28 tests), E1-S2 telemetry (30 tests), E5-S6 engine audio mixer (26 tests), S-1b Date codec. All verified green on main. Dispatching Wave 2b.
 2026-06-20 | Wave 2b partial (2e32a4d) — E4-S1 media metadata (pure-Rust, no ffmpeg; 30 tests) + E3-S2..S5 palmier-edit pure engines (ripple/overwrite/split/snap; 57 tests, #10 sticky-1.5× guarded). Green on main. Wave-2b remaining: model E2-S3/S5/S8, tauri E1-S3+boot-wiring.
 2026-06-20 | E2-S3/S5/S8 merged (8c6ba8c) — keyframes+sampling, Clip core entity (f64::round ties-away parity test LOCKED), serde_date (apple-epoch/iso8601); 75+4 tests green. Worker caught a 1-day arithmetic slip in the S-1b FINDINGS worked example (corrected; fixture synthetic, round-trips fine). Wave-2b remaining: E1-S3 (tauri).
+2026-06-20 | E1-S3 merged (b69f057) — full menu + exact shortcuts; telemetry subscriber seam RESOLVED (file logging attaches); auth/telemetry wired into Tauri managed state; 15 tests green. Wave 2b COMPLETE. Dispatching Wave 3 (E2-S6/S7, E3-S9, E1-S4/S9/S10); FFmpeg toolchain queued next.

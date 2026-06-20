@@ -104,3 +104,14 @@ From<&Clip> adapter, auth Convex path confirmation).
 Refs: main @37d8637; crates/palmier-{model,auth,telemetry,engine}; spikes/s1b-convex-date/FINDINGS.md;
 phase0-reconciliation.md (Date entry resolved). Next: Wave 2b — model E2-S3/S5/S8, edit engines E3-S2..S5,
 media E4-S1/E5-S2, tauri E1-S3 + telemetry/auth boot wiring.
+
+## 2026-06-20 · Phase 4 M1 Wave-2b complete: model/edit/media/menu (6 stories) · #build #m1
+What: Wave-2b's 4 workers landed verified-green on main (b69f057): E2-S3/S5/S8 (keyframes+Clip+serde_date;
+the f64::round ties-away parity test is LOCKED — the keystone frame-math guarantee; 75+4 tests), E3-S2..S5
+(the four pure edit engines ripple/overwrite/split/snap; 57 tests; #10 sticky-1.5× guarded vs a 2.5×
+regression), E4-S1 (pure-Rust media metadata, no ffmpeg; 30 tests), E1-S3 (full menu + telemetry/auth boot
+integration — resolved the subscriber-ownership seam so file logging attaches; 15 tests). A worker caught +
+I corrected a 1-day arithmetic slip in the S-1b FINDINGS worked example (synthetic fixture, round-trips fine).
+M1 now ~20 stories + 2 spikes merged. Dispatched Wave 3 (model E2-S6/S7, timeline-canvas E3-S9, app
+E1-S4/S9/S10). Next infra: provision the FFmpeg-on-Windows toolchain before the decode/export stories.
+Refs: main @b69f057; crates/palmier-{model,edit,media,tauri}, src-ui. Next: Wave 3 merges → FFmpeg → Wave 4.
