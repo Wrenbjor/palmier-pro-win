@@ -89,9 +89,12 @@ impl ToolExecutor {
     /// [`ToolName`] routes explicitly, so adding a 31st variant fails to compile —
     /// the same SM-C2 gate the reference relies on.
     ///
-    /// READ arms call real bodies (E7-S5); every other arm returns the structured
-    /// not-yet-implemented result until its category story lands (E7-S6..S10).
-    fn run(&self, tool: ToolName, state: &EditorState, args: &Value) -> ToolResult {
+    /// READ arms call real bodies (E7-S5) with `&EditorState`; the EDIT + UNDO arms
+    /// (E7-S4 / E7-S12) take `&mut EditorState` and self-register their **one** agent
+    /// undo step (via [`crate::undo::agent_edit`] / [`crate::undo::undo`]). The
+    /// generate / library / async arms remain structured "not yet implemented" until
+    /// their later stories land (E7-S8..S10).
+    fn run(&self, tool: ToolName, state: &mut EditorState, args: &Value) -> ToolResult {
         match tool {
             // ── READ (real bodies, E7-S5) ──────────────────────────────────
             ToolName::GetTimeline => read::get_timeline(state, args),
@@ -103,17 +106,18 @@ impl ToolExecutor {
             ToolName::InspectMedia => not_implemented(tool),
             ToolName::InspectTimeline => not_implemented(tool),
             ToolName::SearchMedia => not_implemented(tool),
-            // ── EDIT (E7-S6 / E7-S7) ───────────────────────────────────────
-            ToolName::AddClips => not_implemented(tool),
-            ToolName::RemoveClips => not_implemented(tool),
-            ToolName::RemoveTracks => not_implemented(tool),
-            ToolName::MoveClips => not_implemented(tool),
-            ToolName::SetClipProperties => not_implemented(tool),
-            ToolName::SetKeyframes => not_implemented(tool),
-            ToolName::SplitClip => not_implemented(tool),
-            ToolName::RippleDeleteRanges => not_implemented(tool),
+            // ── EDIT — clips (E7-S6 / E7-S4) ───────────────────────────────
+            ToolName::AddClips => crate::clips::add_clips(state, args),
+            ToolName::RemoveClips => crate::clips::remove_clips(state, args),
+            ToolName::RemoveTracks => crate::clips::remove_tracks(state, args),
+            ToolName::MoveClips => crate::clips::move_clips(state, args),
+            ToolName::SplitClip => crate::clips::split_clip(state, args),
+            // ── EDIT — properties / keyframes / ripple (E7-S7 / E7-S4) ─────
+            ToolName::SetClipProperties => crate::properties::set_clip_properties(state, args),
+            ToolName::SetKeyframes => crate::properties::set_keyframes(state, args),
+            ToolName::RippleDeleteRanges => crate::properties::ripple_delete_ranges(state, args),
             // ── UNDO (E7-S12) ──────────────────────────────────────────────
-            ToolName::Undo => not_implemented(tool),
+            ToolName::Undo => crate::undo::undo(state),
             // ── TEXT / CAPTION (E7-S8) ─────────────────────────────────────
             ToolName::AddTexts => not_implemented(tool),
             ToolName::AddCaptions => not_implemented(tool),
@@ -143,9 +147,8 @@ impl ToolDispatch for ToolExecutor {
 
         // (2) Lock the editor for the WHOLE call — the serialization boundary
         // (reference @MainActor). Concurrent execute() calls queue on this lock.
-        // The binding is `mut` because the mutating tool bodies (E7-S6..S10) take
-        // `&mut EditorState`; the READ bodies in this story only read.
-        #[allow(unused_mut)]
+        // The binding is `mut` because the mutating tool bodies (E7-S4/S12) take
+        // `&mut EditorState`; the READ bodies only read.
         let mut guard = match self.state.lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(),
@@ -166,34 +169,15 @@ impl ToolDispatch for ToolExecutor {
             Err(e) => return ToolResult::error(e.message),
         };
 
-        // (6) Snapshot the timeline before the run for change detection (E7-S12).
-        let before = guard.library.timeline.clone();
+        // (6) Dispatch to the matching arm. READ bodies read; the EDIT + UNDO
+        // bodies mutate and self-register their ONE agent-undo step (E7-S12, via
+        // `agent_edit` / `undo`). The agent-stack push therefore happens INSIDE the
+        // body, on the exact before/after diff — no separate push hook is needed
+        // here (the reference's `agentUndoStack.append` lives at the body's edge;
+        // we co-locate it with the swap so the name + change-detection are atomic).
+        let result = self.run(tool, &mut guard, &resolved);
 
-        // (7) Dispatch to the matching arm. READ bodies are real; the rest stub.
-        let result = self.run(tool, &guard, &resolved);
-
-        // (8) Agent-undo push hook (E7-S12): after a non-undo, non-error,
-        // timeline-changing run, push the current undo-action name onto the agent
-        // stack. The mutating tool bodies (E7-S6..S10) wrap their work in named
-        // undo groups via `History::with_agent_swap`; until those land, the
-        // timeline never changes here, so this is a no-op — but the hook + its
-        // exact predicate live here now so the mutating stories only fill bodies.
-        if tool != ToolName::Undo
-            && !result.is_error
-            && guard.library.timeline != before
-        {
-            if let Some(action_name) = guard.history.current_undo_action_name() {
-                let _name = action_name.to_string();
-                // NOTE: with_agent_swap already records the name on the agent
-                // stack as the body runs (that is the reference's push site). This
-                // predicate mirrors the reference's belt-and-suspenders check; no
-                // extra push is needed here because the swap helper owns the stack.
-                // The mutating bodies (E7-S6+) call `history.with_agent_swap(name,
-                // …)` which performs the push. Left explicit for the undo story.
-            }
-        }
-
-        // (9) ShortId output shortening on text blocks (reference shorteningIds).
+        // (7) ShortId output shortening on text blocks (reference shorteningIds).
         // Re-snapshot the universe so ids created by a (future) mutating body are
         // shortened too — matches the reference shortening on the post-run state.
         let post_universe = guard.id_universe();
