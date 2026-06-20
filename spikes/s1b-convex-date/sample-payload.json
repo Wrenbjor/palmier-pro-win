@@ -1,0 +1,59 @@
+{
+  "_NOTE": "SYNTHETIC fixture — NOT a real /v1/samples/resolve capture (the deployment URL is a build-time secret and was unreachable; see FINDINGS.md §2). Constructed to match the reference-code-derived wire format: media/log Date fields are Apple reference-epoch DOUBLES (seconds since 2001-01-01Z); chat Date fields are ISO-8601 strings. Replace with a real capture during the S-2 window and diff (R-6).",
+  "_DATE_VECTORS": {
+    "comment": "Apple-ref seconds = unix_seconds - 978307200. 725846400.0 == 2024-01-01T00:00:00Z. 757382400.0 == 2025-01-01T00:00:00Z.",
+    "2024-01-01T00:00:00Z": 725846400.0,
+    "2025-01-01T00:00:00Z": 757382400.0
+  },
+  "title": "Sample Project",
+  "project": {
+    "tracks": []
+  },
+  "manifest": {
+    "version": 2,
+    "entries": [
+      {
+        "id": "asset-0001",
+        "name": "clip.mp4",
+        "type": "video",
+        "source": { "project": { "relativePath": "media/asset-0001.mp4" } },
+        "duration": 4.0,
+        "cachedRemoteURL": "https://example.convex.site/storage/abc",
+        "cachedRemoteURLExpiresAt": 757382400.0,
+        "generationInput": {
+          "prompt": "a cat",
+          "model": "some-video-model",
+          "duration": 4,
+          "aspectRatio": "16:9",
+          "createdAt": 725846400.0
+        }
+      }
+    ],
+    "folders": []
+  },
+  "generationLog": {
+    "version": 1,
+    "entries": [
+      {
+        "id": "log-0001",
+        "model": "some-video-model",
+        "costCredits": 12,
+        "createdAt": 725846400.0
+      }
+    ]
+  },
+  "downloads": [
+    { "id": "asset-0001", "relativePath": "media/asset-0001.mp4", "url": "https://example.convex.site/storage/abc.mp4" }
+  ],
+  "chat": [
+    { "name": "11111111-1111-1111-1111-111111111111.json", "url": "https://example.convex.site/storage/chat1" }
+  ],
+  "_chat_file_example_11111111-1111-1111-1111-111111111111.json": {
+    "_NOTE": "This is the SHAPE of a downloaded chat/<uuid>.json blob — pretty-printed, sorted-keys, Date as ISO-8601 string. Not part of the resolve envelope; shown here for the round-trip test.",
+    "id": "11111111-1111-1111-1111-111111111111",
+    "isOpen": true,
+    "messages": [],
+    "title": "New chat",
+    "updatedAt": "2024-01-01T00:00:00Z"
+  }
+}
