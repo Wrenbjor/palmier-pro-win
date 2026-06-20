@@ -67,6 +67,8 @@ prerequisites are real-code dependencies, not spikes:
 
 ### E10-S1 — `palmier-transcribe` crate scaffold: result model + `offsetting` + error enum
 
+> **Status:** DONE (story/E10-S1-transcribe-model) — result model (`TranscriptionWord`/`Segment`/`Result` with `Option<f64>` word timestamps per reference), `offsetting` (0.0 no-op identity), `TranscriptionError` (verbatim reference messages), serde round-trip; 4 unit tests + full workspace green.
+
 **Intent:** As a dev agent, I want the engine-independent `TranscriptionResult` data model, its
 `offsetting(by:)` shift, and the error taxonomy in place, so the Whisper engine and cache can build on a
 parity-exact foundation.
