@@ -30,6 +30,6 @@ pub use sprite::{
 };
 pub use times::{video_thumbnail_times, THUMB_MAX_HEIGHT, THUMB_MAX_WIDTH};
 pub use video::{
-    extract_frame, extract_strip, ThumbnailFrame, VideoThumbnailCache, VideoThumbnailError,
-    PROGRESSIVE_PUBLISH_EVERY, SPRITE_JPEG_QUALITY,
+    extract_frame, extract_frame_timed, extract_strip, ThumbnailFrame, TimedFrame,
+    VideoThumbnailCache, VideoThumbnailError, PROGRESSIVE_PUBLISH_EVERY, SPRITE_JPEG_QUALITY,
 };

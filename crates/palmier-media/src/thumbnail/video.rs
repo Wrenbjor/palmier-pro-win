@@ -144,6 +144,37 @@ pub fn extract_frame(
     max_w: u32,
     max_h: u32,
 ) -> Result<RgbImage, VideoThumbnailError> {
+    extract_frame_timed(path, source_seconds, max_w, max_h).map(|f| f.image)
+}
+
+/// One decoded frame plus the **actual** presentation time it landed on.
+///
+/// `extract_frame` returns just the image; the frame **sampler** (Epic 11
+/// `FrameSampler`) also needs the decoded frame's true PTS so it can drop
+/// non-monotonic snaps — two nearby candidate times can seek to the *same*
+/// keyframe, and the reference skips any frame whose `actualTime` is ≤ the
+/// previous one. `time` is in source seconds, derived from the frame PTS ×
+/// stream time-base; it falls back to the requested seek time if the decoder
+/// reports no PTS.
+#[derive(Debug, Clone)]
+pub struct TimedFrame {
+    /// Actual presentation time of the decoded frame, in source seconds.
+    pub time: f64,
+    /// The decoded, downscaled RGB frame.
+    pub image: RgbImage,
+}
+
+/// Like [`extract_frame`] but also reports the decoded frame's **actual**
+/// presentation time (source seconds). Same single FFmpeg seek+decode+scale
+/// path — this is the timed primitive `FrameSampler` (Epic 11) drives so it can
+/// apply the "skip frames whose actualTime ≤ previous actualTime" rule from the
+/// reference `FrameSampler.sample`.
+pub fn extract_frame_timed(
+    path: &Path,
+    source_seconds: f64,
+    max_w: u32,
+    max_h: u32,
+) -> Result<TimedFrame, VideoThumbnailError> {
     ensure_ffmpeg_init()?;
 
     let mut ictx = ffmpeg_next::format::input(&path)?;
@@ -162,6 +193,9 @@ pub fn extract_frame(
         let decoder = ctx.decoder().video()?;
         (stream.time_base(), decoder)
     };
+    // Seconds-per-PTS-tick for this stream (0 if the container reports a
+    // degenerate time-base — then we fall back to the requested time).
+    let tb_secs = f64::from(time_base.numerator()) / f64::from(time_base.denominator().max(1));
 
     // Seek to the requested time. ffmpeg `seek` works in AV_TIME_BASE units
     // (microseconds) over the whole file; seek to slightly before the target so
@@ -175,10 +209,19 @@ pub fn extract_frame(
     let mut scaler: Option<ffmpeg_next::software::scaling::Context> = None;
     let (dst_w, dst_h) = fit_within(decoder.width(), decoder.height(), max_w, max_h);
 
+    // Resolve a decoded frame's actual time: prefer its PTS, else the requested
+    // seek time (some streams don't carry PTS on every frame).
+    let frame_time = |decoded: &ffmpeg_next::frame::Video| -> f64 {
+        match decoded.timestamp() {
+            Some(pts) if tb_secs > 0.0 => pts as f64 * tb_secs,
+            _ => target_secs,
+        }
+    };
+
     let send_and_collect =
         |decoder: &mut ffmpeg_next::decoder::Video,
          scaler: &mut Option<ffmpeg_next::software::scaling::Context>|
-         -> Result<Option<RgbImage>, VideoThumbnailError> {
+         -> Result<Option<TimedFrame>, VideoThumbnailError> {
             let mut decoded = ffmpeg_next::frame::Video::empty();
             while decoder.receive_frame(&mut decoded).is_ok() {
                 // Lazily build the scaler now that we know the source pixel format.
@@ -197,7 +240,10 @@ pub fn extract_frame(
                 let mut rgb = ffmpeg_next::frame::Video::empty();
                 sc.run(&decoded, &mut rgb)?;
                 if let Some(img) = rgb_frame_to_image(&rgb, dst_w, dst_h) {
-                    return Ok(Some(img));
+                    return Ok(Some(TimedFrame {
+                        time: frame_time(&decoded),
+                        image: img,
+                    }));
                 }
             }
             Ok(None)
@@ -208,15 +254,14 @@ pub fn extract_frame(
             continue;
         }
         decoder.send_packet(&packet)?;
-        if let Some(img) = send_and_collect(&mut decoder, &mut scaler)? {
-            let _ = time_base; // (kept for clarity / future PTS-accurate seeking)
-            return Ok(img);
+        if let Some(frame) = send_and_collect(&mut decoder, &mut scaler)? {
+            return Ok(frame);
         }
     }
     // Drain.
     decoder.send_eof()?;
-    if let Some(img) = send_and_collect(&mut decoder, &mut scaler)? {
-        return Ok(img);
+    if let Some(frame) = send_and_collect(&mut decoder, &mut scaler)? {
+        return Ok(frame);
     }
 
     Err(VideoThumbnailError::Ffmpeg(

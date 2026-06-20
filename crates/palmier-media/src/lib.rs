@@ -62,8 +62,8 @@ pub use import::{
 };
 pub use metadata::{load_metadata, load_metadata_as, AssetMetadata, MetadataError};
 pub use thumbnail::{
-    extract_frame, make_image_thumbnail, video_thumbnail_times, ImageThumbnailCache,
-    ThumbnailFrame, ThumbnailSidecar, VideoThumbnailCache,
+    extract_frame, extract_frame_timed, make_image_thumbnail, video_thumbnail_times,
+    ImageThumbnailCache, ThumbnailFrame, ThumbnailSidecar, TimedFrame, VideoThumbnailCache,
 };
 pub use waveform::{
     downsample_rms, generate_waveform, waveform_sample_count, WaveformCache, WaveformError,

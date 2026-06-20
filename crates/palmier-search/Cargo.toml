@@ -9,6 +9,15 @@ publish.workspace = true
 [dependencies]
 palmier-model = { path = "../palmier-model" }
 
+# E11-S3 — FrameSampler reuses Epic 4's FFmpeg seek+decode+scale path (no second
+# decode path): `palmier_media::extract_frame_timed` returns one decoded RGB frame
+# + its actual PTS per candidate time. `image` (`RgbImage`) is the frame pixel
+# type that crosses the crate boundary; it is already a palmier-media dep.
+palmier-media = { path = "../palmier-media" }
+# Frame pixel type + the 8×8 luma downsample for shot detection (replaces CGImage /
+# CGContext). Default-features off; we only need the in-memory buffer + resize.
+image = { version = "0.25", default-features = false }
+
 # E11-S2 — `.embed` (PALMEMB1) binary store + cache-key identity (EmbeddingStore).
 # Ported byte-exact from Spike S-3 (`spikes/s3-siglip2/src/store.rs`), itself proven
 # against the macOS `EmbeddingStore.swift`. Kept minimal: no model/runtime here — the
