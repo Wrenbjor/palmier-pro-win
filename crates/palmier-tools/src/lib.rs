@@ -32,12 +32,22 @@
 //! 30-count are load-bearing contract — see [`schema`] (ruling #1, #2; R-5).
 
 pub mod dispatch;
+pub mod editor;
+pub mod executor;
+pub mod json_round;
+pub mod read;
 pub mod resources;
 pub mod result;
 pub mod schema;
 pub mod short_id;
+pub mod transcript;
+pub mod validate;
 
 pub use dispatch::{ScaffoldDispatcher, ToolContext, ToolDispatch};
+pub use editor::EditorState;
+pub use executor::ToolExecutor;
+pub use json_round::{round_json_numbers, JSON_ROUND_PLACES};
+pub use read::{CAPTION_ROW_LIMIT, TRANSCRIPT_WORD_CAP};
 pub use resources::{
     ResourceDescriptor, IMAGE_MODELS_RESOURCE, RESOURCE_DESCRIPTORS, VIDEO_MODELS_RESOURCE,
 };
@@ -47,6 +57,8 @@ pub use short_id::{
     expand_id_prefixes, AmbiguousIdError, IdUniverse, ARRAY_ID_KEYS, ID_PREFIX_FLOOR,
     SCALAR_ID_KEYS,
 };
+pub use transcript::span_frames;
+pub use validate::{parse_rgba, validate, ValidationError};
 
 /// The count of MCP tools the surface exposes. **Exactly 30** (ruling #1 —
 /// `§13.12` void; there is no missing-6 set). Asserted against

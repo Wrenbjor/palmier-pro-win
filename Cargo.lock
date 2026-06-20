@@ -3653,6 +3653,8 @@ dependencies = [
 name = "palmier-tools"
 version = "0.1.0"
 dependencies = [
+ "palmier-edit",
+ "palmier-history",
  "palmier-model",
  "regex",
  "serde_json",
