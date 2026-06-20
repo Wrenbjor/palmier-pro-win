@@ -81,3 +81,14 @@ Fixed by routing all Rust/Tauri builds through scripts/with-msvc.ps1 (calls vcva
 links cleanly). Installed pnpm 11.8. Windows SDK 10.0.22621 + MSVC 14.29 confirmed present.
 Refs: _bmad-output/implementation-artifacts/* (13 new), scripts/with-msvc.ps1 (new), windows-harness-notes.md
 + CLAUDE.md (updated). Next: Phase 4 — scaffold the workspace, run Spike S-1 (wgpu→WebView), delegate M1 first wave.
+
+## 2026-06-20 · Phase 4 M1: workspace scaffold + Wave-1 (5 stories) + S-1 resolved · #build #m1 #milestone
+What: Scaffolded the 18-crate Cargo + Vite/React/Tauri workspace (merged, verified green). Delegated Wave-0/1 to
+5 isolated-worktree workers, each verified independently + merged to main: E2-S1 (palmier-model enums), E1-S1
+(real Tauri 2.11 runtime — first Tauri build on Windows, clean), E3-S8 (palmier-history undo), E4-S2
+(palmier-media cache), and Spike S-1. **S-1 resolved the #1 architecture risk**: wgpu renders to a native GPU
+surface composited UNDER a transparent webview (zero-copy, SM-2 FPS floors met, wgpu 27.x pinned; one
+WRY-integration sub-spike deferred to E5-S8). Fixed a Cargo.lock merge conflict by regeneration.
+Refs: github.com/Wrenbjor/palmier-pro-win main @0612ef0; crates/* (18), spikes/s1-wgpu-webview/FINDINGS.md,
+phase0-reconciliation.md #23 (resolved). Next: Wave 2 (model E2-S2/S4 + E3-S1, auth E1-S6, telemetry E1-S2,
+engine E5-S6, spike S-1b).

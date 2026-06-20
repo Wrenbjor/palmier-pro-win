@@ -37,13 +37,16 @@ milestone, and a parallel-safe flag; sprint plan has the dependency DAG + M1–M
 **Phase 4 — Build: IN PROGRESS (M1).** Workspace **scaffold merged to main** (`d7b36c0`) — 18 crates
 compile + test green, `src-ui` builds (independently verified). Toolchain via `scripts/with-msvc.ps1`.
 
-Delegating per `sprint-plan.md` §4. **Wave 0 (spikes)** + **Wave 1 (foundation)** dispatching now as
-isolated-worktree workers:
-- **S-1** (wgpu→WebView presentation — BLOCKER for Epic 5; isolated in `spikes/` so it doesn't touch prod crates)
-- **E2-S1** palmier-model core types · **E1-S1** palmier-tauri runtime+boot · **E3-S8** palmier-history ·
-  **E4-S2** palmier-media cache — disjoint crates, parallel-safe.
-Each worker: implement → build-verify via the MSVC wrapper → push `story/<id>` branch → orchestrator
-verifies + merges (model-touching stories serialize through palmier-model per §5.1). Then Wave 2+.
+**Wave 0 + Wave 1: COMPLETE** — all 5 workers merged green on main:
+- **S-1 RESOLVED** — wgpu→WebView = native surface composited under a transparent webview (zero-copy,
+  SM-2 met); wgpu 27.x pinned; WRY-integration sub-spike deferred to E5-S8 start. [[phase0-reconciliation]] #23.
+- **E2-S1** palmier-model · **E1-S1** palmier-tauri (real Tauri 2.11 runtime, clean Windows build) ·
+  **E3-S8** palmier-history · **E4-S2** palmier-media cache.
+
+**Wave 2: DISPATCHING** (disjoint crates; same-crate stories serialized in one worker per §5.1):
+- palmier-model: **E2-S2** (center Transform #7) + **E2-S4** (VolumeScale #9) + **E3-S1** (edit value types)
+- palmier-auth: **E1-S6** · palmier-telemetry: **E1-S2** · palmier-engine: **E5-S6** · spike **S-1b** (Convex Date)
+Held for Wave 2b: palmier-edit engines (E3-S2..S5, need E3-S1), palmier-media (E4-S1/E5-S2), E2-S8 (needs S-1b).
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -74,3 +77,5 @@ verifies + merges (model-touching stories serialize through palmier-model per §
 2026-06-20 | E2-S1 merged (ccc9de4) — palmier-model core enums (ClipType/Interpolation/AnimatableProperty; rulings #8 Smooth-default, #12 all-visual-compatible). Build+tests green on main. Workers S-1/E1-S1/E3-S8/E4-S2 still in flight.
 2026-06-20 | E4-S2 merged (431cd83) — palmier-media disk cache + SHA256 key (#16) + concurrency gates (2/4/ungated) + in-flight dedup; 18 tests green on main. Wave-1 remaining: E1-S1, E3-S8, S-1.
 2026-06-20 | E3-S8 merged (6940f8b) — palmier-history generic 2-stack undo (user/agent), agent-refusal rule, nested coalescing; 13 tests green on main. Wave-1 remaining: E1-S1, S-1.
+2026-06-20 | E1-S1 merged (0612ef0) — real Tauri 2.11.3 runtime + boot; FIRST Tauri build on Windows compiled clean (wry/tao/webview2-com, no missing deps); asInvoker manifest; 10 tests green. Cargo.lock conflict resolved by regenerate.
+2026-06-20 | S-1 RESOLVED + merged — wgpu→WebView decided (native composited surface, zero-copy, SM-2 met; wgpu 27.x). [[phase0-reconciliation]] #23 updated. Wave 0+1 complete; dispatching Wave 2.
