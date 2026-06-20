@@ -44,6 +44,11 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-updater = { version = "2", optional = true }
 # Settings/log dir resolution (%APPDATA%\PalmierProWin / ~/.config/palmier-pro).
 dirs = "5"
+# M2 boot integration: the agent run loop's cancellation token + the futures stream
+# adapter the loop drives. `tokio` is needed to spawn the per-turn agent task onto the
+# Tauri async runtime; `tokio-util` carries the `CancellationToken` the loop takes.
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 # E5-S8: the window-handle currency for the preview present seam. Pinned to 0.6.2 — the
 # EXACT version Tauri 2.11 / tao 0.35 / wry 0.55 and wgpu 27 all share (S-2 FINDINGS §3),
 # so the Tauri WebviewWindow's HasWindowHandle feeds wgpu's surface unchanged (plan A1).
@@ -62,6 +67,11 @@ palmier-update = { path = "../palmier-update" }
 palmier-telemetry = { path = "../palmier-telemetry" }
 palmier-mcp = { path = "../palmier-mcp" }
 palmier-text = { path = "../palmier-text" }
+# M2 boot integration: the shared 30-tool dispatcher (`ToolExecutor` over one
+# `EditorState`) that BOTH the MCP server and the in-app agent drive — the
+# single-owner correctness property — and the in-app agent run loop / client selection.
+palmier-tools = { path = "../palmier-tools" }
+palmier-agent = { path = "../palmier-agent" }
 
 # E5-S8: the wgpu compositor + decode owner for the preview present seam. The compositor
 # is behind palmier-engine's `wgpu-compositor` feature (wgpu 27.0.1 + raw-window-handle

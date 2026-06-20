@@ -250,17 +250,28 @@ pub fn delete_anthropic_key(
     Ok(())
 }
 
-/// MCP server liveness for the Agent-tab status row (stub; real server is Epic 7).
+/// MCP server liveness for the Agent-tab status row. Now reads the **live** server
+/// state (M2 boot integration): `running` is whether the real loopback server is
+/// bound, NOT just the pref — so a failed bind shows enabled-but-not-running,
+/// matching the reference `mcpService?.isRunning` (settings-account-app.md gotcha).
 #[tauri::command]
 pub fn get_mcp_status(app: AppHandle) -> McpStatus {
     let enabled = live_settings(&app).mcp_enabled;
+    // Live liveness from the running server handle (M2 boot integration). Falls back
+    // to the pref echo only if the AgentState isn't managed (tests / early boot).
+    let (running, bind) = match app.try_state::<crate::agent::AgentState>() {
+        Some(agent) => (
+            agent.mcp_running(),
+            agent
+                .mcp_bind()
+                .unwrap_or_else(|| palmier_mcp::DEFAULT_BIND.to_string()),
+        ),
+        None => (enabled, palmier_mcp::DEFAULT_BIND.to_string()),
+    };
     McpStatus {
         enabled,
-        // Liveness stub: with no real server yet, "running" tracks the enabled pref. When
-        // Epic 7 lands palmier-mcp this reads the actual server state (a failed bind ⇒
-        // enabled-but-not-running), matching the reference `mcpService?.isRunning`.
-        running: enabled,
-        bind: palmier_mcp::DEFAULT_BIND.to_string(),
+        running,
+        bind,
     }
 }
 
