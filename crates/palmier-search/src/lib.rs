@@ -1,8 +1,20 @@
 //! # palmier-search
 //!
 //! Visual frame index (SigLIP2/CLIP embeddings) + transcript full-text search
-//! (FOUNDATION §4, §6.10). Embeds frames/queries via `candle` or `ort`; those
-//! heavy deps are added per-story, not in this skeleton.
+//! (FOUNDATION §4, §6.10). Embeds frames/queries via SigLIP2 ONNX (`ort`).
+//!
+//! ## E11-S1 — SigLIP2 embedder ([`embedder`], [`preprocess`], [`tokenize`],
+//! [`model_loader`], [`manifest`])
+//!
+//! The production port of Spike S-3 (`spikes/s3-siglip2/`): the [`preprocess`]
+//! 256×256 squash / black-fill / sRGB / [-1,1] CHW path, the [`tokenize`] Gemma
+//! pad-to-64-id-0-no-mask tokenizer, the [`embedder`] explicit **L2-normalize** (so
+//! the [`visual_search`] raw dot == cosine), the [`model_loader`] state machine
+//! (`unknown → notInstalled | preparing → ready | downloading | failed`), and the
+//! [`manifest`] ONNX download manifest. The real ONNX encode
+//! ([`embedder::VisualEmbedder`]) is **feature-gated behind `ort`** (ONNX Runtime 2.x,
+//! DirectML + CPU fallback) so the default build needs no `onnxruntime.dll`; the live
+//! image/text encode + real cosine is gated on downloading the ~750 MB weights.
 //!
 //! ## E11-S2 — `.embed` binary store + cache-key identity ([`store`])
 //!
@@ -29,8 +41,13 @@
 //! the pure [`SamplerState`] / [`candidate_times`] core (`samplerVersion = 1`,
 //! matching [`spec::SAMPLER_VERSION`]) so it tests without a decoder.
 
+pub mod embedder;
+pub mod manifest;
+pub mod model_loader;
+pub mod preprocess;
 pub mod sampler;
 pub mod store;
+pub mod tokenize;
 pub mod visual_search;
 
 /// The reference model spec (`SearchIndexConfig.manifest` in the macOS reference).
@@ -63,3 +80,14 @@ pub use sampler::{
 };
 pub use store::{AssetIndex, EmbeddingStore, Header, Row};
 pub use visual_search::{search as visual_search, Hit};
+
+// E11-S1 — SigLIP2 embedder + preprocessing + tokenizer + model-loader state machine,
+// ported from Spike S-3. The real ONNX encode (`VisualEmbedder`) is behind the `ort`
+// feature; preprocess/tokenize/normalize/manifest/model-loader-state compile by default.
+pub use embedder::{cosine, finalize, l2_normalize};
+#[cfg(feature = "ort")]
+pub use embedder::VisualEmbedder;
+pub use manifest::{ManifestFile, OnnxFiles, OnnxManifest};
+pub use model_loader::{InstalledModel, ModelState, VisualModelLoader};
+pub use preprocess::{pixel_values_from_path, pixel_values_from_rgb, to_pixel_values};
+pub use tokenize::SiglipTokenizer;
