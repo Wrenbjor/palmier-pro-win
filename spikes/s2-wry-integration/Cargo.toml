@@ -1,0 +1,54 @@
+# Spike S-2 — WRY integration: wgpu frame composited under a transparent WebView2.
+#
+# WHY THIS SPIKE: S-1 (spikes/s1-wgpu-webview/FINDINGS.md) chose "native wgpu surface
+# composited UNDER a transparent webview by the OS compositor" and pinned the Windows
+# DirectComposition seam call-by-call — but never stood up a LIVE window. The one
+# un-executed risk for story E5-S8 is wiring wgpu's surface into WRY's real WebView2
+# window/visual in one process. This crate does exactly that, end to end.
+#
+# ISOLATION: declares its OWN empty `[workspace]` table so Cargo treats it as a
+# standalone workspace root — NOT a member of the (future) 17-crate root workspace.
+# Touches NO prod crate, NO root Cargo.toml, NO knowledge-base file.
+#
+# BUILD (Windows): from inside this dir,
+#   pwsh -File ../../scripts/with-msvc.ps1 cargo build
+# Never bare `cargo` (MSVC linker not on PATH) or Git Bash (its `link` shadows
+# MSVC link.exe). See docs/windows-harness-notes.md.
+
+[workspace]
+
+[package]
+name = "s2-wry-integration"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Spike S-2: get a wgpu frame to ACTUALLY appear composited with a transparent WRY WebView2 in a live window."
+
+[dependencies]
+# wgpu 27 = the DirectComposition support floor (pinned by S-1 / FOUNDATION). The
+# producer surface in this spike is a normal swapchain on the window HWND; the
+# DComp-visual variant (SurfaceTargetUnsafe::CompositionVisual) is documented in
+# present.rs but the window-surface path is the one we prove live here.
+wgpu = "27"
+pollster = "0.4"
+
+# winit 0.30: the windowing layer. Its Window implements raw-window-handle 0.6
+# HasWindowHandle, which BOTH wgpu 27 (to make its surface) and wry 0.55 (to parent
+# the webview as a child) consume — this shared-handle currency is what makes the
+# integration work without a wry/tao patch.
+winit = "0.30"
+
+# wry 0.55: the WebView2 (Windows) / WebKitGTK (Linux) layer Tauri 2 is built on.
+# `WebViewBuilder::build_as_child(&window)` parents a transparent webview over the
+# same window the wgpu surface draws into — the OS compositor merges them.
+wry = "0.55"
+
+raw-window-handle = "0.6"
+
+[[bin]]
+name = "composited_window"
+path = "src/bin/composited_window.rs"
+
+[lib]
+name = "s2_wry_integration"
+path = "src/lib.rs"
