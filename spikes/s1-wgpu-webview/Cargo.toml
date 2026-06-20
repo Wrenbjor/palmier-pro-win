@@ -1,0 +1,39 @@
+# Spike S-1 — wgpu -> WebView presentation.
+#
+# ISOLATION: this crate declares its OWN empty `[workspace]` table so Cargo treats
+# it as a standalone workspace root. It is NOT a member of the repo root workspace
+# (the root workspace does not even exist yet — see windows-harness-notes.md), and
+# adding this `[workspace]` guarantees that even once the 17-crate root workspace is
+# scaffolded, `cargo build` here resolves against THIS file only. Nothing in prod is
+# touched.
+#
+# BUILD (Windows): from inside this dir,
+#   pwsh -File ../../scripts/with-msvc.ps1 cargo build
+# Never use bare `cargo` (MSVC linker isn't on PATH) or Git Bash (its `link` shadows
+# MSVC link.exe). See docs/windows-harness-notes.md.
+
+[workspace]
+
+[package]
+name = "s1-wgpu-webview"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Spike S-1: prove how a wgpu-rendered GPU texture reaches the screen inside/over a Tauri WebView."
+
+[dependencies]
+# wgpu 27 is the first release with DirectComposition support for the dx12 backend
+# (Dx12SwapchainKind::DxgiFromVisual + SurfaceTargetUnsafe::CompositionVisual),
+# which is the load-bearing API for the recommended Windows mechanism.
+wgpu = "27"
+pollster = "0.4"          # block_on for the headless/readback proof
+bytemuck = { version = "1", features = ["derive"] }
+raw-window-handle = "0.6" # the handle currency wgpu + tao/winit speak
+
+[[bin]]
+name = "readback_proof"
+path = "src/bin/readback_proof.rs"
+
+[lib]
+name = "s1_wgpu_webview"
+path = "src/lib.rs"
