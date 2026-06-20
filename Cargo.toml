@@ -55,3 +55,9 @@ uuid = { version = "1", features = ["v4", "serde"] }
 # + `formatting` enable ISO-8601 (de)serialization. `serde` left off — the codec
 # is hand-written per-field (`#[serde(with = …)]`), not derive-based.
 time = { version = "0.3", features = ["macros", "parsing", "formatting"] }
+# Platform config/data dirs — registry at `%APPDATA%\PalmierProWin\` (Windows) /
+# `~/.config/palmier-pro/` (Linux). Consumed by `palmier-project` (E2-S11/S12).
+dirs = "5"
+# Recycle Bin / XDG trash for `ProjectRegistry::delete` (E2-S11). Feature-gated in
+# the crate so unit tests never hit the real trash.
+trash = "5"

@@ -20,15 +20,50 @@
 //!   `project.json` / `media.json` / `generation-log.json` / `thumbnail.jpg` /
 //!   `media/` / `chat/` — **not** FOUNDATION §5.7's `timeline.json` etc.
 //!
-//! Later Epic 2 stories add the project registry (E2-S11), media-path resolution +
-//! autosave + the directory-as-document dialog (E2-S12), and the round-trip golden
-//! fixtures (E2-S10).
+//! ## Landed (E2-S11): the project registry
+//!
+//! [`registry`] ports `Project/ProjectRegistry.swift` to a **synchronous**
+//! registry at `project-registry.json` under the platform config dir
+//! (`%APPDATA%\PalmierProWin\` / `~/.config/palmier-pro/`):
+//! - [`ProjectRegistry`] — `register` / `remove` / `delete` (→ Recycle
+//!   Bin/trash) / `update_url` (Save-As) / `sorted_entries` (newest-first), with
+//!   **atomic full-array writes** and **standardized-URL dedup**.
+//! - [`ProjectEntry`] — `{ id, url, created_date, last_opened_date }` (dates as
+//!   apple-epoch doubles, matching reference-written registries).
+//!
+//! ## Landed (E2-S12): media-path resolution + autosave + directory-as-document
+//!
+//! - [`resolver`] — [`MediaResolver`] (`expected_url` / `resolve_url` /
+//!   `is_missing`), [`source_for_url`] (internalize-on-save heuristic), and
+//!   [`restore_entries`] (logs + skips missing files on open).
+//! - [`document`] — [`ProjectDocument`]: dirty-tracking, `flush_if_dirty`
+//!   (force-flush-on-switch), autosave debounce, and `set_path` →
+//!   [`ProjectRegistry::update_url`] (Save-As/rename never orphans the entry).
+//! - [`dialog`] — [`DirectoryDocumentDialog`]: the FR-8 directory-as-document
+//!   dialog config the Tauri layer consumes (Rust side; Explorer shell extension
+//!   left as a documented TODO).
+//!
+//! ## Landed (E2-S10): round-trip golden fixtures + open-speed gate
+//!
+//! `tests/round_trip.rs` is the §11.2 M1 import→edit→save→reopen gate and the
+//! SM-1b open-speed assertion; `tests/fixtures/golden_project_*.palmier/` are the
+//! committed golden bundles (consumed downstream by Epics 5/6).
 
 pub mod bundle;
+pub mod dialog;
+pub mod document;
+pub mod registry;
+pub mod resolver;
 
 pub use bundle::{
     project, read_bundle, read_chat_session_files, write_bundle, BundleError, BundleSnapshot,
     LoadedBundle,
+};
+pub use dialog::{DialogError, DirectoryDocumentDialog, DirectorySelection};
+pub use document::{ProjectDocument, DEFAULT_AUTOSAVE_DEBOUNCE};
+pub use registry::{normalize_path, ProjectEntry, ProjectRegistry, SystemTrasher, Trasher};
+pub use resolver::{
+    expected_url_for_source, restore_entries, source_for_url, MediaResolver, RestoreEvent,
 };
 
 /// Reference bundle filenames (ruling #3). Re-exported from [`bundle::project`]
