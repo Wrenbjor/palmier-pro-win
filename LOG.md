@@ -115,3 +115,15 @@ I corrected a 1-day arithmetic slip in the S-1b FINDINGS worked example (synthet
 M1 now ~20 stories + 2 spikes merged. Dispatched Wave 3 (model E2-S6/S7, timeline-canvas E3-S9, app
 E1-S4/S9/S10). Next infra: provision the FFmpeg-on-Windows toolchain before the decode/export stories.
 Refs: main @b69f057; crates/palmier-{model,edit,media,tauri}, src-ui. Next: Wave 3 merges → FFmpeg → Wave 4.
+
+## 2026-06-20 · Phase 4 M1 Wave-3 complete: model done + app shell + timeline canvas · #build #m1
+What: Wave-3's 3 workers landed verified-green on main (5bc0494): E2-S6/S7 (Track/Timeline + MediaAsset/
+Manifest — Epic-2 model layer COMPLETE; 103+4 tests), E3-S9 (timeline canvas in src-ui/editor — immediate-mode
+draw of tracks/clips/ruler/playhead/rubber-bands, mocked until the get_timeline command; pnpm build green),
+E1-S4/S9/S10 (window management, the 5 settings tabs + Help + Feedback, Tauri updater behind an optional
+feature, and a fix to an empty capabilities file that would have denied all frontend invoke/listen). ~23
+stories + 2 spikes merged. Dispatched Wave 4 (palmier-project E2-S9 save/load, palmier-export E6-S1/S7 XMEML,
+palmier-edit E3-S6/S7 orchestration) + a dedicated FFmpeg-on-Windows toolchain infra worker (unblocks decode/
+export). Recorded the frontend-verify lesson (pnpm install in main checkout first).
+Refs: main @5bc0494; crates/palmier-{model,tauri,update}, src-ui/{app,home,settings,editor}. Next: Wave 4 merges
++ FFmpeg toolchain → Wave 5 (decode/thumbnail/waveform + video export).

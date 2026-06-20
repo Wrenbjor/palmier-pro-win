@@ -62,14 +62,20 @@ seam resolved). All verified green.
 **M1 status:** ~20 stories + 2 spikes merged. In: model layer (through Clip/keyframes/dates), app shell
 (runtime/menu/boot/telemetry/auth), edit engines, history, media cache+metadata, audio mixer.
 
-**Wave 3: DISPATCHING** (disjoint): palmier-model **E2-S6+E2-S7** (Track/Timeline + MediaAsset/Manifest) ·
-src-ui/editor **E3-S9** (timeline canvas, frontend, mocked data) · palmier-tauri+src-ui **E1-S4+E1-S9+E1-S10**
-(windows/settings/updater).
+**Wave 3: COMPLETE** (5bc0494) — E2-S6/S7 (Track/Timeline + MediaAsset/Manifest; Epic-2 model done), E3-S9
+(timeline canvas, frontend), E1-S4/S9/S10 (windows/settings/updater + a capabilities-file fix). All green.
 
-**NEXT INFRA (orchestrator, before decode stories):** provision **FFmpeg-on-Windows** for `ffmpeg-next`
-(system FFmpeg dev libs + LLVM/libclang; FFMPEG_DIR/LIBCLANG_PATH; bake into the build wrapper; verify a
-trivial ffmpeg-next build). Gates E5-S2, E4-S3/S4/S5 (thumbnails/waveform/decode), E6-S5 (video export).
-Held for Wave 4: palmier-export E6-S1/S7 (needs Timeline E2-S6), and the ffmpeg decode stories.
+**M1 status:** ~23 stories + 2 spikes merged. Model layer complete; app shell (runtime/menu/windows/settings/
+boot/telemetry/auth/updater); edit engines + history; media cache+metadata; audio mixer; timeline canvas (UI).
+
+**Wave 4: DISPATCHING** (disjoint crates + infra):
+- palmier-project **E2-S9** (bundle reader/writer, atomic save, reference filenames #3 — the save/load spine)
+- palmier-export **E6-S1+E6-S7** (XMEML emitter + golden fixtures; pure, no ffmpeg)
+- palmier-edit **E3-S6+E3-S7** (Clip↔view adapter + edit orchestration w/ atomic apply + undo; drag-state)
+- **infra: FFmpeg-on-Windows** toolchain (LLVM/libclang + FFmpeg shared dev libs → scripts/ffmpeg-env.ps1 +
+  with-msvc.ps1; verify a trivial ffmpeg-next build). Unblocks E5-S2, E4-S3/S4/S5, E6-S5.
+Held for Wave 5: ffmpeg decode/thumbnail/waveform stories + E6-S5 video export (after FFmpeg lands); E2-S10/S11/S12
+(after E2-S9); E3-S10 (timeline input, after E3-S6/S7).
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -108,3 +114,4 @@ Held for Wave 4: palmier-export E6-S1/S7 (needs Timeline E2-S6), and the ffmpeg 
 2026-06-20 | E1-S3 merged (b69f057) — full menu + exact shortcuts; telemetry subscriber seam RESOLVED (file logging attaches); auth/telemetry wired into Tauri managed state; 15 tests green. Wave 2b COMPLETE. Dispatching Wave 3 (E2-S6/S7, E3-S9, E1-S4/S9/S10); FFmpeg toolchain queued next.
 2026-06-20 | E2-S6/S7 merged (0e61518) — Track/Timeline (fps-freeze, total_frames, displayHeight reset) + MediaAsset/Manifest/MediaSource/GenerationLog (legacy cost fallback); 103+4 tests green. Epic-2 model layer COMPLETE (E2-S1..S8). Wave-3 remaining: E3-S9 (canvas), E1-S4/S9/S10 (app shell).
 2026-06-20 | E3-S9 merged (e1c660a) — timeline canvas (src-ui/editor; immediate-mode draw, per-type clip visuals, ruler/playhead/rubber-bands; #10/#9/#21; mocked data until get_timeline). pnpm build green (note: pnpm install first in main checkout). Wave-3 remaining: E1-S4/S9/S10.
+2026-06-20 | E1-S4/S9/S10 merged (5bc0494) — windows (per-label state, sizes), settings 5 tabs + Help + Feedback, updater (behind optional feature; Ed25519 pubkey needed for release), capabilities-file fix (was empty → would've denied invoke/listen). cargo+pnpm green. Wave 3 COMPLETE. Dispatching Wave 4 (E2-S9, E6-S1/S7, E3-S6/S7) + FFmpeg infra.
