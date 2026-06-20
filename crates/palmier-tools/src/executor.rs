@@ -102,10 +102,11 @@ impl ToolExecutor {
             ToolName::GetTranscript => read::get_transcript(state, args),
             ToolName::ListFolders => read::list_folders(state),
             ToolName::ListModels => read::list_models(state, args),
-            // ── READ (async backends, deferred — E7-S9) ────────────────────
-            ToolName::InspectMedia => not_implemented(tool),
-            ToolName::InspectTimeline => not_implemented(tool),
-            ToolName::SearchMedia => not_implemented(tool),
+            // ── READ — inspect (E7-S5) ─────────────────────────────────────
+            ToolName::InspectMedia => crate::inspect::inspect_media(state, args),
+            ToolName::InspectTimeline => crate::inspect::inspect_timeline(state, args),
+            // search_media stays stubbed (visual index = Epic 11/M4) ────────
+            ToolName::SearchMedia => crate::inspect::search_media(state, args),
             // ── EDIT — clips (E7-S6 / E7-S4) ───────────────────────────────
             ToolName::AddClips => crate::clips::add_clips(state, args),
             ToolName::RemoveClips => crate::clips::remove_clips(state, args),
@@ -119,21 +120,21 @@ impl ToolExecutor {
             // ── UNDO (E7-S12) ──────────────────────────────────────────────
             ToolName::Undo => crate::undo::undo(state),
             // ── TEXT / CAPTION (E7-S8) ─────────────────────────────────────
-            ToolName::AddTexts => not_implemented(tool),
-            ToolName::AddCaptions => not_implemented(tool),
-            // ── GENERATE (E7-S9, Epic 9 backend) ───────────────────────────
+            ToolName::AddTexts => crate::texts::add_texts(state, args),
+            ToolName::AddCaptions => crate::texts::add_captions(state, args),
+            // ── GENERATE (E7-S9, Epic 9 backend — stay stubbed) ────────────
             ToolName::GenerateVideo => not_implemented(tool),
             ToolName::GenerateImage => not_implemented(tool),
             ToolName::GenerateAudio => not_implemented(tool),
             ToolName::UpscaleMedia => not_implemented(tool),
             // ── LIBRARY (E7-S10) ───────────────────────────────────────────
-            ToolName::ImportMedia => not_implemented(tool),
-            ToolName::CreateFolder => not_implemented(tool),
-            ToolName::MoveToFolder => not_implemented(tool),
-            ToolName::RenameMedia => not_implemented(tool),
-            ToolName::RenameFolder => not_implemented(tool),
-            ToolName::DeleteMedia => not_implemented(tool),
-            ToolName::DeleteFolder => not_implemented(tool),
+            ToolName::ImportMedia => crate::library::import_media(state, args),
+            ToolName::CreateFolder => crate::library::create_folder(state, args),
+            ToolName::MoveToFolder => crate::library::move_to_folder(state, args),
+            ToolName::RenameMedia => crate::library::rename_media(state, args),
+            ToolName::RenameFolder => crate::library::rename_folder(state, args),
+            ToolName::DeleteMedia => crate::library::delete_media(state, args),
+            ToolName::DeleteFolder => crate::library::delete_folder(state, args),
         }
     }
 }

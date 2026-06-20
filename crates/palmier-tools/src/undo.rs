@@ -38,9 +38,9 @@
 //! (palmier-edit's validated, atomic orchestration is reused verbatim).
 
 use palmier_history::{History, NamedAction, StateSwap};
-use palmier_model::Timeline;
+use palmier_model::{MediaLibrary, Timeline};
 
-use crate::editor::EditorState;
+use crate::editor::{AgentStack, EditorState};
 use crate::result::ToolResult;
 
 /// Run a mutating edit tool's `work` as **one** named agent-undo step.
@@ -86,6 +86,46 @@ pub fn agent_edit(
             action_name.to_string(),
             StateSwap::new(before, after),
         ));
+        state.last_agent_edit = Some(AgentStack::Timeline);
+    }
+    result
+}
+
+/// Run a LIBRARY mutating tool's `work` as **one** named agent-undo step over the
+/// **whole [`MediaLibrary`]** snapshot (E7-S10: import / folder / rename / delete).
+///
+/// Library tools touch folders/assets — and, for the delete cascades, timeline
+/// clips — beyond what [`agent_edit`]'s `Timeline`-only swap can reverse, so they
+/// snapshot the entire library (reference `mediaLibraryUndoSnapshot`). `work`
+/// mutates `state.library` and returns `Result<ToolResult, String>`; `Err(msg)`
+/// becomes the contract error shape with the library restored to its pre-call
+/// snapshot (all-or-none).
+///
+/// On a successful run that **changed** the library, exactly one whole-library
+/// [`StateSwap`] named `action_name` lands on the library agent stack
+/// ([`EditorState::lib_history`]) and [`EditorState::last_agent_edit`] is set to
+/// [`AgentStack::Library`] so the `undo` tool reverses it. A no-op (library
+/// unchanged) registers nothing (reference `guard before != after`).
+pub fn library_agent_edit(
+    state: &mut EditorState,
+    action_name: &str,
+    work: impl FnOnce(&mut MediaLibrary) -> Result<ToolResult, String>,
+) -> ToolResult {
+    let before = state.library.clone();
+    let result = match work(&mut state.library) {
+        Ok(r) => r,
+        Err(msg) => {
+            state.library = before;
+            return ToolResult::error(msg);
+        }
+    };
+    if !result.is_error && state.library != before {
+        let after = state.library.clone();
+        state.lib_history.push_agent(NamedAction::new(
+            action_name.to_string(),
+            StateSwap::new(before, after),
+        ));
+        state.last_agent_edit = Some(AgentStack::Library);
     }
     result
 }
@@ -96,11 +136,26 @@ pub fn agent_edit(
 ///
 /// Mirrors the reference messages exactly via [`History::agent_undo`].
 pub fn undo(state: &mut EditorState) -> ToolResult {
-    match state.history.agent_undo(&mut state.library.timeline) {
-        Ok(name) => ToolResult::ok(format!(
-            "Undid: {name}. The timeline is restored to its state before that edit; \
-             re-read with get_timeline or get_transcript before editing again."
-        )),
+    // Reverse the genuinely most-recent agent step across BOTH agent stacks
+    // (timeline edits + whole-library ops). `last_agent_edit` records which stack
+    // got the last push; the chosen stack's own `agent_undo` still enforces the
+    // interleaved-user-edit refusal rule (SM-4).
+    let outcome = match state.last_agent_edit {
+        Some(AgentStack::Library) => state.lib_history.agent_undo(&mut state.library),
+        // Default to the timeline stack (also the case when only timeline edits
+        // exist, or no agent edit yet → its `agent_undo` returns NoAgentEdit).
+        Some(AgentStack::Timeline) | None => {
+            state.history.agent_undo(&mut state.library.timeline)
+        }
+    };
+    match outcome {
+        Ok(name) => {
+            state.last_agent_edit = None;
+            ToolResult::ok(format!(
+                "Undid: {name}. The timeline is restored to its state before that edit; \
+                 re-read with get_timeline or get_transcript before editing again."
+            ))
+        }
         Err(e) => ToolResult::error(e.to_string()),
     }
 }

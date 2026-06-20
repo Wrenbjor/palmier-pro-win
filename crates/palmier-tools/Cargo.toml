@@ -14,9 +14,26 @@ palmier-model = { path = "../palmier-model" }
 # so the deps land now for the dispatch seam.
 palmier-edit = { path = "../palmier-edit" }
 palmier-history = { path = "../palmier-history" }
+# E7-S10 library tools: `import_media` (path/bytes) goes through palmier-media's
+# import orchestration (`add_media_asset` / `import_folder`) + `classify_path`.
+palmier-media = { path = "../palmier-media" }
 serde_json.workspace = true
 # `uuidRegex` literal port — the same `[0-9A-Fa-f]{8}-…` pattern the reference
 # `ToolExecutor+ShortId.swift` uses to find known UUIDs in result text and rewrite
 # them to their short prefix. ShortId itself compares id strings directly (no UUID
 # parsing), so the `uuid` crate isn't needed here — `regex` is the only addition.
 regex.workspace = true
+
+# E7-S5 `inspect_timeline`: the wgpu compositor frame render → base64 PNG path, behind
+# the `gpu-inspect` feature exactly like E5-S8's `wgpu-compositor` gate (reconciliation
+# #22/#23). OFF by default so the dispatcher + cap/sampling math build + test GPU-free;
+# turning it on pulls the engine's GPU compositor + the `png` encoder. `palmier-engine`
+# is optional so the GPU stack is only in the graph when the feature is requested.
+palmier-engine = { path = "../palmier-engine", optional = true }
+png = { version = "0.17", default-features = false, optional = true }
+
+[features]
+default = []
+# Compile the GPU compositor path for `inspect_timeline` (real composited frames). With
+# the feature off the tool reports rendering-unavailable and lists the sampled frames.
+gpu-inspect = ["dep:palmier-engine", "palmier-engine/wgpu-compositor", "dep:png"]
