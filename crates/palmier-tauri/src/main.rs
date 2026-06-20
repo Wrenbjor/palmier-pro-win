@@ -111,6 +111,15 @@ fn main() {
             preview::preview_init,
             preview::preview_resize,
             preview::preview_teardown,
+            // E5-S10 — preview transport (drives the engine Transport into the present
+            // seam so preview plays/seeks/steps end-to-end; FR-19 current_frame events).
+            preview::preview_set_timeline,
+            preview::preview_play,
+            preview::preview_pause,
+            preview::preview_toggle_playback,
+            preview::preview_seek,
+            preview::preview_step,
+            preview::preview_set_tab,
         ])
         .setup(move |app| {
             // E1-S7/E1-S8 — build the project lifecycle state BEFORE `auth` is moved
