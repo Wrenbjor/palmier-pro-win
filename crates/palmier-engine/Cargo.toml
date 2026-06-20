@@ -25,11 +25,54 @@ rubato = "0.16"
 version = "0.16"
 optional = true
 
+# E5-S8 wgpu compositor (FOUNDATION §6.5 step 3, reconciliation #22/#23). Pinned to the
+# EXACT set the S-2 spike proved composites under a transparent WebView2 (see
+# spikes/s2-wry-integration/FINDINGS.md §3): wgpu 27.0.1 + raw-window-handle 0.6.2.
+# `bytemuck` packs the per-layer uniform (Mat3→mat4 + crop + opacity) for upload.
+# All are feature-gated behind `wgpu-compositor` so the pure composition graph, sampler,
+# transport, and audio DSP still build + test headlessly without a GPU device
+# (FOUNDATION §11.1: GPU paths run headless or are #[ignore]d). The compositor supports a
+# HEADLESS offscreen-texture target (no surface) so its pure parts + a smoke-render are
+# testable without a window.
+[dependencies.wgpu]
+version = "=27.0.1"
+optional = true
+
+[dependencies.pollster]
+version = "0.4"
+optional = true
+
+[dependencies.bytemuck]
+version = "1"
+features = ["derive"]
+optional = true
+
+[dependencies.raw-window-handle]
+version = "=0.6.2"
+optional = true
+
+# DEP-UNIFICATION PIN (orchestrator: workspace-wide concern — see story result).
+# `wgpu-hal 27.0.4`'s DX12 backend uses `windows 0.58`, and so must its `gpu-allocator
+# 0.27` (range `>=0.53,<=0.58`). But `trash 5.2` (pulled by palmier-project) forces
+# `windows 0.56` into the graph, so without this the resolver unifies gpu-allocator onto
+# 0.56 and wgpu-hal fails to compile (ID3D12 `Param`/`CanInto` type mismatch between the
+# 0.56 gpu-allocator and the 0.58 wgpu-hal). Naming `windows 0.58` here puts it in the
+# graph so the resolver picks it for gpu-allocator's range. Feature-gated with the rest
+# of the GPU stack so the GPU-free default build is unaffected. The S-2 spike built clean
+# because its isolated graph (no `trash`) already resolved gpu-allocator at 0.58.
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+optional = true
+
 [features]
 # Off by default so CI / headless agents build + test the pure DSP without an audio device.
 # Turn on for the live preview build (E5-S7 transport wires the device sink).
 default = []
 audio-device = ["dep:cpal"]
+# E5-S8: the wgpu compositor (device + textured-quad pipeline + present). Off by default
+# so the descriptor-only stories keep building GPU-free; the live preview build
+# (palmier-tauri preview module) turns it on.
+wgpu-compositor = ["dep:wgpu", "dep:pollster", "dep:bytemuck", "dep:raw-window-handle", "dep:windows"]
 
 # E5-S4 composition-graph benchmark (FOUNDATION §11.4). The 50/200/1000-clip
 # composition build is benched here; the final perf-baseline assertion + CI wiring

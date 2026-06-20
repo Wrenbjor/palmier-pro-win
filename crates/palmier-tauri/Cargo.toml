@@ -44,6 +44,10 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-updater = { version = "2", optional = true }
 # Settings/log dir resolution (%APPDATA%\PalmierProWin / ~/.config/palmier-pro).
 dirs = "5"
+# E5-S8: the window-handle currency for the preview present seam. Pinned to 0.6.2 — the
+# EXACT version Tauri 2.11 / tao 0.35 / wry 0.55 and wgpu 27 all share (S-2 FINDINGS §3),
+# so the Tauri WebviewWindow's HasWindowHandle feeds wgpu's surface unchanged (plan A1).
+raw-window-handle = "=0.6.2"
 # Boot-path tracing macros. The tracing **subscriber** is owned entirely by
 # `palmier-telemetry` (E1-S3 removed the boot's own stub subscriber so the
 # categorized daily-rotated file logger attaches), so we depend on `tracing` for
@@ -58,3 +62,11 @@ palmier-update = { path = "../palmier-update" }
 palmier-telemetry = { path = "../palmier-telemetry" }
 palmier-mcp = { path = "../palmier-mcp" }
 palmier-text = { path = "../palmier-text" }
+
+# E5-S8: the wgpu compositor + decode owner for the preview present seam. The compositor
+# is behind palmier-engine's `wgpu-compositor` feature (wgpu 27.0.1 + raw-window-handle
+# 0.6.2 — the EXACT S-2-proven set; raw-window-handle 0.6.2 is the SAME handle currency
+# Tauri 2.11 / tao 0.35 / wry 0.55 already speak, so one window backs both the wgpu
+# swapchain and the WebView2 child — see spikes/s2-wry-integration/FINDINGS.md plan A1).
+palmier-engine = { path = "../palmier-engine", features = ["wgpu-compositor"] }
+palmier-media = { path = "../palmier-media" }
