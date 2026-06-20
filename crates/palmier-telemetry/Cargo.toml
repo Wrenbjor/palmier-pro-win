@@ -7,4 +7,22 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-# Heavy deps (sentry, tracing, tracing-subscriber) come per-story — FOUNDATION §2 / §6.16, E1-S2.
+# Logging: tracing + subscriber with daily file rotation (FOUNDATION §6.16, E1-S2).
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+# Sentry Rust SDK — backend crash reporting. `backtrace` for panic frames,
+# `panic` for the integration that captures `std::panic` payloads, `tracing`
+# for the layer that maps tracing events to breadcrumbs/captures.
+sentry = { version = "0.44", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "panic",
+    "tracing",
+    "reqwest",
+    "rustls",
+] }
+# Per-OS app-data/state directories (%LOCALAPPDATA% / ~/.local/state).
+dirs = "6"
+# Crash-log + rotation-suffix timestamps.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
