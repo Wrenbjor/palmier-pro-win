@@ -11,10 +11,23 @@ default-run = "palmier-tauri"
 name = "palmier-tauri"
 path = "src/main.rs"
 
+[build-dependencies]
+# E1-S1: real Tauri 2 runtime. tauri-build generates the context + embeds the
+# Windows app manifest (asInvoker execution level — see build.rs + the UAC signal).
+tauri-build = { version = "2", features = [] }
+
 [dependencies]
-# Wires the workspace together. The real Tauri 2 runtime (`tauri`,
-# `tauri-build`, plugins) is added by E1-S1 — kept OUT of the skeleton so
-# `cargo build` stays fast and doesn't require WebView2/system bundling deps.
+# E1-S1: the real Tauri 2 runtime + the boot-sequence support crates.
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# Settings/log dir resolution (%APPDATA%\PalmierProWin / ~/.config/palmier-pro).
+dirs = "5"
+# Boot-path tracing (step 2). The categorized/rotated file subscriber is E1-S2.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Workspace crates wired into the binary (boot sequence calls into these).
 palmier-model = { path = "../palmier-model" }
 palmier-project = { path = "../palmier-project" }
 palmier-auth = { path = "../palmier-auth" }

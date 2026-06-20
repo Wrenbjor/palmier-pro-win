@@ -12,3 +12,6 @@
 /target
 **/node_modules
 src-ui/dist
+
+# Tauri build-generated schemas/capabilities (regenerated each build by tauri-build)
+crates/*/gen/schemas/
