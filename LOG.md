@@ -185,3 +185,24 @@ Whisper toolchain (portable CMake + whisper-env.ps1, MIT models) and the 2 paral
 (resolve_locale_en + censor_result) all wired. Worktree discipline clean throughout (every merged worker's
 worktree+branch removed; only main + the in-flight E11-S6 coordinator remain).
 Refs: main @c6013a0; crates/palmier-{transcribe,text,edit,tools}; [phase0-reconciliation](docs/phase0-reconciliation.md) (profanity clean-room + S-3 + convex preserve_order); scripts/whisper-env.ps1. Next: finish M4 search (E11-S6 coordinator → search_media tool → Moments/Spoken UI), then M5 (Epic 12 packaging/release).
+
+## 2026-06-20 · M4 search complete — visual + transcript search, the 30th MCP tool, UJ-2 wired (Epic 11) · #build #m4 #search #mcp
+What: Epic 11 (Visual & Transcript Search) landed S1–S11, completing M4 and the full 30-tool MCP surface.
+The local search subsystem, all clean-room parity ports, verified green: a production SigLIP2 VisualEmbedder
+(ort/ONNX Runtime feature-gated off by default — DirectML+CPU, explicit L2-normalize, modelVersion=2) + the
+PALMEMB1 .embed byte-exact store + FrameSampler (8×8 BT.601 luma-grid shot detection, 2s/8s cadence) +
+VisualIndexer (idempotent, FrameEmbedder/ExportYield trait-abstracted so default tests run mock-embedder
+without ort/weights) + VisualSearch ranking (raw-dot on pre-normalized vecs, best-per-shot dedupe, 0.05/0.85
+cutoffs) + TranscriptSearch (all-terms, case+diacritic-insensitive via NFD, disk-only over E10-S4's cache) +
+SearchIndexCoordinator (per-project queue, 2s export-pause loop, fan-out, worker_generation guard) — and the
+**search_media tool (the 30th)** dispatching visual→coordinator / spoken→TranscriptSearch with a gateway seam
+that keeps palmier-tools' default build ONNX/DLL-free. Media-panel Moments (frame grid) + Spoken (transcript
+rows) UI with debounced search + click-to-jump + drag-to-timeline. palmier-export now pauses indexing during
+export runs (RAII ExportPauseGuard, XMEML excluded per reference). **MCP surface: 29/30 tools functional**
+(only live visual *encode* gated). E11-S1's spike (S-3) decided runtime=ort+ONNX; E11-S7 subsumed by E10-S4.
+SM-12 spoken (100% keyword recall) is live; SM-12 visual is #[ignore]'d pending ~750MB SigLIP2 weights +
+onnxruntime.dll + a host-wired VisualSearchGateway (M5 packaging hosts/ships them).
+Refs: main @629ab46; crate palmier-search (embedder/store/sampler/indexer/visual_search/transcript_search/
+coordinator/export_pause), palmier-tools/src/search.rs, src-ui/media-panel; [phase0-reconciliation](docs/phase0-reconciliation.md).
+Next: M5 (Epic 12 packaging/release) — bundle FFmpeg + whisper small.en + onnxruntime.dll + SigLIP2 weights,
+host the model manifests (fill SHA placeholders), .mcpb, Ed25519 updater, and the §13 open questions. Milestones M1–M4 all complete.
