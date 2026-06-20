@@ -7,6 +7,28 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+# Shared tool dispatcher (Epic 7) — wired by the loop in E8-S4. Kept as a dep now
+# so the crate's module boundary to palmier-tools is established; this scaffold
+# does not call execute() yet.
 palmier-tools = { path = "../palmier-tools" }
+# Value types: ClipType (mentions) + the per-field ISO-8601 Date codec for
+# ChatSession::updated_at (serde_date::iso8601, E2-S8).
+palmier-model = { path = "../palmier-model" }
 
-# Heavy deps (reqwest, reqwest-eventsource, tokio) come per-story — FOUNDATION §2 / §6.13.
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+time = { workspace = true }
+# Typed client errors (reference AnthropicClientError / PalmierClientError).
+thiserror = "2"
+# Stream abstraction for the AgentClient trait. `futures-core` gives the
+# dyn-compatible `BoxStream` return type; `futures-util` gives the iter-stream
+# the MockAgentClient stub replays. The real reqwest/SSE transports land in
+# E8-S2/S3 and bring their own heavy deps then.
+futures-core = "0.3"
+futures-util = "0.3"
+
+[dev-dependencies]
+# Async test runtime for the AgentClient stream tests (E8-S3/S4 bring the real
+# tokio usage; the scaffold needs only the test macro + a current-thread runtime).
+tokio = { version = "1", features = ["macros", "rt"] }
