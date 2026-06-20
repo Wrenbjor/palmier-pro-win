@@ -22,10 +22,19 @@
 //!   [`effective_model`]).
 //! - [`session_store`] — read/write [`ChatSession`] to `<project>/chat/<uuid>.json`.
 //!
-//! ## Deferred to later E8 stories (NOT in this scaffold)
-//! - **E8-S2** — `AnthropicRequestBody::build` (the 2-cache-breakpoint body) +
-//!   `AnthropicSSE::parse` (the real line-oriented SSE parser feeding
-//!   [`StreamEvent`]).
+//! ## E8-S2 — request body builder + shared SSE parser (this slice)
+//! - [`request`] — `AnthropicRequestBody::build`: serialize an [`AgentRequest`]
+//!   into the exact Anthropic Messages JSON (model wire-id, `max_tokens` 8192,
+//!   `stream`, the system block + tools array + messages with the 2 ephemeral cache
+//!   breakpoints / 3 wire markers), in canonical sorted-key form. Plus the headers
+//!   contract ([`request::anthropic_headers`]) as data for the transport.
+//! - [`sse`] — `AnthropicSSE::parse`: the line-oriented `text/event-stream` parser
+//!   (`message_start`→Usage, `text_delta`→TextDelta, chunked `input_json_delta` +
+//!   `content_block_start`/`stop`→ToolUseComplete, `message_delta`→MessageStop,
+//!   `error`→Error), with partial-line buffering ([`sse::SseParser::feed`]) for the
+//!   live byte stream. The reqwest HTTP transport that drives it is E8-S3.
+//!
+//! ## Deferred to later E8 stories (NOT in this slice)
 //! - **E8-S3** — the concrete `AnthropicClient` (BYOK `reqwest` byte-stream +
 //!   keyring reload event) replacing [`MockAgentClient`].
 //! - **E8-S4** — the agentic run loop + `palmier-tools::execute` dispatch +
@@ -44,7 +53,9 @@ pub mod availability;
 pub mod client;
 pub mod event;
 pub mod model;
+pub mod request;
 pub mod session_store;
+pub mod sse;
 
 pub use availability::{
     available_models, effective_model, Tier, AGENT_MODEL_CONFIG_KEY, DEFAULT_MODEL,
@@ -59,6 +70,11 @@ pub use model::{
     to_canonical_json, AgentContentBlock, AgentMention, AgentMessage, AgentTimelineRangeMention,
     ChatSession, Role, ToolResultBlock, DEFAULT_SESSION_TITLE,
 };
+pub use request::{
+    anthropic_headers, build as build_request_body, build_bytes as build_request_bytes,
+    cache_control_marker_count, ANTHROPIC_VERSION,
+};
+pub use sse::{parse_lines as parse_sse_lines, parse_str as parse_sse, SseParser};
 pub use session_store::{
     chat_dir, encode_session, load_sessions, session_path, write_session, write_sessions,
     CHAT_DIR_NAME,
