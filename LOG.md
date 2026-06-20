@@ -42,3 +42,23 @@ GPLv3 macOS Swift reference at ../palmier-pro/ matches the spec's citations. Fil
 of truth; product identity + source path now wired into CLAUDE.md and the build loop. Ready to launch.
 Refs: [FOUNDATION](docs/FOUNDATION.md) (new), CLAUDE.md (updated), [build loop](domains/build-orchestration/README.md) (updated),
 [build-orchestration](docs/build-orchestration.md) (updated). Next: on `go` → Phase 0 (document ../palmier-pro) → Phase 1 party-mode → PRD.
+
+## 2026-06-20 · Autonomous orchestrator launched; repo attached; Phase 0 running · #ops #infra #orchestration
+What: Wren handed off full autonomy (no human in the loop). Attached the repo to github.com/Wrenbjor/palmier-pro-win
+(main pushed). Wrote the orchestrator operating manual and launched Phase 0 — a 15-agent workflow documenting
+the 21-subsystem / 42K-LOC macOS reference into docs/reference/*.md (incl. the full 36-tool MCP surface,
+verbatim AgentInstructions, and AppTheme token verification). Orchestrator self-heartbeat armed.
+Refs: [orchestrator-protocol](docs/orchestrator-protocol.md) (new), [build loop](domains/build-orchestration/README.md) (updated),
+workflow run wf_2cdb63a7-e48. Next: on Phase 0 completion → synthesize → Phase 1 PRD via BMAD party-mode.
+
+## 2026-06-20 · Phase 0 complete — reference documented; 24 discrepancies reconciled · #analysis #reference #decision
+What: 15-agent workflow documented the macOS reference into docs/reference/*.md (3,100+ lines). Synthesized
+the binding decision record docs/phase0-reconciliation.md ruling on 24 FOUNDATION↔reference contradictions
+(reference = parity authority). Headlines: MCP surface is 30 tools not 36 (FOUNDATION corrected in place);
+clip Transform is center-based; bundle files are project.json/media.json/chat/; visual model is SigLIP2 not
+CLIP; Slip/Slide don't exist (deferred); ProRes 422 (not 4444+alpha) for v1. Logged the GPLv3 clean-room
+contradiction as a signal. Top architecture risk flagged: wgpu→WebView texture presentation is unspecified —
+mandatory spike before Phase 2.
+Refs: [phase0-reconciliation](docs/phase0-reconciliation.md) (new), docs/reference/*.md (15 new), FOUNDATION.md
+(corrected), [signal](signals/gpl-cleanroom-contradiction.md) (new), [build loop](domains/build-orchestration/README.md) (updated).
+Next: Phase 1 — drive BMAD to produce docs/PRD.md from FOUNDATION + reconciliation + reference docs.

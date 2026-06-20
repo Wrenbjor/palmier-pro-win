@@ -15,14 +15,19 @@ the PRD/architecture/stories in `_bmad-output/`, and `signals/` raised mid-build
 artifacts, app-code PRs, passing tests, and a spec-compliant Windows app.
 
 ## Current focus
-**Ready to launch — both inputs acquired.** Awaiting Wren's explicit `go`.
-- Source: `../palmier-pro/` (GPLv3 macOS Swift reference) — verified present, matches spec citations.
-- Spec: `docs/FOUNDATION.md` filed (locked stack; source of truth for PRD + execution-plan).
+**Phase 0 COMPLETE → Phase 1 (PRD) starting.** Orchestrator operating per [[orchestrator-protocol]],
+autonomous, no human in the loop.
 
-On `go`: **Phase 0** — `bmad-document-project` against `../palmier-pro/` to produce a feature
-inventory + porting-risk doc, and resolve the **MCP tool delta** (FOUNDATION §13.12: spec lists 30
-tools, reference exposes 36 — find the missing 6 in `Sources/PalmierPro/Agent/Tools/`). Then **Phase 1**
-party-mode kickoff → PRD.
+**Phase 0 done:** 15 reference docs in `docs/reference/*.md` + the binding decision record
+[[phase0-reconciliation]] resolving 24 FOUNDATION↔reference discrepancies (reference = parity
+authority). Key results: MCP surface is **30 tools** (not 36 — FOUNDATION corrected); clip Transform
+center-based; bundle files `project.json`/`media.json`/`chat/`; visual model **SigLIP2** not CLIP;
+Slip/Slide deferred (don't exist in reference). Top risk surfaced: **wgpu→WebView texture presentation
+is unspecified — mandatory spike before Phase 2 architecture commit.**
+
+**Phase 1 — PRD: NEXT.** Drive BMAD (party-mode / `bmad-prd`) to produce `docs/PRD.md` from
+FOUNDATION + the reconciliation rulings + `docs/reference/*`. Decide the remaining §13 open questions.
+Gate: PRD validated; all open questions decided.
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -36,7 +41,7 @@ party-mode kickoff → PRD.
 - [ ] Repoint `origin` off the upstream template to our own remote before pushing port work.
 
 ## Evidence & analysis
-[[FOUNDATION]] · [[build-orchestration]] · [[windows-harness-notes]]
+[[FOUNDATION]] · [[phase0-reconciliation]] · [[orchestrator-protocol]] · `docs/reference/*` (15 docs) · [[build-orchestration]] · [[windows-harness-notes]]
 
 ## Metrics
 `metrics/` — TBD. Candidate once dev starts: stories shipped, PRs merged, e2e pass rate, PRD criteria met.
@@ -44,3 +49,5 @@ party-mode kickoff → PRD.
 ## Timeline
 2026-06-20 | setup — environment prepared: Windows harness fixes (PYTHONUTF8), CLAUDE.md operating context, orchestration pipeline + this loop contract written. Awaiting Mac source path + kickoff task.
 2026-06-20 | kickoff-input — macOS reference located + verified at `../palmier-pro/`; Foundation Spec filed as `docs/FOUNDATION.md` (source of truth). Both Phase 0 inputs in hand. Ready to launch on `go`.
+2026-06-20 | launch — repo attached to github.com/Wrenbjor/palmier-pro-win; orchestrator machinery written; Phase 0 docs workflow launched (after fixing a burst rate-limit via throttled batches).
+2026-06-20 | Phase 0 COMPLETE — 15/15 reference docs written; [[phase0-reconciliation]] rules 24 discrepancies; FOUNDATION corrected (30 tools). Advancing to Phase 1 (PRD). Top risk: wgpu→WebView spike.

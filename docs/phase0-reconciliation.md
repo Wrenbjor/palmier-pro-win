@@ -1,0 +1,81 @@
+---
+kind: doc
+domain: [build-orchestration]
+type: decision
+status: adopted
+links: [[FOUNDATION]] [[build-orchestration]] [[orchestrator-protocol]]
+---
+
+# Phase 0 reconciliation — binding amendments to FOUNDATION
+
+Phase 0 documented the macOS reference (`../palmier-pro/`) subsystem-by-subsystem (see
+`docs/reference/*.md`). The agents found 24 points where `docs/FOUNDATION.md` contradicts the actual
+reference. **Rule (per the orchestrator mandate): the reference codebase is the behavior-parity
+authority.** Where FOUNDATION is factually wrong about the reference, the reference wins. Where
+FOUNDATION makes a deliberate, better cross-platform improvement, FOUNDATION wins and we note it.
+
+These rulings are **binding** for the PRD, architecture, epics, stories, and dev. They amend
+FOUNDATION without rewriting it; cite this doc when FOUNDATION and a `docs/reference/*.md` disagree.
+
+## Rulings
+
+| # | Topic | FOUNDATION says | Reference truth | **Ruling** | Why |
+|---|---|---|---|---|---|
+| 1 | MCP tool count | 36 (§6.14, §13.12 "find missing 6") | **30** (ToolName enum=30, ToolDefinitions.all=30, exhaustive switch=30) | **30 tools.** §13.12 is void — there is no missing-6 set. | Verified 3 ways; the 30-row catalogue IS complete. |
+| 2 | Agent prompt | substitute platform refs (§7) | one shared string, both MCP + in-app, no macOS phrasing | **Port verbatim, no substitution.** Single shared constant, both injection sites. | Prompt has zero Apple/macOS references. |
+| 3 | Bundle filenames | `timeline.json`/`manifest.json`/`generation_log.json`/`chatsessions/`/`registry.json` (§5.7) | `project.json`/`media.json`/`generation-log.json`/`chat/`/`project-registry.json` | **Reference filenames.** | The Convex sample server emits the reference names — FOUNDATION names break sample import. Interop-critical. |
+| 4 | Chat session writes | on tab-close + new-session (§6.13) | on document save (onSessionsChanged marks dirty) | **On save.** | Matches NSDocument lifecycle / our Tauri save. |
+| 5 | Keychain account | `palmier-pro-anthropic-api-key` (§6.13) | `anthropic-api-key` | **`anthropic-api-key`.** | Parity; wrong name silently loses saved keys. |
+| 6 | Pref keys | `palmier.notifications.enabled` etc. (§6.16) | `io.palmier.pro.{notifications,telemetry,mcp}.enabled` | **`io.palmier.pro.*.enabled`.** Absent ⇒ ON; telemetry/privacy snapshot at launch (restart-required). | Parity. |
+| 7 | Clip Transform storage | `top_left` (x,y) (§5.4) | **center-based** (centerX/centerY/width/height) + legacy x/y migration (centerX=oldX+w−0.5) | **Center-based** with legacy migration. | Top-left breaks project-file round-trip. |
+| 8 | Keyframe default interp | linear (§5.5) | **smooth** (smoothstep) | **Smooth default.** | Wrong serde default silently changes every animation/fade curve. |
+| 9 | Volume dB range | −120…0 (§5.3/§5.5) | VolumeScale **−60…+15** (amplification allowed); rubber-band draw axis +6…−60; keyframe storage floor unverified | **−60…+15** for the field/scale. Verify keyframe-storage floor in code before locking (3 distinct dB constants exist). | Parity; allows >0 dB gain. |
+| 10 | Snap sticky multiplier | 2.5× (§6.3) | **1.5×** | **1.5×.** (Playhead multiplier 1.5× matches; base threshold 8px; trim handle 4px.) | Parity. |
+| 11 | Slip / Slide edit gestures | listed (§6.3/§6.4) | **neither exists** in the reference | **Defer both** (out of parity scope; revisit post-v1). | They'd be net-new design, not a port. |
+| 12 | Cross-track move compat | text/lottie own-type only (§6.3) | `ClipType.isCompatible` makes **all visual types interchangeable** (video/image/text/lottie) | **All visual types interchangeable.** | Parity. |
+| 13 | Visual search model | "CLIP" (§2.2/§6.10) | **SigLIP2** base patch16-256, 768-dim (CoreML) | **SigLIP2 base patch16-256, 768-dim.** Source ONNX/candle weights; reproduce `.embed` format (magic `PALMEMB1`) or pick a new magic + re-index. | Embeddings not interchangeable with OpenAI CLIP. |
+| 14 | Media "Music" tab | built-in library from Convex `/v1/music` (§6.2) | a video/text→**music generation** form | **Generation form.** | Parity; no `/v1/music` library exists. |
+| 15 | Media sort modes | 3 (dateAdded/name/duration) (§6.2) | **4** (+ type); dateAdded = insertion order | **4 modes**, dateAdded = insertion order. | Parity. |
+| 16 | Waveform/thumb format | ~2000 samples/min; frame sequence (§6.2) | **150 samples/s capped 20000**; video thumb = single JPEG **sprite-sheet + JSON sidecar**; cache key `sha256(path\|size\|mtime).prefix16` | **Reference constants.** Gates: waveform=2, image-thumb=4, video-thumb **ungated**. | Parity; mtime key may false-hit on coarse Windows FS — watch. |
+| 17 | ProRes export | "ProRes 4444 (alpha)" (§6.12) | ProRes **422 LPCM** (no alpha) | **ProRes 422 LPCM for v1.** 4444+alpha = future enhancement. ⚑ Wren-visible. | Avoids threading alpha through the whole pipeline; matches reference. |
+| 18 | Caption text case | upper/lower/title (§6.9) | **auto/upper/lower** (rejects "title") | **auto/upper/lower.** | Parity; no title-case in reference. |
+| 19 | Transcription cache key | `sha256(content)+model+language` (§6.9) | `sha256(path\|mtime\|size)` (no model/lang) | **Adopt FOUNDATION's key** (content+model+language). | One of the few places FOUNDATION is *better* — mtime false-hits; model/lang must invalidate. Hash first N MB if 25-min hashing is slow. |
+| 20 | Paid-tier model | Opus 4.8 via Convex catalog (§6.13) | hard-coded `[sonnet46]` | **Catalog-driven**, default Sonnet 4.6; Convex catalog may enable Opus. | Reference hard-code is a limitation, not a spec; keep it flexible. |
+| 21 | Design token hexes | accent-timecode `#F2994A`, accent-primary `#F5F0E4` (§9) | computed from AppTheme: **`#F29933`**, **`#F5EFE4`** | **Use computed values** (`#F29933`, `#F5EFE4`). Add §9-omitted tokens (spotlight/ai/ai-dark/shimmer gradients, all component/window/caption/media/layout sizing). `track-text == track-image` (#B72DD2) — keep, flag as possible upstream bug. | AppTheme.swift is ground truth for visuals. |
+| 22 | Preview stills/Lottie | first-class GpuTexture LayerRender (§6.5) | reference **bakes** stills/Lottie into 1800s `.mov` (AVPlayer limitation) | **First-class GpuTexture — drop the .mov bake.** | FOUNDATION wins: genuine improvement enabled by the per-frame wgpu model. |
+| 23 | wgpu→WebView presentation | "present the texture to the WebGPU canvas" / "shared WebGPU surface" (§4/§6.5) | **no mechanism specified anywhere** | **MANDATORY SPIKE before Phase 2 architecture commit.** Candidates: (a) native transparent child surface (D3D11/DXGI swapchain via DirectComposition on Win; GTK native child on Linux), (b) DXGI shared-handle into a `<canvas>`, (c) IPC readback (fallback, slow). | Largest unresolved risk; gates the entire preview crate. |
+| 24 | Generation cancel | implied cancel | client-side subscription teardown only; job keeps running/billing; `rendering` status never set; `can_generate` is advisory (server mutation is the real gate) | **Client teardown only for v1**; add a Convex cancel mutation later if needed (backend out of our repo). | Parity; real gate is server-side. |
+
+## Carry-forward port-critical details (not contradictions, but must-preserve)
+From `docs/reference/*.md` — the load-bearing specifics downstream stories must honor:
+- **Tool descriptions are contract text** (all-or-none trackIndex, ripple_delete units, source-vs-timeline
+  frame math, ShortId ≥8-char unique-prefix rules, get_timeline default-omission + 200-row captionGroup
+  cap, pagination caps 400 segments/10000 words/12 frames). Port verbatim.
+- **Frame rounding parity:** all source↔timeline conversions are `round(x*speed)` / `round(x/speed)`
+  ties-away-from-zero → use `f64::round` (NOT `round_ties_even`).
+- **Agent undo** refuses unless the editor's current `undoActionName` equals the pushed name — every
+  mutation's undo-group name must match the reference exactly. Separate user/agent stacks.
+- **Anthropic request:** exactly 2 ephemeral cache breakpoints (system+tools, conversation tail);
+  `.sortedKeys` canonical JSON; orphan-tool_use repair injects synthetic Cancelled tool_results;
+  image inline limits longest-edge 1568px / 3,500,000 bytes / JPEG q[0.85,0.7,0.55,0.4].
+- **Preview constants:** interactive-scrub tolerance `min(0.75, 0.15*activeLayerCount)s` @ ts 600,
+  throttle 1/30s; text preroll 30 frames; smoothSegments=8; encoder dim clamp 4096 + even dims; BT.709.
+- **CaptionBuilder** has 14 unit tests — port verbatim (grapheme-aware counts; enforceMinDuration may
+  push final phrase end past segment end; breakOn delimiter+space so "U.S."/"3.14" don't split).
+- **Export/XMEML golden fidelity:** 2-space indent, `\n` joins, self-closing tags, escape order,
+  TRUE/FALSE literals, exact float formats, drop-frame `round(fps*0.066666)` approximation copied
+  exactly, `file://localhost//` pathurl rewrite, rotation negated, center as normalized offset-from-0.5.
+- **Search/SigLIP:** 256×256 squash (no crop, black fill, sRGB BGRA), tokenizer pad-to-64 id 0 no mask,
+  raw dot-product ranking (model must output L2-normalized), cosine floor 0.05, relative cutoff 0.85.
+- **Project I/O Date encoding:** chat uses iso8601+pretty+sortedKeys; project/media/log use Apple
+  reference-epoch (seconds since 2001-01-01) doubles — a single serde Date format corrupts round-trips.
+  Confirm the Convex sample payload's Date format before locking serde.
+
+## Open items for Wren (recorded, proceeding with the ruling above)
+1. **ProRes 422 vs 4444+alpha** (#17) — shipping 422 for v1; confirm if alpha export is needed sooner.
+2. **GPLv3 clean-room contradiction** — porting the agent prompt verbatim + bundling reference fonts is
+   *not* clean-room; the result inherits GPLv3. Recorded as `signals/gpl-cleanroom-contradiction`.
+3. **wgpu→WebView spike** (#23) — top architecture risk; spike scheduled before Phase 2 commit.
+
+## Timeline
+2026-06-20 | Phase 0 complete — 15 reference docs + this reconciliation. Reference = parity authority; 24 discrepancies ruled. Advancing to Phase 1 (PRD).

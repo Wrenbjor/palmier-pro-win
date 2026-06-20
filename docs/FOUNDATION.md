@@ -17,6 +17,14 @@ source_reference: ../palmier-pro (palmier-io/palmier-pro, GPLv3, macOS Swift ref
 > _Filed verbatim from the kickoff input (2026-06-20). The macOS reference is checked out at
 > `../palmier-pro/` and verified to contain the files this spec cites (`AgentInstructions.swift`,
 > `AppTheme.swift`, `Resources/Fonts/`, `mcpb/`)._
+>
+> ⚠️ **BINDING AMENDMENTS — read [[phase0-reconciliation]] (`docs/phase0-reconciliation.md`).**
+> Phase 0 documented the actual reference (`docs/reference/*.md`) and found 24 places where this
+> document contradicts the reference. The reference is the behavior-parity authority; the
+> reconciliation doc's rulings override this text where they conflict. Most-cited corrections: the
+> MCP surface is **30 tools, not 36** (§6.14/§13.12 below are wrong); clip Transform is **center-based**
+> not top-left (§5.4); bundle files are `project.json`/`media.json`/`chat/` not
+> `timeline.json`/`manifest.json`/`chatsessions/` (§5.7); the visual model is **SigLIP2** not CLIP (§6.10).
 
 ---
 
@@ -687,7 +695,7 @@ struct ChatSession { id: Uuid, title: String, updated_at: DateTime<Utc>, message
 
 **MCP library:** Use `rmcp` (official Rust MCP SDK) for protocol scaffolding. Wire its tool registry to our `palmier_tools` crate. No protocol re-implementation.
 
-**Tools:** The reference exposes **36 tools**. The Windows port implements the same 36 with identical names, parameters, and semantics. The reference's `AgentInstructions.swift` is the source of truth for the `instructions` field and tool descriptions; port verbatim (replacing macOS-specific phrasing only where required).
+**Tools:** **CORRECTED (Phase 0 — [[phase0-reconciliation]] #1): the reference exposes exactly 30 MCP tools** (not 36) — verified via `ToolName` enum (30 cases), `ToolDefinitions.all` (30 entries), and `ToolExecutor.run`'s exhaustive switch (30 arms), plus 2 MCP resources. The catalogue below (30 rows) is the **complete** surface. The Windows port implements the same 30 with identical names, parameters, and semantics. The reference's `AgentInstructions.swift` is the source of truth for the `instructions` field and tool descriptions; port **verbatim with no platform substitution** (the prompt contains no macOS-specific phrasing).
 
 **Tool catalogue:**
 
@@ -724,7 +732,7 @@ struct ChatSession { id: Uuid, title: String, updated_at: DateTime<Utc>, message
 | `delete_media` | Library | Yes | No | `asset_ids[]` | — |
 | `delete_folder` | Library | Yes | No | `folder_ids[]` | — |
 
-_(Catalogue lists 30 named rows here; the reference's full surface totals 36 tools — the
+_(Catalogue lists 30 named rows — this IS the complete surface; Phase 0 confirmed the reference total is 30, not 36 ([[phase0-reconciliation]] #1). Original note retained for history: "the reference's full surface totals 36 tools" — INCORRECT —  the
 execution-plan agent must reconcile the exact remaining tool names against `AgentInstructions.swift`
 in `../palmier-pro/` and record the delta. **Open item — see §13.)**_
 
@@ -982,7 +990,7 @@ palmier-pro-win/
 9. Convex backend access for the Windows port — does the existing deployment accept our client, or stand up a separate Windows-port backend?
 10. Naming + branding — "Palmier Pro Windows" risks confusion with the open-source Mac project; consider a distinct fork name.
 11. License compatibility — reference is GPLv3; FFmpeg LGPL/GPL builds; Whisper MIT; Tauri MIT/Apache. Cross-check ahead of distribution.
-12. **Exact MCP tool surface** — this doc enumerates 30 tools but states the reference exposes 36. Diff against `../palmier-pro/Sources/PalmierPro/Agent/Tools/` and record the missing 6.
+12. ~~**Exact MCP tool surface** — diff and record the missing 6.~~ **RESOLVED (Phase 0):** the reference exposes exactly **30** tools + 2 resources; there is no missing-6 set. See [[phase0-reconciliation]] #1.
 
 ---
 
