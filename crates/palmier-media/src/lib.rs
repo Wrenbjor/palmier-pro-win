@@ -41,6 +41,7 @@
 pub mod cache;
 pub mod clip;
 pub mod decode;
+pub mod import;
 pub mod metadata;
 pub mod thumbnail;
 pub mod waveform;
@@ -52,6 +53,12 @@ pub use clip::{
 pub use decode::{
     CacheStats, DecodeError, DecodedFrame, Decoder, DecoderPool, FrameCache, FrameKey, FrameResult,
     FrameSource, HwDecodeStatus, HwKind, PixelLayout, Plane, ScrubThrottle, SeekMode, UrlResolver,
+};
+pub use import::{
+    add_media_asset, asset_drag_string, asset_drag_string_with_segment, asset_id_from_drag_string,
+    asset_segment_from_drag_string, drag_payload, folder_drag_string, folder_id_from_drag_string,
+    import_finder_items, import_folder, ImportSummary, SourceResolver, ASSET_DRAG_SCHEME,
+    FOLDER_DRAG_SCHEME,
 };
 pub use metadata::{load_metadata, load_metadata_as, AssetMetadata, MetadataError};
 pub use thumbnail::{

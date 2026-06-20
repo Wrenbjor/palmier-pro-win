@@ -8,6 +8,10 @@ publish.workspace = true
 
 [dependencies]
 palmier-model = { path = "../palmier-model" }
+# E4-S6: snapshot-undo for folder/asset moves + import. The generic two-stack
+# history snapshots the whole `MediaLibrary` (Clone + PartialEq) per the
+# reference `mediaLibraryUndoSnapshot` / `restoreMediaLibraryUndoSnapshot`.
+palmier-history = { path = "../palmier-history" }
 serde.workspace = true
 serde_json.workspace = true
 # Used for unique temp-dir names during atomic whole-directory save (the

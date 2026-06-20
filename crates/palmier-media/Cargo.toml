@@ -15,8 +15,13 @@ content-prefix-fallback = []
 
 [dependencies]
 palmier-model = { path = "../palmier-model" }
+# E4-S7 import orchestration batches the whole multi-item import into ONE undo
+# step via `palmier-project::MediaLibraryHistory` (which wraps palmier-history).
+# No dependency cycle: palmier-project does NOT depend on palmier-media.
+palmier-project = { path = "../palmier-project" }
 serde = { workspace = true }
 serde_json = { workspace = true }
+uuid = { workspace = true }
 
 # Cache infrastructure (E4-S2): SHA256 cache key, OS cache-dir resolution,
 # semaphore concurrency gates + in-flight dedup. Kept light — no ffmpeg/symphonia
