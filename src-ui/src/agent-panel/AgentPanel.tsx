@@ -10,7 +10,7 @@
 // animates without a backend. The real stream/dispatch arrive via Tauri agent
 // commands/events (TODO(integration) — the run loop is palmier-agent E8-S4).
 
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { CSSProperties } from "react";
 import { AgentPanelController } from "./controller";
 import {
@@ -87,6 +87,13 @@ export function AgentPanel({
     () => mentionCandidates ?? (seedFixture ? makeFixtureMentions() : []),
     [mentionCandidates, seedFixture],
   );
+
+  // In a Tauri webview, seed the backend status + session list (tab bar / history)
+  // from the backend on mount — the backend is the source of truth for sessions and
+  // their persistence. A no-op outside a webview (the fixtures / local store stand in).
+  useEffect(() => {
+    void theController.init();
+  }, [theController]);
 
   const collapsed = useAgentStore(theStore, (s) => s.collapsed);
   const messages = useAgentStore(theStore, (s) => s.messages);

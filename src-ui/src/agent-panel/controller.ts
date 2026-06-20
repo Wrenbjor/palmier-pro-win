@@ -32,9 +32,12 @@ import {
 import type { AgentPanelStore } from "./store";
 import {
   MODEL_PREF_KEY,
+  NEW_CHAT_TITLE,
+  type AgentContentBlock,
   type AgentMention,
   type AgentMessage,
   type BackendStatus,
+  type ChatSession,
 } from "./types";
 
 /** Generate a local UUID-ish id (used for optimistic user/assistant messages). */
@@ -47,6 +50,22 @@ export function localId(prefix = "id"): string {
 function isTauri(): boolean {
   return typeof globalThis !== "undefined" && "__TAURI_INTERNALS__" in globalThis;
 }
+
+/**
+ * The wire shape of a tab/history row from `agent_list_sessions` (the Rust
+ * `SessionSummary`, camelCase). The backend owns the tab list, current/open state,
+ * and persistence; this carries everything the panel needs to render a tab/history
+ * row (the per-session messages arrive via `agent_get_session` on switch).
+ */
+type SessionSummaryWire = {
+  id: string;
+  title: string;
+  /** Unix seconds (history sorts newest-first by this). */
+  updatedAt: number;
+  isOpen: boolean;
+  isCurrent: boolean;
+  messageCount: number;
+};
 
 /** The wire shape of an `agent://event` payload from `palmier-tauri`. */
 type AgentBackendEvent =
@@ -367,25 +386,142 @@ export class AgentPanelController {
   }
 
   // --- Sessions / tabs --------------------------------------------------------
+  //
+  // In a Tauri webview the BACKEND (`AgentState`) is the source of truth for the tab
+  // list, the current/open state, and persistence to `<project>/chat/`. Each tab
+  // operation invokes the matching Tauri command, then re-pulls `agent_list_sessions`
+  // (+ `agent_get_session` for the now-current tab) to reconcile the store — so
+  // opening/closing/switching/deleting round-trips to disk. Outside a webview (plain
+  // `vite dev` / tests) it falls back to the self-contained local store.
 
   newChat(): void {
     this.cancelIfStreaming();
-    this.store.newChat();
+    if (isTauri()) {
+      void invoke<string>("agent_new_session")
+        .then(() => this.refreshSessions())
+        .catch((err) => this.fallbackSessionOp("agent_new_session", err, () => this.store.newChat()));
+    } else {
+      this.store.newChat();
+    }
   }
 
   selectSession(id: string): void {
     this.cancelIfStreaming();
-    this.store.selectSession(id);
+    if (isTauri()) {
+      void invoke("agent_open_session", { sessionId: id })
+        .then(() => this.refreshSessions())
+        .catch((err) =>
+          this.fallbackSessionOp("agent_open_session", err, () => this.store.selectSession(id)),
+        );
+    } else {
+      this.store.selectSession(id);
+    }
   }
 
   closeTab(id: string): void {
     if (id === this.store.getState().currentSessionId) this.cancelIfStreaming();
-    this.store.closeTab(id);
+    if (isTauri()) {
+      void invoke("agent_close_session", { sessionId: id })
+        .then(() => this.refreshSessions())
+        .catch((err) =>
+          this.fallbackSessionOp("agent_close_session", err, () => this.store.closeTab(id)),
+        );
+    } else {
+      this.store.closeTab(id);
+    }
   }
 
   deleteSession(id: string): void {
     if (id === this.store.getState().currentSessionId) this.cancelIfStreaming();
-    this.store.deleteSession(id);
+    if (isTauri()) {
+      void invoke("agent_delete_session", { sessionId: id })
+        .then(() => this.refreshSessions())
+        .catch((err) =>
+          this.fallbackSessionOp("agent_delete_session", err, () => this.store.deleteSession(id)),
+        );
+    } else {
+      this.store.deleteSession(id);
+    }
+  }
+
+  /**
+   * Pull the authoritative session list from the backend (`agent_list_sessions`) and
+   * reconcile it into the store: rebuild the `sessions` array from the summaries,
+   * set `currentSessionId`, and load the now-current session's messages via
+   * `agent_get_session`. No-op outside a Tauri webview. Call on mount (via `init`)
+   * and after every tab operation.
+   */
+  async refreshSessions(): Promise<void> {
+    if (!isTauri()) return;
+    try {
+      const summaries = await invoke<SessionSummaryWire[]>("agent_list_sessions");
+      const currentId =
+        summaries.find((s) => s.isCurrent)?.id ?? summaries[0]?.id ?? this.store.getState().currentSessionId;
+
+      // Load the current session's messages so a switched-to / reopened tab renders
+      // its conversation (the summary carries no messages).
+      let currentMessages: AgentMessage[] = [];
+      if (currentId) {
+        try {
+          const wire = await invoke<{ id: string; role: string; blocks: AgentContentBlock[] }[]>(
+            "agent_get_session",
+            { sessionId: currentId },
+          );
+          currentMessages = wire.map((m) => ({
+            id: m.id,
+            role: m.role === "assistant" ? "assistant" : "user",
+            blocks: m.blocks,
+          }));
+        } catch (err) {
+          console.debug("[agent] agent_get_session failed:", err);
+        }
+      }
+
+      const sessions: ChatSession[] = summaries.map((s) => ({
+        id: s.id,
+        title: s.title || NEW_CHAT_TITLE,
+        // Rust ships unix SECONDS; the store/history compares ISO strings.
+        updatedAt: new Date(s.updatedAt * 1000).toISOString(),
+        // Only the current session's messages are hydrated (history rows render from
+        // their title/updatedAt; switching to one re-pulls its messages). A non-empty
+        // messageCount keeps history sessions visible (history filters empty ones).
+        messages:
+          s.id === currentId
+            ? currentMessages
+            : s.messageCount > 0
+              ? [{ id: `placeholder-${s.id}`, role: "user", blocks: [] }]
+              : [],
+        isOpen: s.isOpen || s.id === currentId,
+      }));
+
+      this.store.setState({
+        sessions,
+        currentSessionId: currentId,
+        messages: currentMessages,
+        draft: "",
+        mentions: [],
+        streamError: null,
+        historyOpen: false,
+      });
+    } catch (err) {
+      console.debug("[agent] agent_list_sessions failed:", err);
+    }
+  }
+
+  /**
+   * Initialize the panel against the backend (Tauri webview): seed the backend status
+   * and the session list. Safe to call on mount; a no-op outside a webview.
+   */
+  async init(): Promise<void> {
+    if (!isTauri()) return;
+    await this.refreshBackend();
+    await this.refreshSessions();
+  }
+
+  /** A backend session command failed — log it and fall back to the local store op. */
+  private fallbackSessionOp(command: string, err: unknown, localOp: () => void): void {
+    console.debug(`[agent] ${command} failed; using local store:`, err);
+    localOp();
   }
 
   private cancelIfStreaming(): void {
