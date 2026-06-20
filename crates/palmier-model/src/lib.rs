@@ -27,17 +27,27 @@
 //! E2-S5 adds the [`Clip`] core entity (all stored fields + the derived
 //! `end_frame`/`source_frames_consumed`/… and the value-sampling math), plus a
 //! minimal [`TextStyle`]; E2-S8 adds the per-field [`serde_date`] codec seam
-//! (Apple reference-epoch doubles + ISO-8601). The `Timeline`/`Track` shapes are
-//! E2-S6.
+//! (Apple reference-epoch doubles + ISO-8601). E2-S6 adds the timeline root
+//! shapes [`Timeline`] + [`Track`] (lenient/defaulted decode, non-serialized
+//! `display_height`, computed `total_frames`, fps frozen-after-first-clip). E2-S7
+//! adds the media/generation serde shapes: [`MediaManifest`] / [`MediaManifestEntry`]
+//! / [`MediaSource`] (externally-tagged) / [`MediaFolder`], [`GenerationLog`] /
+//! [`GenerationLogEntry`] (legacy `cost`-dollars fallback), and [`MediaAsset`] /
+//! [`GenerationStatus`] — all routing their Date fields through the [`serde_date`]
+//! apple-epoch codec.
 
 mod animatable_property;
 mod clip;
 mod clip_type;
 mod edit_types;
+mod genlog;
 mod interpolation;
 mod keyframe;
+mod manifest;
+mod media_asset;
 pub mod serde_date;
 mod text_style;
+mod timeline;
 mod transform;
 mod volume;
 
@@ -45,12 +55,19 @@ pub use animatable_property::AnimatableProperty;
 pub use clip::{Clip, FadeEdge};
 pub use clip_type::ClipType;
 pub use edit_types::{ClipShift, FrameRange, GapSelection, TimelineRangeSelection};
+pub use genlog::{GenerationLog, GenerationLogEntry};
 pub use interpolation::{lerp, smoothstep, Interpolation, KeyframeInterpolatable};
 pub use keyframe::{
     clamp_keyframes_to_duration, rescale_keyframes, to_abs, to_offset, AnimPair, Keyframe,
     KeyframeTrack,
 };
+pub use manifest::{
+    GenerationInput, MediaFolder, MediaManifest, MediaManifestEntry, MediaSource,
+    CURRENT_MANIFEST_VERSION,
+};
+pub use media_asset::{GenerationStatus, MediaAsset};
 pub use text_style::{Fill, FontName, Rgba, Shadow, TextAlignment, TextStyle};
+pub use timeline::{Timeline, Track};
 pub use transform::{Crop, Transform};
 pub use volume::VolumeScale;
 
