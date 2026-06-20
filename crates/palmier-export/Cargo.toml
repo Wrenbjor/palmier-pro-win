@@ -9,6 +9,14 @@ publish.workspace = true
 [dependencies]
 palmier-model = { path = "../palmier-model" }
 palmier-engine = { path = "../palmier-engine" }
+# E11-S6 follow-up: bump the search subsystem's process-global ExportPauseCounter
+# around each export run so visual indexing pauses while an export is in flight
+# (FOUNDATION §6.10, search.md "Export-pause coupling"; mirrors the reference
+# `ExportService.isExporting` → `SearchIndexCoordinator.exportDidBegin/End`). The
+# counter lives behind palmier-search's DEFAULT (non-ort) features — plain atomics,
+# no ONNX Runtime — so this stays a light dep with no `ort`/DLL pull. Acyclic:
+# palmier-search depends on model/media/transcribe, never on palmier-export.
+palmier-search = { path = "../palmier-search" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

@@ -134,6 +134,15 @@ where
     R: SourceResolver,
     P: FrameProvider,
 {
+    // E11-S6 follow-up: pause visual-search indexing for the whole video export
+    // run so the FFmpeg + wgpu encode path doesn't contend with candle/ort + wgpu
+    // frame embedding (search.md "Export-pause coupling"). Reference:
+    // `ExportService.export` sets `isExporting = true` →
+    // `SearchIndexCoordinator.exportDidBegin()` and clears it at the end. The RAII
+    // guard ends the pause on drop — covering every early return below (cancel,
+    // NoGpu, Empty, FFmpeg errors) and panics — so indexing always resumes.
+    let _export_pause = palmier_search::ExportPauseGuard::begin();
+
     ensure_ffmpeg_init()?;
 
     // 1. Select the encoder (HW for H.264/H.265, prores_ks for ProRes), erroring

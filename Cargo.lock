@@ -4215,6 +4215,7 @@ dependencies = [
  "palmier-engine",
  "palmier-media",
  "palmier-model",
+ "palmier-search",
  "serde",
  "serde_json",
  "tempfile",

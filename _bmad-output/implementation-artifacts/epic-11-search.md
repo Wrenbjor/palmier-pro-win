@@ -283,13 +283,18 @@ best-per-shot dedupe on `shotStart`). Map: `Accelerate cblas_sgemv`→`ndarray`/
 > default (98 pass / 1 ignored) and `--features ort` (97 pass / 1 ignored); full
 > `cargo test` green.
 >
-> **FOLLOW-UP (palmier-export / Epic 6) — NOT done here (no cross-crate edit):** the
-> process-global `ExportPauseCounter` defaults to **not-active** so indexing works now.
-> Epic 6 export must bump it around each export run — wrap an export in
-> `palmier_search::ExportPauseGuard::begin()` (RAII; ends on drop) OR call the matched
-> pair `palmier_search::export_did_begin()` / `export_did_end()`. Until that lands,
-> `export_active()` is always false and visual indexing never pauses. Flagged in a
-> module-doc comment in `export_pause.rs`.
+> **FOLLOW-UP (palmier-export / Epic 6) — ✅ DONE (`infra/export-pause-wiring`):** the
+> process-global `ExportPauseCounter` defaults to **not-active**; palmier-export now bumps
+> it around each export run by holding a `palmier_search::ExportPauseGuard::begin()` (RAII;
+> ends on drop, panic/early-return safe) for the whole run. Wired at both real export
+> entrypoints — `bundle::export_palmier_project` (default build) and `video::render::export_video`
+> (behind `gpu-export`) — mirroring the reference `ExportService.isExporting` →
+> `SearchIndexCoordinator.exportDidBegin()/exportDidEnd()` coupling (XMEML string export does
+> NOT pause, matching the reference, which returns before `isExporting = true`). palmier-export
+> gained a `palmier-search` path dep; acyclic (palmier-search → model/media/transcribe, never
+> export) and light — palmier-search's `ort`/ONNX is optional and stays out of the default build.
+> Covered by `crates/palmier-export/tests/export_pause.rs` (active-during-run, released-after,
+> released-on-error). Until this, `export_active()` was always false and visual indexing never paused.
 
 **Intent:** As the app, I want a per-project background queue that indexes assets one at a time, runs
 visual + transcript concurrently per asset, and pauses during export, so search builds without contending
