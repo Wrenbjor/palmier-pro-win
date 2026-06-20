@@ -263,6 +263,34 @@ best-per-shot dedupe on `shotStart`). Map: `Accelerate cblas_sgemv`→`ndarray`/
 ---
 
 ### E11-S6 — SearchIndexCoordinator (per-project queue, scheduling, export-pause, fan-out)
+> **Status:** DONE — branch `story/E11-S6-coordinator`.
+> `crates/palmier-search/src/coordinator.rs` (`SearchIndexCoordinator`,
+> `CoordinatorAsset`, `QueryEncoder`, `VisualStatus`) + `src/export_pause.rs`
+> (process-global `ExportPauseCounter`: `export_did_begin/end`, RAII `ExportPauseGuard`,
+> `RefcountedExportYield` 2 s-loop `ExportYield`). Ported from
+> `SearchIndexCoordinator.swift` + `VisualModelLoader.swift`: per-project queue +
+> single sequential worker (`run_queue`/`process_next`), `schedule` gate
+> (enabled + embedder-ready + not-generating + not-queued/failed, `needs_visual` OR
+> `needs_transcript`), transcript+visual with the **0.5/1.0 progress split**,
+> `worker_generation` staleness guard, process-global weak-registry fan-out
+> (`sweep_all`/`cancel_all`/`reset_all`/`clear_index_globally` + `EmbeddingStore::clear_all`),
+> `search(query, limit=20, within ids?)` (trim→empty `[]`, in-memory/disk `AssetIndex`
+> load, E11-S5 rank), single `search_index_enabled` toggle (default ON). Reuses merged
+> S4/S5/S8/S1 unchanged. Query-encode + frame-encode are `ort`-gated behind a
+> `QueryEncoder`/`FrameEmbedder` trait seam: by DEFAULT `visual_status` reports
+> `disabled`/`model_not_installed` and `search` returns `[]` (no embedder); under
+> `--features ort` the real `VisualEmbedder` plugs in. Builds + tests green on BOTH
+> default (98 pass / 1 ignored) and `--features ort` (97 pass / 1 ignored); full
+> `cargo test` green.
+>
+> **FOLLOW-UP (palmier-export / Epic 6) — NOT done here (no cross-crate edit):** the
+> process-global `ExportPauseCounter` defaults to **not-active** so indexing works now.
+> Epic 6 export must bump it around each export run — wrap an export in
+> `palmier_search::ExportPauseGuard::begin()` (RAII; ends on drop) OR call the matched
+> pair `palmier_search::export_did_begin()` / `export_did_end()`. Until that lands,
+> `export_active()` is always false and visual indexing never pauses. Flagged in a
+> module-doc comment in `export_pause.rs`.
+
 **Intent:** As the app, I want a per-project background queue that indexes assets one at a time, runs
 visual + transcript concurrently per asset, and pauses during export, so search builds without contending
 with playback/export.
