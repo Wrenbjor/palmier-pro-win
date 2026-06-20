@@ -66,18 +66,20 @@ dep fix preserved through the merge). Epic 5 now has decode + composition + tran
 
 **M2 foundation MERGED** (E7-S1 30-tool registry, E8-S1 agent scaffold).
 
-**Epic 5 (preview) nearly done:** decode + composition + transport + audio + present + **text** all in;
-**preview is functional end-to-end** (E5-S10 wired the transport→present seam). M2 executor + read tools +
-request/SSE layer in.
+## 🎯 M1 COMPLETE (bb3eb4a) — the hand-edit MVP. See [[retro-m1]].
+Epics 1–6 all merged + green (cargo default + wgpu-compositor + gpu-export builds + SM-2 GPU tests + goldens +
+pnpm). ~47 stories + 5 spikes, 18 crates. wgpu→WebView solved + HW-proven; **SM-2 crushed** (1080p60=602fps /
+4K30=529fps); ProRes export proven. QA follow-ups (need a display/NVIDIA): live-window composite confirm,
+§11.3 driven e2e, H.264/H.265 HW encode. Parked: ProRes 422, accept-GPLv3.
 
-**IN FLIGHT (4 workers — M1 finish + M2 continuation, disjoint crates):**
-- M1 FINISH: **E5-S11** (a80466bb — perf gate SM-2 + 1000-clip bench + SM-C1 golden, palmier-engine) ·
-  **E6-S5** (a631b9c6 — video export pipeline, HW encoders/ProRes, palmier-export)
-- M2: **E7-S4+E7-S12** (a5f96842 — MCP edit-tool bodies + agent undo stack, palmier-tools) · **E8-S3**
-  (a812e133 — concrete AnthropicClient reqwest SSE transport, palmier-agent)
+**M2 IN PROGRESS (Epics 7–8 — the strategic centerpiece). In:** MCP 30-tool registry + executor (EditorState) +
+read tool bodies + arg validation + edit tool bodies + agent undo (E7-S1..S4, S12); agent message/session model +
+request builder + SSE parser + real AnthropicClient (E8-S1..S3).
 
-**Remaining for M1:** E5-S11 + E6-S5 → hand-edit e2e gate → **M1 EXIT** (then M1-complete verify + retrospective).
-M2 continues (E7-S5..S10 generate tools + E7-S11/S13 MCP server/.mcpb; E8-S4.. tool loop + E8-S6 Palmier client).
+**M2 REMAINING (next waves):** E7-S5..S10 (generate/inspect/search/library/text tool bodies) · E7-S11 (axum/rmcp
+MCP server on 127.0.0.1:19789 + Origin/content-type/protocol validators + verbatim AgentInstructions) · E7-S13
+(.mcpb). E8-S4 (streaming tool-execution loop + orphan-tool_use repair) · E8-S5..S9 (mentions/PalmierClient/tabs/
+agent-cut e2e) · the agent PANEL UI (src-ui/agent-panel). Then **M3** (gen+transcription) · **M4** (search) · **M5** (polish+release).
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -133,6 +135,7 @@ M2 continues (E7-S5..S10 generate tools + E7-S11/S13 MCP server/.mcpb; E8-S4.. t
 2026-06-20 | E5-S5/S7 merged (698bb45) — preview transport (play/pause/seek/step/tick → TransportEvent Render/SeekDecode/CurrentFrameChanged; shared transport + per-tab state) + RenderFrame/PreviewTab model for E5-S8; SeekMode/throttle reused from E5-S2; 76 tests. E5-S8 unblocked → DISPATCHED EARLY (a98b18d9) the wgpu compositor present (build on proven A1).
 2026-06-20 | E4-S12/S13/S14 merged (cbe7110) — panel drag-out/cycle-guarded moves + OS actions (reveal/copy/relink/clipboard via tauri-plugin-opener/clipboard-manager) + Captions/Music forms (#18 case, #14 Music=gen form). cargo+pnpm green. **Epic 4 (media) COMPLETE** (~38 stories). Only E5-S8 in flight (watch palmier-tauri merge conflict).
 2026-06-20 | heartbeat — M1 critical path fully serialized behind E5-S8 (everything else depends on/conflicts with it). To use idle capacity, dispatched M2 FOUNDATION in parallel (disjoint crates, safe regardless of E5-S8): E7-S1 (palmier-tools MCP registry/dispatch/ShortId, af837a44) + E8-S1 (palmier-agent message/session/client scaffold, a8c6511f).
+2026-06-20 | 🎯 **M1 COMPLETE** (bb3eb4a) — last wave merged + verified: E5-S11 (perf gate — **SM-2 met 10-17×**: 1080p60=602fps/4K30=529fps on real GPU + SM-C1 golden + 1000-clip bench), E6-S5 (video export — real ProRes encode end-to-end; HW-encoder chain for H.264/H.265), E7-S4/S12 (8 MCP edit tools via palmier-edit + agent undo stack), E8-S3 (real AnthropicClient SSE transport). Full M1-exit verify green. Retrospective: [[retro-m1]]. Driving M2 next.
 2026-06-20 | E8-S3 merged (124a4b8) — concrete BYOK AnthropicClient (reqwest+rustls → SSE → StreamEvents; CancellationToken + drop cancellation; HTTP≥400 → typed terminal Error; wired select_client/build_client); 82 unit + 5 wiremock tests (no live API in CI). The agent can now stream from Claude. E8-S4 (run loop) next. (M2)
 2026-06-20 | wave merged (f9f0ed1) — E5-S9 (compositor TEXT rendering: palmier-text cosmic-text layout + GPU glyph atlas pass, 18 reference fonts bundled w/ OFL licenses, real-HW text smoke; 41 suites), E5-S10 (preview viewport UI + overlays + transport command/event wiring → **preview functional end-to-end**; cargo+pnpm green), E7-S2/S3 (MCP executor: single-owner EditorState + Mutex serialization + read-tool bodies w/ exact get_timeline shaping + arg validation; +justified palmier-history Send bounds for cross-thread executor; 42 suites). ~45 stories. Dispatching M1-finish (E5-S11 perf, E6-S5 export) + M2 (E7-S4/S12 edit tools+undo, E8-S3 reqwest SSE).
 2026-06-20 | E8-S2 merged (93686a1) — palmier-agent Anthropic request builder (exact wire body, 3 cache_control markers = 2 logical breakpoints per reference byte-parity, sorted keys, headers) + stateful partial-line SSE parser (all event types, tool_use input_json_delta accumulation); model ids verified vs claude-api docs; 70 tests. E8-S3 (reqwest transport + tool loop) next. (M2)

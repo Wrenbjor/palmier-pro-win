@@ -128,6 +128,18 @@ export). Recorded the frontend-verify lesson (pnpm install in main checkout firs
 Refs: main @5bc0494; crates/palmier-{model,tauri,update}, src-ui/{app,home,settings,editor}. Next: Wave 4 merges
 + FFmpeg toolchain → Wave 5 (decode/thumbnail/waveform + video export).
 
+## 2026-06-20 · 🎯 M1 COMPLETE — the hand-edit MVP (Epics 1–6) · #milestone #m1 #build
+What: Every M1 story is merged + green on main (bb3eb4a). The native Windows Palmier Pro editing core ships:
+app shell + auth/telemetry, the full model + crash-safe project I/O, the edit engines + interactive timeline,
+media cache/metadata/thumbnails/panel, the complete preview pipeline (decode → composition → transport → audio →
+**wgpu compositor present, GPU-proven** → text), XMEML + video export. ~47 stories + 5 spikes, 18 crates.
+**Headline results:** the wgpu→WebView risk is solved + hardware-proven; **SM-2 crushed** (1080p60=602fps,
+4K30=529fps on AMD RX6600XT, floors 60/30 — GPU path ships, no fallback); a real ProRes encode ran end-to-end.
+Verified: cargo default + wgpu-compositor + gpu-export builds + the SM-2 GPU tests + goldens + pnpm, all green.
+Obstacles cleared autonomously: MSVC linker, FFmpeg/libclang, wgpu→WebView, gpu-allocator/windows pin, a burst
+rate-limit, a stalled worker, a date-math slip. Parked (reversible): ProRes 422, accept-GPLv3.
+Refs: [retro-m1](docs/retro-m1.md) (new), main @bb3eb4a. Next: drive M2 (MCP server + agent — the centerpiece) to completion, then M3–M5.
+
 ## 2026-06-20 · Phase 4 M1 Wave-4 complete: project I/O + XMEML export + edit orchestration + FFmpeg unblocked · #build #m1 #infra
 What: Wave-4's 4 workers all landed verified-green on main (25eed3c): E2-S9 (palmier-project bundle reader/
 writer — crash-safe atomic temp-dir-swap save, reference filenames #3; the save/load spine; 16 tests), E6-S1/S7
