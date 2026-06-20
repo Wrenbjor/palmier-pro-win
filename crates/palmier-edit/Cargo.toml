@@ -8,3 +8,5 @@ publish.workspace = true
 
 [dependencies]
 palmier-model = { path = "../palmier-model" }
+palmier-history = { path = "../palmier-history" }
+uuid = { workspace = true }
