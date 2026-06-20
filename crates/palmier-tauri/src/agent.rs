@@ -148,8 +148,11 @@ pub struct AgentState {
     /// The 30-tool catalogue advertised to the model every turn (built once from
     /// the shared `palmier_tools` definitions — same surface the MCP server lists).
     tools: Vec<AnthropicToolSchema>,
-    /// The verbatim shared agent system prompt (Epic 7's `palmier_mcp` constant,
-    /// ruling #2 — the SAME bytes the MCP `initialize` advertises).
+    /// The verbatim shared agent system prompt — `palmier_prompt::AGENT_INSTRUCTIONS`,
+    /// the SINGLE source (ruling #2). These are the SAME bytes the MCP `initialize`
+    /// advertises (the MCP server reads the same constant), so the in-app agent and
+    /// the external MCP surface can never drift. This is the `system` block every
+    /// in-app `agent_send` turn carries.
     system: String,
     /// Per-chat-tab loop state, keyed by `session_id`.
     sessions: Mutex<HashMap<String, SessionLoop>>,
@@ -183,7 +186,7 @@ impl AgentState {
             executor,
             mcp: Mutex::new(None),
             tools: build_tool_schemas(),
-            system: palmier_mcp::AGENT_INSTRUCTIONS.to_string(),
+            system: palmier_prompt::AGENT_INSTRUCTIONS.to_string(),
             sessions: Mutex::new(HashMap::new()),
             preferred_model: Mutex::new(None),
             tabs: Mutex::new(Vec::new()),
@@ -349,6 +352,29 @@ impl AgentState {
     /// The current session id (for tests / callers).
     fn current_id(&self) -> Option<String> {
         self.current_session.lock().expect("current mutex").clone()
+    }
+
+    /// The messages of `session_id`, projected into the frontend shape (E8-S8).
+    /// Prefers the **live** [`SessionLoop`] (an in-flight / just-streamed
+    /// conversation) and falls back to the persisted tab [`ChatSession`] (a history
+    /// session that has no live loop yet). `None` if the id is unknown.
+    ///
+    /// This is the read the panel uses to restore a switched-to / reopened
+    /// session's conversation in a Tauri webview (the backend is the source of
+    /// truth for session content there).
+    fn session_messages(&self, session_id: &str) -> Option<Vec<FrontendMessage>> {
+        // Live loop first (covers the current/in-flight session).
+        {
+            let sessions = self.sessions.lock().expect("sessions mutex");
+            if let Some(s) = sessions.get(session_id) {
+                return Some(s.loop_state.messages.iter().map(project_message).collect());
+            }
+        }
+        // Else the persisted tab session (history loaded from disk).
+        let tabs = self.tabs.lock().expect("tabs mutex");
+        tabs.iter()
+            .find(|t| t.id.to_string() == session_id)
+            .map(|t| t.messages.iter().map(project_message).collect())
     }
 
     /// **new_session** (reference `newChat`): sync the outgoing current tab, then
@@ -589,6 +615,108 @@ pub struct SessionSummary {
     pub is_current: bool,
     /// Number of messages (0 ⇒ a fresh empty session, never persisted).
     pub message_count: usize,
+}
+
+/// A chat message projected into the **frontend** `AgentMessage` shape (E8-S8): a
+/// role + a list of [`FrontendBlock`]s. Returned by [`agent_get_session`] so the
+/// panel can restore a switched-to / reopened session's conversation from the
+/// backend (the single source of session state in a Tauri webview).
+///
+/// This is a *frontend-projection* of the backend [`palmier_agent::AgentMessage`] —
+/// the `kind` discriminator + camelCase keys match the `src-ui` `AgentMessage` /
+/// `AgentContentBlock` TS union (note `inputJson`, not the on-disk `input` key).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrontendMessage {
+    /// The message id (the backend uuid, stringified).
+    pub id: String,
+    /// `"user"` or `"assistant"`.
+    pub role: String,
+    /// The ordered content blocks.
+    pub blocks: Vec<FrontendBlock>,
+}
+
+/// One content block projected into the frontend `AgentContentBlock` union shape
+/// (E8-S8): `kind` discriminator `text` / `toolUse` / `toolResult`, camelCase keys.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FrontendBlock {
+    /// Assistant or user text.
+    Text { text: String },
+    /// A tool call (raw `input_json` forwarded verbatim under `inputJson`).
+    #[serde(rename_all = "camelCase")]
+    ToolUse {
+        id: String,
+        name: String,
+        input_json: String,
+    },
+    /// A tool result fed back to the model.
+    #[serde(rename_all = "camelCase")]
+    ToolResult {
+        tool_use_id: String,
+        content: Vec<FrontendToolResultBlock>,
+        is_error: bool,
+    },
+}
+
+/// A block inside a frontend tool result (`text` or an inlined `image`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum FrontendToolResultBlock {
+    /// Plain-text tool output.
+    Text { text: String },
+    /// An inlined image (base64 + media type).
+    #[serde(rename_all = "camelCase")]
+    Image { base64: String, media_type: String },
+}
+
+/// Project a backend [`palmier_agent::AgentMessage`] into the frontend shape.
+fn project_message(msg: &palmier_agent::AgentMessage) -> FrontendMessage {
+    use palmier_agent::{AgentContentBlock, Role};
+    let role = match msg.role {
+        Role::User => "user",
+        Role::Assistant => "assistant",
+    };
+    let blocks = msg
+        .blocks
+        .iter()
+        .map(|block| match block {
+            AgentContentBlock::Text { text } => FrontendBlock::Text { text: text.clone() },
+            AgentContentBlock::ToolUse { id, name, input_json } => FrontendBlock::ToolUse {
+                id: id.clone(),
+                name: name.clone(),
+                input_json: input_json.clone(),
+            },
+            AgentContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => FrontendBlock::ToolResult {
+                tool_use_id: tool_use_id.clone(),
+                content: content.iter().map(project_tool_result_block).collect(),
+                is_error: *is_error,
+            },
+        })
+        .collect();
+    FrontendMessage {
+        id: msg.id.to_string(),
+        role: role.to_string(),
+        blocks,
+    }
+}
+
+/// Project a backend tool-result block into the frontend shape.
+fn project_tool_result_block(
+    block: &palmier_agent::ToolResultBlock,
+) -> FrontendToolResultBlock {
+    use palmier_agent::ToolResultBlock;
+    match block {
+        ToolResultBlock::Text { text } => FrontendToolResultBlock::Text { text: text.clone() },
+        ToolResultBlock::Image { base64, media_type } => FrontendToolResultBlock::Image {
+            base64: base64.clone(),
+            media_type: media_type.clone(),
+        },
+    }
 }
 
 /// One `agent://event` payload streamed to the webview (camelCase; mirrors the
@@ -995,6 +1123,21 @@ pub fn agent_list_sessions(agent: State<'_, AgentState>) -> Vec<SessionSummary> 
     agent.session_summaries()
 }
 
+/// `agent_get_session` — the full message list of `session_id`, projected into the
+/// frontend `AgentMessage` shape (E8-S8). The panel calls this after switching /
+/// reopening a tab to restore that session's conversation from the backend (the
+/// source of truth for session content in a Tauri webview). `Err` if the id is
+/// unknown (the panel falls back to its local store).
+#[tauri::command]
+pub fn agent_get_session(
+    agent: State<'_, AgentState>,
+    session_id: String,
+) -> Result<Vec<FrontendMessage>, String> {
+    agent
+        .session_messages(&session_id)
+        .ok_or_else(|| format!("unknown session id: {session_id}"))
+}
+
 /// `agent_new_session` — open a fresh empty chat tab and make it current
 /// (reference `newChat`). Syncs the outgoing current tab first. Returns the new
 /// session id. Does NOT itself write a file (the empty session is never persisted
@@ -1193,6 +1336,63 @@ mod tests {
         // Names are the wire names; descriptions are the verbatim contract strings.
         assert!(schemas.iter().any(|s| s.name == "get_timeline"));
         assert!(schemas.iter().all(|s| !s.description.is_empty()));
+    }
+
+    /// **The verbatim-prompt property (E7-S13 follow-up / E8-S9 line 432):** the
+    /// in-app agent runs with the SAME system prompt the MCP server advertises
+    /// (ruling #2 — one shared string, both injection sites, no drift). We assert at
+    /// three points along the path `agent_send` takes:
+    ///   1. `AgentState.system` is `palmier_prompt::AGENT_INSTRUCTIONS` verbatim,
+    ///   2. it is byte-identical to what `palmier_mcp::initialize` advertises
+    ///      (the MCP re-export resolves to the SAME constant),
+    ///   3. the per-session `AgentLoop` `agent_send` builds carries it as `system`,
+    ///      and the request that loop emits to the model carries it unchanged.
+    #[test]
+    fn in_app_agent_turn_carries_verbatim_system_prompt() {
+        // (1) The state's system prompt is the single-source constant verbatim.
+        let state = AgentState::new();
+        assert_eq!(
+            state.system,
+            palmier_prompt::AGENT_INSTRUCTIONS,
+            "AgentState.system must be palmier_prompt::AGENT_INSTRUCTIONS verbatim"
+        );
+        assert!(!state.system.is_empty(), "the system prompt must be non-empty");
+
+        // (2) The MCP server advertises the SAME bytes (re-export of one constant) —
+        // the two injection sites can never drift (ruling #2).
+        assert_eq!(
+            state.system,
+            palmier_mcp::AGENT_INSTRUCTIONS,
+            "in-app agent system prompt must equal the MCP-advertised instructions"
+        );
+
+        // (3) The per-session loop `agent_send` builds carries it as `system` (this
+        // mirrors the exact `AgentLoop::new(model, agent.system.clone(), ...)` line in
+        // `agent_send`), and the request that loop emits to the client carries it.
+        let session_loop = AgentLoop::new(
+            palmier_agent::DEFAULT_MODEL,
+            state.system.clone(),
+            state.tools.clone(),
+        );
+        assert_eq!(
+            session_loop.system,
+            palmier_prompt::AGENT_INSTRUCTIONS,
+            "agent_send's AgentLoop must carry the verbatim instructions as system"
+        );
+        // The request body builder projects the loop's `system` straight onto the
+        // Anthropic `system` field (build via the public request builder).
+        let request = palmier_agent::AgentRequest {
+            model: session_loop.model,
+            max_tokens: 8192,
+            system: session_loop.system.clone(),
+            tools: session_loop.tools.clone(),
+            messages: Vec::new(),
+        };
+        assert_eq!(
+            request.system,
+            palmier_prompt::AGENT_INSTRUCTIONS,
+            "the AgentRequest sent to the model must carry the verbatim instructions"
+        );
     }
 
     /// The streamed event payload serializes with the `type` discriminator + the

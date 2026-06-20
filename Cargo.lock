@@ -3857,6 +3857,7 @@ dependencies = [
  "palmier-media",
  "palmier-model",
  "palmier-project",
+ "palmier-prompt",
  "palmier-telemetry",
  "palmier-text",
  "palmier-tools",

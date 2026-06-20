@@ -70,6 +70,11 @@ palmier-update = { path = "../palmier-update" }
 palmier-telemetry = { path = "../palmier-telemetry" }
 palmier-mcp = { path = "../palmier-mcp" }
 palmier-text = { path = "../palmier-text" }
+# E7-S13 follow-up: the in-app agent injects the SAME verbatim system prompt the MCP
+# server advertises (ruling #2 — one shared string, both injection sites). Depend on
+# the single source `palmier-prompt` DIRECTLY (not via `palmier_mcp`'s re-export) so
+# the in-app `AgentLoop.system` is `palmier_prompt::AGENT_INSTRUCTIONS` verbatim.
+palmier-prompt = { path = "../palmier-prompt" }
 # M2 boot integration: the shared 30-tool dispatcher (`ToolExecutor` over one
 # `EditorState`) that BOTH the MCP server and the in-app agent drive — the
 # single-owner correctness property — and the in-app agent run loop / client selection.
