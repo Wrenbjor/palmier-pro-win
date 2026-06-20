@@ -4059,7 +4059,14 @@ version = "0.1.0"
 name = "palmier-search"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "dirs 5.0.1",
+ "half",
  "palmier-model",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]
