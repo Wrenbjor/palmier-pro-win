@@ -27,9 +27,20 @@
 //! * [`thumbnail::image_thumb`] — EXIF-aware **image** thumbnails (gated 4, #16).
 //! * [`waveform`] — `symphonia` **waveform** decode → 150 samples/s cap 20000
 //!   `Vec<f32>` (gated 2, #16).
+//!
+//! The [`decode`] module (story E5-S2) is the **preview decode pipeline** — the
+//! root of the preview/playback frame source. It owns the FFmpeg
+//! [`decode::Decoder`] (one `AVFormatContext` per source URL, HW decode when
+//! available), the [`decode::FrameCache`] (LRU keyed by `(media_ref,
+//! source_frame)`, evicting by distance from the playhead under the 512 MB RAM
+//! ceiling), the [`decode::SeekMode`] tolerance/throttle math, and the
+//! engine-facing [`decode::FrameSource`] handle (`request_frame` /
+//! `prefetch` / `cache_stats`). `palmier-engine` consumes decoded **CPU-side**
+//! frames through that handle and never opens FFmpeg itself.
 
 pub mod cache;
 pub mod clip;
+pub mod decode;
 pub mod metadata;
 pub mod thumbnail;
 pub mod waveform;
@@ -37,6 +48,10 @@ pub mod waveform;
 pub use clip::{
     classify_path, clip_type_for_extension, clip_type_for_path, is_lottie, is_lottie_bytes,
     ClipType,
+};
+pub use decode::{
+    CacheStats, DecodeError, DecodedFrame, Decoder, DecoderPool, FrameCache, FrameKey, FrameResult,
+    FrameSource, HwDecodeStatus, HwKind, PixelLayout, Plane, ScrubThrottle, SeekMode, UrlResolver,
 };
 pub use metadata::{load_metadata, load_metadata_as, AssetMetadata, MetadataError};
 pub use thumbnail::{
