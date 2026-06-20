@@ -68,14 +68,20 @@ seam resolved). All verified green.
 **M1 status:** ~23 stories + 2 spikes merged. Model layer complete; app shell (runtime/menu/windows/settings/
 boot/telemetry/auth/updater); edit engines + history; media cache+metadata; audio mixer; timeline canvas (UI).
 
-**Wave 4: DISPATCHING** (disjoint crates + infra):
-- palmier-project **E2-S9** (bundle reader/writer, atomic save, reference filenames #3 — the save/load spine)
-- palmier-export **E6-S1+E6-S7** (XMEML emitter + golden fixtures; pure, no ffmpeg)
-- palmier-edit **E3-S6+E3-S7** (Clip↔view adapter + edit orchestration w/ atomic apply + undo; drag-state)
-- **infra: FFmpeg-on-Windows** toolchain (LLVM/libclang + FFmpeg shared dev libs → scripts/ffmpeg-env.ps1 +
-  with-msvc.ps1; verify a trivial ffmpeg-next build). Unblocks E5-S2, E4-S3/S4/S5, E6-S5.
-Held for Wave 5: ffmpeg decode/thumbnail/waveform stories + E6-S5 video export (after FFmpeg lands); E2-S10/S11/S12
-(after E2-S9); E3-S10 (timeline input, after E3-S6/S7).
+**Wave 4: COMPLETE** (25eed3c) — E2-S9 (project save/load spine), E6-S1/S7 (XMEML + goldens), E3-S6/S7
+(edit orchestration w/ atomic apply + undo; drag-state), and **FFmpeg-on-Windows RESOLVED** (ffmpeg-next 7.1
+builds via the wrapper; env in scripts/ffmpeg-env.ps1; LGPL → HW encoders for H.264/H.265, ProRes fine —
+[[windows-harness-notes]]). All verified green.
+
+**M1 status:** ~26 stories + 2 spikes. Backend largely complete: model, edit engines+orchestration, project
+save/load, XMEML export, audio mixer, app shell, timeline canvas. FFmpeg unblocked.
+
+**Wave 5: DISPATCHING** (disjoint crates):
+- palmier-media **E4-S3+E4-S4+E4-S5** (sprite-sheet thumbnails [ffmpeg], waveform, image thumbnails; backfill E4-S1 TODO fps)
+- palmier-project **E2-S10+E2-S11+E2-S12** (bundle round-trip golden SM-7, ProjectRegistry, media-path/autosave)
+- palmier-edit+src-ui **E3-S10** (timeline input controller — wires canvas→drag→orchestration; makes the timeline interactive)
+Held for Wave 6: the preview stack (E5-S2 decode → E5-S3/S4/S5 layers → E5-S7 transport → E5-S8 GPU present +
+the WRY-integration sub-spike) and E6-S5 video export (HW encoders).
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -117,3 +123,4 @@ Held for Wave 5: ffmpeg decode/thumbnail/waveform stories + E6-S5 video export (
 2026-06-20 | E1-S4/S9/S10 merged (5bc0494) — windows (per-label state, sizes), settings 5 tabs + Help + Feedback, updater (behind optional feature; Ed25519 pubkey needed for release), capabilities-file fix (was empty → would've denied invoke/listen). cargo+pnpm green. Wave 3 COMPLETE. Dispatching Wave 4 (E2-S9, E6-S1/S7, E3-S6/S7) + FFmpeg infra.
 2026-06-20 | E2-S9 merged (f85b37f) — palmier-project bundle reader/writer; atomic temp-dir-swap save (crash-safe), reference filenames (#3), severities ported exactly; round-trip test (SM-7 seed); 16 tests green. The save/load spine. Wave-4 remaining: E6-S1/S7, E3-S6/S7, FFmpeg infra.
 2026-06-20 | E6-S1/S7 + E3-S6/S7 merged (e4ee262) — XMEML emitter + 3 golden fixtures (SM-7 byte gate; 27 tests) + bundle export; edit orchestration (Clip↔view adapter, ripple/split/move with ATOMIC validate-before-mutate, one-undo-per-edit) + drag-state machine (90 tests). Green on main. Wave-4 remaining: FFmpeg infra (then Wave 5 decode/export).
+2026-06-20 | FFmpeg toolchain RESOLVED + merged (25eed3c) — ffmpeg-next 7.1 builds via the wrapper (independently verified PROBE_SUCCESS from clean env); FFmpeg 7.1 LGPL shared @C:\ffmpeg + libclang wheel; env auto-sourced. Note: LGPL excludes x264/x265 → HW encoders for H.264/H.265 (E6-S5), ProRes fine. Wave 4 COMPLETE. Dispatching Wave 5.

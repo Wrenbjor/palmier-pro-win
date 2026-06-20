@@ -127,3 +127,17 @@ palmier-edit E3-S6/S7 orchestration) + a dedicated FFmpeg-on-Windows toolchain i
 export). Recorded the frontend-verify lesson (pnpm install in main checkout first).
 Refs: main @5bc0494; crates/palmier-{model,tauri,update}, src-ui/{app,home,settings,editor}. Next: Wave 4 merges
 + FFmpeg toolchain → Wave 5 (decode/thumbnail/waveform + video export).
+
+## 2026-06-20 · Phase 4 M1 Wave-4 complete: project I/O + XMEML export + edit orchestration + FFmpeg unblocked · #build #m1 #infra
+What: Wave-4's 4 workers all landed verified-green on main (25eed3c): E2-S9 (palmier-project bundle reader/
+writer — crash-safe atomic temp-dir-swap save, reference filenames #3; the save/load spine; 16 tests), E6-S1/S7
+(pure XMEML 4 emitter with 3 byte-exact golden fixtures = the SM-7 gate, + self-contained bundle export; 27
+tests), E3-S6/S7 (edit orchestration — Clip↔view adapter wiring the pure engines to real Timeline/Clip with
+ATOMIC validate-before-mutate + one-undo-step-per-edit, + the drag-state machine; 90 tests), and the FFmpeg-on-
+Windows toolchain (ffmpeg-next 7.1 builds via the wrapper — FFmpeg 7.1 LGPL shared + libclang wheel, env auto-
+sourced from scripts/ffmpeg-env.ps1; independently re-verified PROBE_SUCCESS from a cleared env). LGPL note:
+software x264/x265 excluded → HW encoders for H.264/H.265 in E6-S5; ProRes/decode fine. M1 backend largely
+complete (~26 stories + 2 spikes). Dispatched Wave 5 (media thumbnails E4-S3/S4/S5, project E2-S10/S11/S12,
+timeline input E3-S10).
+Refs: main @25eed3c; crates/palmier-{project,export,edit}, scripts/ffmpeg-env.ps1, spikes/ffmpeg-setup/FINDINGS.md.
+Next: Wave 5 merges → Wave 6 (the preview stack E5-S2..S8 + WRY sub-spike + E6-S5 video export) → M1 exit.

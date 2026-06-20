@@ -22,6 +22,21 @@ so every Python invocation in the session inherits it. Verified: resolver emits 
 Both exist on this box (`python3` → 3.12, `python` → 3.13). BMAD skills call `python3`; that resolves
 fine. No shim needed.
 
+## FFmpeg toolchain (ffmpeg-next) — RESOLVED
+`ffmpeg-next` 7.1 builds on this box. Setup (see `spikes/ffmpeg-setup/FINDINGS.md`):
+- **FFmpeg 7.1 LGPL shared** (BtbN `win64-lgpl-shared`) extracted to `C:\ffmpeg` (headers + import `.lib`s + 7
+  runtime DLLs avcodec-61/avformat-61/avutil-59/avfilter-10/avdevice-61/swresample-5/swscale-8).
+- **libclang 18.1.1** (PyPI wheel; the `LLVM.LLVM` winget installer needs admin and fails non-interactively)
+  at `%LOCALAPPDATA%\Programs\libclang\bin`.
+- Env lives in **`scripts/ffmpeg-env.ps1`** (sets `FFMPEG_DIR`, `LIBCLANG_PATH`, PATH), **auto-sourced by
+  `scripts/with-msvc.ps1`** — so any worker building Rust through the wrapper inherits it, no per-worker action.
+  Verified: the probe runs from a cleared env.
+- **⚠ Encode licensing:** the LGPL build EXCLUDES GPL encoders (libx264/libx265/xvid). **Software H.264/H.265
+  encode is unavailable** — the video-export story (E6-S5) must use HW encoders (NVENC/QSV/AMF/MediaFoundation).
+  **ProRes (`prores_ks`) and all decode are LGPL-fine.** Aligns with the ProRes-422-for-v1 ruling (#17).
+- **Packaging:** the app bundle must ship the 7 FFmpeg DLLs next to the `.exe` (Tauri `externalBin`/resources)
+  + FFmpeg LGPL attribution in third-party notices. On a fresh machine, re-run the two installs (FINDINGS).
+
 ## tmux is not native
 `bmad-story-automator` (the autonomous BMAD story build cycle) uses tmux for resumable orchestration.
 tmux isn't native on Windows. For the autonomous inner loop, drive it with the **`/loop`** skill +
