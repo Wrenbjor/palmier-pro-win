@@ -23,6 +23,12 @@ $vcvars = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $vcvars) { Write-Error "vcvars64.bat not found in any known VS 2022 location. Install the C++ build tools workload."; exit 1 }
 if (-not $Command -or $Command.Count -eq 0) { Write-Error "No command given. Example: pwsh -File scripts/with-msvc.ps1 cargo build"; exit 1 }
 
+# Dot-source the FFmpeg/libclang env if present, so ffmpeg-next (ffmpeg-sys-next + bindgen)
+# can build & link. Sets FFMPEG_DIR, LIBCLANG_PATH, and PATH in THIS PowerShell process;
+# the cmd child below inherits the process environment. Optional: absent file = no-op.
+$ffmpegEnv = Join-Path $PSScriptRoot 'ffmpeg-env.ps1'
+if (Test-Path $ffmpegEnv) { . $ffmpegEnv }
+
 $cmdline = ($Command -join ' ')
 cmd /c "call `"$vcvars`" >nul 2>&1 && $cmdline"
 exit $LASTEXITCODE

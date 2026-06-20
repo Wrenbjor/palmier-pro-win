@@ -1,0 +1,27 @@
+# Spike: ffmpeg-probe — prove the FFmpeg-on-Windows toolchain links & runs.
+#
+# ISOLATION: declares its OWN empty `[workspace]` table so Cargo treats it as a
+# standalone workspace root, NOT a member of the 17-crate repo root workspace.
+# `cargo build`/`run` here resolves against THIS file only. Nothing in prod (the
+# real crates/) is touched.  THROWAWAY: exists only to verify infra/ffmpeg-toolchain.
+#
+# BUILD/RUN (Windows): from inside this dir,
+#   pwsh -File ../../scripts/with-msvc.ps1 cargo run
+# with-msvc.ps1 dot-sources scripts/ffmpeg-env.ps1, which sets FFMPEG_DIR (C:\ffmpeg),
+# LIBCLANG_PATH (LLVM bin), and prepends C:\ffmpeg\bin to PATH so the avcodec-61.dll
+# etc. are found at runtime. Never use bare `cargo` (MSVC linker not on PATH) or Git
+# Bash (its `link` shadows MSVC link.exe). See docs/windows-harness-notes.md.
+
+[workspace]
+
+[package]
+name = "ffmpeg-probe"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Spike: verify ffmpeg-next 7.x builds, links, and runs against the C:\\ffmpeg shared dev libraries."
+
+[dependencies]
+# ffmpeg-next 7.x targets the FFmpeg 7.x ABI (avcodec 61 / avutil 59 / avformat 61),
+# which matches the BtbN win64 LGPL shared 7.1 build extracted to C:\ffmpeg.
+ffmpeg-next = "7"
