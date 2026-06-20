@@ -17,6 +17,13 @@ palmier-history = { path = "../palmier-history" }
 # E7-S10 library tools: `import_media` (path/bytes) goes through palmier-media's
 # import orchestration (`add_media_asset` / `import_folder`) + `classify_path`.
 palmier-media = { path = "../palmier-media" }
+# E9-S11: the 4 generate tool bodies validate params against the live model
+# catalog and submit through palmier-gen. The tool bodies do pure validation +
+# gating + dispatch to a `GenerationGateway` seam (so they're unit-testable with a
+# mock); the heavy async lifecycle/transport stays in palmier-gen, wired by the
+# host (palmier-tauri). Default features OFF here — palmier-tools needs only the
+# catalog/params/validate types, not the WS `convex` client, to build + test.
+palmier-gen = { path = "../palmier-gen", default-features = false }
 serde_json.workspace = true
 # `uuidRegex` literal port — the same `[0-9A-Fa-f]{8}-…` pattern the reference
 # `ToolExecutor+ShortId.swift` uses to find known UUIDs in result text and rewrite

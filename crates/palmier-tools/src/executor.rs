@@ -122,11 +122,11 @@ impl ToolExecutor {
             // ── TEXT / CAPTION (E7-S8) ─────────────────────────────────────
             ToolName::AddTexts => crate::texts::add_texts(state, args),
             ToolName::AddCaptions => crate::texts::add_captions(state, args),
-            // ── GENERATE (E7-S9, Epic 9 backend — stay stubbed) ────────────
-            ToolName::GenerateVideo => not_implemented(tool),
-            ToolName::GenerateImage => not_implemented(tool),
-            ToolName::GenerateAudio => not_implemented(tool),
-            ToolName::UpscaleMedia => not_implemented(tool),
+            // ── GENERATE (E9-S11 — wired to palmier-gen via the gateway seam) ──
+            ToolName::GenerateVideo => crate::generate::generate_video(state, args),
+            ToolName::GenerateImage => crate::generate::generate_image(state, args),
+            ToolName::GenerateAudio => crate::generate::generate_audio(state, args),
+            ToolName::UpscaleMedia => crate::generate::upscale_media(state, args),
             // ── LIBRARY (E7-S10) ───────────────────────────────────────────
             ToolName::ImportMedia => crate::library::import_media(state, args),
             ToolName::CreateFolder => crate::library::create_folder(state, args),
@@ -203,13 +203,3 @@ fn shorten_result(result: ToolResult, universe: &IdUniverse) -> ToolResult {
     ToolResult { content, is_error: result.is_error }
 }
 
-/// A structured "not yet implemented" result for a dispatched tool whose body is a
-/// later E7 story. NOT the `{ isError }` shape — dispatch succeeded; the body is
-/// the placeholder.
-fn not_implemented(tool: ToolName) -> ToolResult {
-    ToolResult::ok(format!(
-        "Tool '{}' is registered and dispatched, but its body is not yet wired \
-         (lands in a later Epic 7 story).",
-        tool.wire_name()
-    ))
-}

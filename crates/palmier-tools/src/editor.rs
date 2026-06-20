@@ -61,6 +61,11 @@ pub struct EditorState {
     /// `canGenerate` = signed-in AND has credits). M2 default `false`; Epic 9
     /// supplies the real value.
     pub can_generate: bool,
+    /// The generation backend seam (E9-S11). `None` until the host
+    /// (`palmier-tauri`) wires a `palmier-gen`-backed gateway; the 4 generate tool
+    /// bodies return "backend not available" when it is absent. Kept private so the
+    /// generate bodies route through [`EditorState::generation_gateway`].
+    generation_gateway: Option<Box<dyn crate::generate::GenerationGateway>>,
 }
 
 /// Which agent undo stack an agent edit landed on (timeline vs whole-library). The
@@ -89,6 +94,7 @@ impl EditorState {
             lib_history: History::new(),
             last_agent_edit: None,
             can_generate: false,
+            generation_gateway: None,
         }
     }
 
@@ -101,6 +107,7 @@ impl EditorState {
             lib_history: History::new(),
             last_agent_edit: None,
             can_generate: false,
+            generation_gateway: None,
         }
     }
 
@@ -114,5 +121,20 @@ impl EditorState {
     /// `currentIdUniverse`). Taken once per tool call by the executor.
     pub fn id_universe(&self) -> IdUniverse {
         IdUniverse::from_library(&self.library)
+    }
+
+    /// Wire the generation backend seam (E9-S11). Called by the host once the
+    /// `palmier-gen`-backed gateway is built; tests inject a mock.
+    pub fn set_generation_gateway(
+        &mut self,
+        gateway: Box<dyn crate::generate::GenerationGateway>,
+    ) {
+        self.generation_gateway = Some(gateway);
+    }
+
+    /// The wired generation gateway, if any (the 4 generate tool bodies route
+    /// through this; `None` ⇒ "backend not available").
+    pub fn generation_gateway(&self) -> Option<&dyn crate::generate::GenerationGateway> {
+        self.generation_gateway.as_deref()
     }
 }

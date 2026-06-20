@@ -35,6 +35,7 @@ pub mod clips;
 pub mod dispatch;
 pub mod editor;
 pub mod executor;
+pub mod generate;
 pub mod inspect;
 pub mod json_round;
 pub mod library;
@@ -51,6 +52,7 @@ pub mod validate;
 
 pub use dispatch::{ScaffoldDispatcher, ToolContext, ToolDispatch};
 pub use editor::{AgentStack, EditorState};
+pub use generate::{GenerationGateway, GenerationSubmission, BACKEND_NOT_AVAILABLE};
 pub use executor::ToolExecutor;
 pub use json_round::{round_json_numbers, JSON_ROUND_PLACES};
 pub use read::{CAPTION_ROW_LIMIT, TRANSCRIPT_WORD_CAP};
