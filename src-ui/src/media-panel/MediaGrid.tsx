@@ -54,6 +54,21 @@ export interface MediaGridProps {
   onRenameFolder: (id: string, name: string) => void;
   onRenameAsset: (id: string, name: string) => void;
   onToggleSection: (folderId: string | null) => void;
+  /**
+   * A drag payload (`text/plain`) was dropped on a folder/breadcrumb/section/root
+   * target (E4-S12). `targetFolderId` is the destination (null = Library root).
+   * `files` are absolute paths from a native OS-file drop (import); `text` is the
+   * in-panel move payload.
+   */
+  onDropOnFolder?: (
+    targetFolderId: string | null,
+    drop: { files?: string[]; text?: string },
+  ) => void;
+  // --- per-asset OS actions (E4-S12) ---
+  onRevealAsset?: (id: string) => void;
+  onCopyAssetPath?: (id: string) => void;
+  onRelinkAsset?: (id: string) => void;
+  onDeleteAsset?: (id: string) => void;
 }
 
 export function MediaGrid(props: MediaGridProps) {
@@ -171,6 +186,31 @@ export function MediaGrid(props: MediaGridProps) {
     setMarquee(null);
   };
 
+  // --- drop routing (E4-S12) -------------------------------------------------
+  // A drop on a folder/breadcrumb/section/root target moves in-panel items (text
+  // payload) or imports OS files (file payload). Native OS-file drops arrive via
+  // the Tauri `tauri://drag-drop` event (panel root), so the in-DOM handler here
+  // covers the in-panel move payload via `dataTransfer.getData("text/plain")`.
+  const handleDrop = (
+    e: React.DragEvent,
+    targetFolderId: string | null,
+  ) => {
+    if (!props.onDropOnFolder) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const text = e.dataTransfer.getData("text/plain");
+    const files = Array.from(e.dataTransfer.files ?? [])
+      .map((f) => (f as File & { path?: string }).path)
+      .filter((p): p is string => !!p);
+    props.onDropOnFolder(targetFolderId, {
+      text: text || undefined,
+      files: files.length > 0 ? files : undefined,
+    });
+  };
+  const allowDrop = (e: React.DragEvent) => {
+    if (props.onDropOnFolder) e.preventDefault();
+  };
+
   // --- keyboard arrow nav (E4-S11) ------------------------------------------
   const onKeyDown = (e: React.KeyboardEvent) => {
     const dir =
@@ -216,6 +256,12 @@ export function MediaGrid(props: MediaGridProps) {
         selected={selection.has(a.id)}
         onSelect={(additive) => props.onSelect(a.id, additive)}
         onRename={(name) => props.onRenameAsset(a.id, name)}
+        onReveal={props.onRevealAsset ? () => props.onRevealAsset!(a.id) : undefined}
+        onCopyPath={
+          props.onCopyAssetPath ? () => props.onCopyAssetPath!(a.id) : undefined
+        }
+        onRelink={props.onRelinkAsset ? () => props.onRelinkAsset!(a.id) : undefined}
+        onDelete={props.onDeleteAsset ? () => props.onDeleteAsset!(a.id) : undefined}
         onDragStart={(e) =>
           e.dataTransfer.setData(
             "text/plain",
@@ -240,6 +286,9 @@ export function MediaGrid(props: MediaGridProps) {
           onDragStart={(e) =>
             e.dataTransfer.setData("text/plain", folderUri(f.id))
           }
+          onDropTarget={
+            props.onDropOnFolder ? (e) => handleDrop(e, f.id) : undefined
+          }
         />
       </div>
     );
@@ -253,6 +302,10 @@ export function MediaGrid(props: MediaGridProps) {
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onDragOver={allowDrop}
+      onDrop={
+        props.onDropOnFolder ? (e) => handleDrop(e, currentFolderId) : undefined
+      }
       style={{
         position: "relative",
         flex: 1,
@@ -267,6 +320,11 @@ export function MediaGrid(props: MediaGridProps) {
         <Breadcrumb
           crumbs={breadcrumb(snapshot.folders, currentFolderId)}
           onNavigate={props.onOpenFolder}
+          onDropCrumb={
+            props.onDropOnFolder
+              ? (id, e) => handleDrop(e, id)
+              : undefined
+          }
         />
       )}
 
@@ -278,6 +336,12 @@ export function MediaGrid(props: MediaGridProps) {
               <div key={sec.folderId ?? "__root"}>
                 <button
                   onClick={() => props.onToggleSection(sec.folderId)}
+                  onDragOver={allowDrop}
+                  onDrop={
+                    props.onDropOnFolder
+                      ? (e) => handleDrop(e, sec.folderId)
+                      : undefined
+                  }
                   style={sectionHeaderStyle}
                 >
                   <span>{collapsed ? "▸" : "▾"}</span>
@@ -334,9 +398,12 @@ export function MediaGrid(props: MediaGridProps) {
 function Breadcrumb({
   crumbs,
   onNavigate,
+  onDropCrumb,
 }: {
   crumbs: { id: string | null; name: string }[];
   onNavigate: (id: string | null) => void;
+  /** Each chip is a drop target (E4-S12): drop reparents into that folder. */
+  onDropCrumb?: (id: string | null, e: React.DragEvent) => void;
 }) {
   return (
     <div
@@ -357,6 +424,10 @@ function Breadcrumb({
           >
             <button
               onClick={() => !last && onNavigate(c.id)}
+              onDragOver={(e) => {
+                if (onDropCrumb) e.preventDefault();
+              }}
+              onDrop={onDropCrumb ? (e) => onDropCrumb(c.id, e) : undefined}
               disabled={last}
               style={{
                 fontSize: 12,

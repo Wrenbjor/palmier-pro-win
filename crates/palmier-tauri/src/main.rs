@@ -29,6 +29,7 @@
 
 mod boot;
 mod commands;
+mod media;
 mod menu;
 mod project;
 mod settings;
@@ -61,6 +62,11 @@ fn main() {
         // drives the picker via `@tauri-apps/plugin-dialog`, then hands the chosen
         // `.palmier` path to `create_project` / `open_project`.
         .plugin(tauri_plugin_dialog::init())
+        // E4-S12 — media-panel OS actions: Reveal in Explorer (opener) + Copy Path /
+        // clipboard paste (clipboard-manager). The Media panel drives these via
+        // `src-ui/media-panel/media-actions.ts`.
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         // E1-S4/E1-S9/E1-S10 — the command seam the Home/Settings/Help/Feedback surfaces
         // and the menu router call via `invoke`.
         .invoke_handler(tauri::generate_handler![
@@ -90,6 +96,13 @@ fn main() {
             // E1-S8 — sample carousel (list / resolve+materialize+open).
             project::list_samples,
             project::open_sample,
+            // E4-S12 — media-panel OS actions (Reveal / Copy Path / Relink / paste)
+            // + the E4-S3 moment-thumbnail seam (stub until palmier-media/Epic 11).
+            media::reveal_in_explorer,
+            media::copy_paths_to_clipboard,
+            media::pick_relink_path,
+            media::read_clipboard_importable_paths,
+            media::thumbnail,
         ])
         .setup(move |app| {
             // E1-S7/E1-S8 — build the project lifecycle state BEFORE `auth` is moved

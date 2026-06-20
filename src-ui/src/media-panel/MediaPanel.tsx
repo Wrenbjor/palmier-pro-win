@@ -66,8 +66,10 @@ export function MediaPanel({ store, controller, seedFixture = true }: MediaPanel
     import("@tauri-apps/api/event")
       .then((api) =>
         registerRevealHandlers(api, theStore, {
+          // Ctrl+V / paste menu → import any clipboard file URLs into the current
+          // folder (E4-S12). Image-data paste lands with the real import at Epic 7.
           onPasteRequest: () => {
-            // TODO(E7): read clipboard + theController.importPaths(paths).
+            void theController.pasteFromClipboard();
           },
         }),
       )
@@ -78,6 +80,37 @@ export function MediaPanel({ store, controller, seedFixture = true }: MediaPanel
       .catch((err) => {
         // eslint-disable-next-line no-console
         console.debug("[media-panel] reveal handlers skipped:", err);
+      });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [theStore, theController]);
+
+  // Native OS-file drop (E4-S12): the Tauri `tauri://drag-drop` event delivers the
+  // dropped absolute paths (the AppKit `MediaPanelDropArea` is dead on our
+  // platforms — media-panel.md). Import into the current folder as one undo step
+  // (TODO(E7): the import itself is still the `importPaths` stub). No-op outside a
+  // Tauri webview (`getCurrentWebview` import fails in plain `vite dev`).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+    import("@tauri-apps/api/webview")
+      .then((api) =>
+        api.getCurrentWebview().onDragDropEvent((event) => {
+          if (theStore.getState().tab !== "media") return;
+          if (event.payload.type !== "drop") return;
+          const paths = event.payload.paths ?? [];
+          if (paths.length > 0) void theController.importPaths(paths);
+        }),
+      )
+      .then((un) => {
+        if (cancelled) un();
+        else unlisten = un;
+      })
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.debug("[media-panel] native drop wiring skipped:", err);
       });
     return () => {
       cancelled = true;

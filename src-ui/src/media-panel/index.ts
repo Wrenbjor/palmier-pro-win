@@ -34,6 +34,15 @@ export type { MediaPanelStore, MediaPanelState } from "./store";
 // --- Command seam (Tauri commands replace the local apply at E7/E9/E11) ---
 export { MediaPanelController, localId } from "./controller";
 
+// --- OS actions (E4-S12 Tauri command seam: reveal / copy-path / relink / paste) ---
+export {
+  revealInExplorer,
+  copyPathsToClipboard,
+  pickRelinkPath,
+  readClipboardImportablePaths,
+  momentThumbnail,
+} from "./media-actions";
+
 // --- Reveal events (backend→UI Tauri events) ---
 export {
   MEDIA_PANEL_EVENTS,
@@ -57,6 +66,8 @@ export {
   marqueeRect,
   rectsIntersect,
   marqueeSelect,
+  isDescendant,
+  legalFolderMoves,
 } from "./logic";
 export type { FilterState, GridDimensions, GroupedSection, Rect } from "./logic";
 

@@ -14,6 +14,8 @@
 import {
   buildView,
   gridDimensions,
+  isDescendant,
+  legalFolderMoves,
   marqueeRect,
   marqueeSelect,
   moveSelection,
@@ -257,6 +259,45 @@ export function runMediaParityChecks(): string[] {
       "parse moment URI",
     );
     check(parseUri("palmier-folder://f1")?.kind === "folder", "parse folder URI");
+  }
+
+  // --- folder move cycle guards (E4-S12 / E4-S6 parity) ----------------------
+  {
+    const folders: MediaFolderView[] = [
+      { id: "root", name: "Root", parentFolderId: null },
+      { id: "child", name: "Child", parentFolderId: "root" },
+      { id: "grand", name: "Grand", parentFolderId: "child" },
+      { id: "sib", name: "Sibling", parentFolderId: null },
+    ];
+
+    // isDescendant: grand is a descendant of root; sib is not.
+    check(isDescendant(folders, "grand", "root"), "grand is descendant of root");
+    check(isDescendant(folders, "root", "root"), "isDescendant includes self");
+    check(!isDescendant(folders, "sib", "root"), "sib not descendant of root");
+
+    // legalFolderMoves rejects: into self, into a descendant, and no-op (already parent).
+    check(
+      legalFolderMoves(folders, ["root"], "root").length === 0,
+      "reject move into self",
+    );
+    check(
+      legalFolderMoves(folders, ["root"], "grand").length === 0,
+      "reject move into a descendant",
+    );
+    check(
+      legalFolderMoves(folders, ["child"], "root").length === 0,
+      "reject no-op (already parent)",
+    );
+    // a legal move (sibling into root's child) is allowed
+    check(
+      legalFolderMoves(folders, ["sib"], "child").join() === "sib",
+      "legal move into a non-descendant folder",
+    );
+    // moving to root (null) from a non-root parent is legal
+    check(
+      legalFolderMoves(folders, ["grand"], null).join() === "grand",
+      "legal move up to root",
+    );
   }
 
   // --- search Files filter ---------------------------------------------------

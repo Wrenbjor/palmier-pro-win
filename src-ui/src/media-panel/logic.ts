@@ -161,6 +161,54 @@ export function folderPath(
   return chain;
 }
 
+/**
+ * `isDescendant(folderId, ancestorId)` (EditorViewModel+Folders.swift): true when
+ * `folderId` is `ancestorId` itself or lives anywhere beneath it. Used by the move
+ * cycle-guard (a folder may not move into itself or any of its descendants). Cycle-
+ * safe via a visited set.
+ */
+export function isDescendant(
+  folders: readonly MediaFolderView[],
+  folderId: string,
+  ancestorId: string,
+): boolean {
+  if (folderId === ancestorId) return true;
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  const seen = new Set<string>();
+  let cur: string | null = folderId;
+  while (cur != null) {
+    if (seen.has(cur)) break;
+    seen.add(cur);
+    if (cur === ancestorId) return true;
+    cur = byId.get(cur)?.parentFolderId ?? null;
+  }
+  return false;
+}
+
+/**
+ * `moveFoldersToFolder` cycle guards (EditorViewModel+Folders.swift): a folder move
+ * is rejected when the target is the folder itself, a descendant of it, or already
+ * its parent (no-op). Returns only the folder ids whose move is legal.
+ */
+export function legalFolderMoves(
+  folders: readonly MediaFolderView[],
+  folderIds: readonly string[],
+  targetFolderId: string | null,
+): string[] {
+  const byId = new Map(folders.map((f) => [f.id, f]));
+  return folderIds.filter((id) => {
+    const f = byId.get(id);
+    if (!f) return false;
+    if (id === targetFolderId) return false; // into self
+    if (f.parentFolderId === targetFolderId) return false; // no-op (already parent)
+    // into a descendant of the moved folder
+    if (targetFolderId != null && isDescendant(folders, targetFolderId, id)) {
+      return false;
+    }
+    return true;
+  });
+}
+
 /** Breadcrumb labels `[Library, ...folderPath names]`. */
 export function breadcrumb(
   folders: readonly MediaFolderView[],

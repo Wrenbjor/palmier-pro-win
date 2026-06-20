@@ -26,6 +26,7 @@ import {
   type ViewMode,
 } from "./types";
 import type { FilterState } from "./logic";
+import { legalFolderMoves } from "./logic";
 import { THUMBNAIL_SIZE } from "./types";
 
 export interface MediaPanelState {
@@ -79,6 +80,12 @@ export interface MediaPanelStore {
   addFolder: (folder: MediaFolderView) => void;
   renameFolder: (id: string, name: string) => void;
   renameAsset: (id: string, name: string) => void;
+  /** Reparent assets to a target folder (E4-S12 in-panel move; null = root). */
+  moveAssets: (assetIds: Iterable<string>, targetFolderId: string | null) => void;
+  /** Reparent folders to a target folder (E4-S12 in-panel move; null = root). */
+  moveFolders: (folderIds: Iterable<string>, targetFolderId: string | null) => void;
+  /** Repoint a relinked asset's path + clear its missing flag (E4-S12 Relink). */
+  relinkAsset: (id: string, path: string) => void;
 
   // search
   setSearchResults: (results: SearchResults | null) => void;
@@ -209,6 +216,47 @@ export function createMediaPanelStore(
           ...state.snapshot,
           assets: state.snapshot.assets.map((a) =>
             a.id === id ? { ...a, name } : a,
+          ),
+        },
+      }),
+    moveAssets: (assetIds, targetFolderId) => {
+      const ids = new Set(assetIds);
+      if (ids.size === 0) return;
+      setState({
+        snapshot: {
+          ...state.snapshot,
+          assets: state.snapshot.assets.map((a) =>
+            ids.has(a.id) ? { ...a, folderId: targetFolderId } : a,
+          ),
+        },
+      });
+    },
+    moveFolders: (folderIds, targetFolderId) => {
+      // Cycle-guarded: reject move-into-self, into a descendant, or no-op (ruling
+      // parity with EditorViewModel+Folders.swift `moveFoldersToFolder`).
+      const legal = new Set(
+        legalFolderMoves(
+          state.snapshot.folders,
+          Array.from(folderIds),
+          targetFolderId,
+        ),
+      );
+      if (legal.size === 0) return;
+      setState({
+        snapshot: {
+          ...state.snapshot,
+          folders: state.snapshot.folders.map((f) =>
+            legal.has(f.id) ? { ...f, parentFolderId: targetFolderId } : f,
+          ),
+        },
+      });
+    },
+    relinkAsset: (id, path) =>
+      setState({
+        snapshot: {
+          ...state.snapshot,
+          assets: state.snapshot.assets.map((a) =>
+            a.id === id ? { ...a, path, missing: false } : a,
           ),
         },
       }),
