@@ -153,3 +153,19 @@ complete (~26 stories + 2 spikes). Dispatched Wave 5 (media thumbnails E4-S3/S4/
 timeline input E3-S10).
 Refs: main @25eed3c; crates/palmier-{project,export,edit}, scripts/ffmpeg-env.ps1, spikes/ffmpeg-setup/FINDINGS.md.
 Next: Wave 5 merges → Wave 6 (the preview stack E5-S2..S8 + WRY sub-spike + E6-S5 video export) → M1 exit.
+
+## 2026-06-20 · M2 COMPLETE — the agentic NLE (MCP server + in-app agent, one EditorState) · #build #m2 #agent #mcp
+What: Epics 7–8 functionally done and verified green on main (af28901). An MCP HTTP server (127.0.0.1:19789,
+loopback-only, 3 validators, verbatim 8694-byte AgentInstructions identity, tools/list = exactly 30) lets external
+Claude Desktop/Code/Cursor/Codex clients drive the editor; 26/30 tool bodies are live (generate→M3, search→M4 remain
+stubbed). The in-app agent has a real BYOK Anthropic SSE client + run-loop (orphan-tool_use repair, clean cancel) +
+chat panel + session persistence to `<project>/chat/` + mentions/context-hints + image inlining, and now (E8-S8) an
+EXPLICIT verbatim system prompt = palmier_prompt::AGENT_INSTRUCTIONS (byte-identical to what the server advertises —
+no-drift test at AgentState/AgentLoop/AgentRequest). MCP server and in-app agent share ONE EditorState via a single
+Arc<ToolExecutor> (proven by `mcp_and_agent_share_one_editor_state`), so external and in-panel edits land on one
+timeline + undo stack. Panel tabs round-trip create/switch/close/delete to the backend. Live-access-gated remainders
+(need Wren §13.9, the only non-code blockers): E8-S6 PalmierClient (builds vs the `convex` crate; live needs the Convex
+URL + test Clerk account) and E8-S9 agent-cut e2e (needs a real ANTHROPIC_API_KEY + a window/tauri-driver).
+M3 already underway: E9 generation lifecycle (palmier-gen) merged; whisper-rs 0.16 toolchain proven end-to-end
+(JFK sample transcribed; portable CMake + whisper-env.ps1, models MIT); S-3 SigLIP2 runtime resolved (ort+ONNX) for M4.
+Refs: main @af28901; crates/palmier-{mcp,agent,tools,tauri,prompt,gen}; [phase0-reconciliation](docs/phase0-reconciliation.md) (updated: S-3 + convex preserve_order); scripts/whisper-env.ps1 (new). Next: M3 E10 (palmier-transcribe — whisper wrapper + verbatim CaptionBuilder + add_captions/get_transcript bodies); M4 E11 (SigLIP2 search).
