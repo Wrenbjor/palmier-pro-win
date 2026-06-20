@@ -53,6 +53,9 @@ Checked 2026-06-20 on this box:
   **Gotcha:** PowerShell eats `-p` as an ambiguous param to the wrapper — use the long form
   `--package <crate>` (not `cargo build -p <crate>`) when building a single crate through it.
 - Install **gh** (`winget install GitHub.cli`) when the PR/merge phase needs it (not yet installed).
+- **Frontend verify after merging a `src-ui` story:** run `corepack pnpm install` in `src-ui/` FIRST
+  (worktrees carry their own `node_modules`; the main checkout's can be stale → pnpm's deps-status check
+  fails before build). Then `corepack pnpm build`. `pnpm` isn't on PATH for shims here — use `corepack pnpm …`.
 
 ## Timeline
 2026-06-20 | setup — captured during environment prep; PYTHONUTF8 fix applied and verified.
