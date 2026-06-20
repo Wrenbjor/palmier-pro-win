@@ -30,3 +30,13 @@ optional = true
 # Turn on for the live preview build (E5-S7 transport wires the device sink).
 default = []
 audio-device = ["dep:cpal"]
+
+# E5-S4 composition-graph benchmark (FOUNDATION §11.4). The 50/200/1000-clip
+# composition build is benched here; the final perf-baseline assertion + CI wiring
+# lands in E5-S11. Criterion is a dev-dep only (no runtime/build impact).
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "composition_build"
+harness = false
