@@ -45,6 +45,7 @@ mod interpolation;
 mod keyframe;
 mod manifest;
 mod media_asset;
+mod media_folders;
 pub mod serde_date;
 mod text_style;
 mod timeline;
@@ -66,6 +67,7 @@ pub use manifest::{
     CURRENT_MANIFEST_VERSION,
 };
 pub use media_asset::{GenerationStatus, MediaAsset};
+pub use media_folders::{MediaFolderIndex, MediaLibrary};
 pub use text_style::{Fill, FontName, Rgba, Shadow, TextAlignment, TextStyle};
 pub use timeline::{Timeline, Track};
 pub use transform::{Crop, Transform};

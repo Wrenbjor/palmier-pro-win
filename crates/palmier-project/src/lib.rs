@@ -52,6 +52,7 @@
 pub mod bundle;
 pub mod dialog;
 pub mod document;
+pub mod media_library;
 pub mod registry;
 pub mod resolver;
 pub mod samples;
@@ -61,6 +62,7 @@ pub use bundle::{
     LoadedBundle,
 };
 pub use dialog::{DialogError, DirectoryDocumentDialog, DirectorySelection};
+pub use media_library::{action_name, MediaLibraryHistory};
 pub use document::{ProjectDocument, DEFAULT_AUTOSAVE_DEBOUNCE};
 pub use registry::{normalize_path, ProjectEntry, ProjectRegistry, SystemTrasher, Trasher};
 pub use resolver::{

@@ -2822,12 +2822,14 @@ dependencies = [
  "kamadak-exif",
  "mp4",
  "palmier-model",
+ "palmier-project",
  "serde",
  "serde_json",
  "sha2",
  "symphonia 0.6.0",
  "tempfile",
  "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -2845,6 +2847,7 @@ name = "palmier-project"
 version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",
+ "palmier-history",
  "palmier-model",
  "reqwest 0.12.28",
  "serde",
