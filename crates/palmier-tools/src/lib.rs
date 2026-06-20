@@ -31,16 +31,19 @@
 //! `ToolResult.swift`) and `docs/reference/mcp-tools.md`. Tool descriptions and the
 //! 30-count are load-bearing contract — see [`schema`] (ruling #1, #2; R-5).
 
+pub mod clips;
 pub mod dispatch;
 pub mod editor;
 pub mod executor;
 pub mod json_round;
+pub mod properties;
 pub mod read;
 pub mod resources;
 pub mod result;
 pub mod schema;
 pub mod short_id;
 pub mod transcript;
+pub mod undo;
 pub mod validate;
 
 pub use dispatch::{ScaffoldDispatcher, ToolContext, ToolDispatch};
