@@ -205,6 +205,8 @@ concurrent with them.
 ---
 
 ### E11-S5 — VisualSearch ranking (BLAS dot, best-per-shot dedupe, cutoffs)
+> **Status:** DONE (story/E11-S5-visualsearch) — raw-dot ranking (plain Rust per-row dot), best-per-shot dedupe on `shot_start` bits, 0.05 floor + 0.85 relative cutoff; parity with `VisualSearch.swift`. `palmier_search::{visual_search, Hit}`.
+
 **Intent:** As `search_media` (visual scope), I want to rank an asset's frame embeddings against a query
 vector and return deduped top-K hits, so one scene can't flood results and only confident matches surface.
 

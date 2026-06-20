@@ -19,6 +19,7 @@
 //! so a macOS-built index is treated as stale on the port.
 
 pub mod store;
+pub mod visual_search;
 
 /// The reference model spec (`SearchIndexConfig.manifest` in the macOS reference).
 /// These constants are the parity contract; changing any of them re-indexes.
@@ -45,3 +46,4 @@ pub mod spec {
 }
 
 pub use store::{AssetIndex, EmbeddingStore, Header, Row};
+pub use visual_search::{search as visual_search, Hit};
