@@ -8,6 +8,11 @@ publish.workspace = true
 
 [dependencies]
 palmier-tools = { path = "../palmier-tools" }
+# The verbatim agent prompt for the `initialize` `instructions` field lives in the
+# shared `palmier-prompt` crate (ruling #2 — one string, both consumers). We re-export
+# `palmier_prompt::AGENT_INSTRUCTIONS` as `palmier_mcp::AGENT_INSTRUCTIONS` so this
+# crate no longer carries its own copy of the contract text (E7-S13).
+palmier-prompt = { path = "../palmier-prompt" }
 
 # HTTP transport for the local loopback MCP server (E7-S11). We use `axum` + a
 # hand-rolled JSON-RPC layer rather than rmcp's transport: `palmier-tools` already

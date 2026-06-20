@@ -30,6 +30,7 @@ members = [
     "crates/palmier-gen",
     "crates/palmier-agent",
     "crates/palmier-mcp",
+    "crates/palmier-prompt",
     "crates/palmier-tools",
     "crates/palmier-auth",
     "crates/palmier-update",

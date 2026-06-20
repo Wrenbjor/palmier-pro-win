@@ -3780,6 +3780,7 @@ name = "palmier-mcp"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "palmier-prompt",
  "palmier-tools",
  "reqwest 0.12.28",
  "serde",
@@ -3832,6 +3833,10 @@ dependencies = [
  "trash",
  "uuid",
 ]
+
+[[package]]
+name = "palmier-prompt"
+version = "0.1.0"
 
 [[package]]
 name = "palmier-search"

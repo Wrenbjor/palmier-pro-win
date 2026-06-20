@@ -42,11 +42,11 @@
 //! ## Agent instructions constant
 //!
 //! The `initialize` response embeds the **verbatim** agent instructions
-//! ([`AGENT_INSTRUCTIONS`]) via `include_str!`. E7-S13 hoists this to a shared
-//! `palmier-prompt` module that both `palmier-mcp` and `palmier-agent` import
-//! (ruling #2 — one constant, no drift). Until that lands, the constant lives here
-//! so the `initialize` identity is correct and parity-tested today; E7-S13 should
-//! replace this `include_str!` with the shared import and delete the local copy.
+//! ([`AGENT_INSTRUCTIONS`]). As of E7-S13 the single source of that text lives in the
+//! shared [`palmier_prompt`] crate, which both `palmier-mcp` and `palmier-agent`
+//! import (ruling #2 — one constant, no drift between the two injection sites). This
+//! crate re-exports it for back-compat; the byte-fidelity gate lives in
+//! `palmier-prompt`.
 
 pub mod jsonrpc;
 pub mod server;
@@ -80,16 +80,14 @@ pub const BIND_HOST: Ipv4Addr = Ipv4Addr::LOCALHOST;
 /// The default loopback bind address string (back-compat with the scaffold).
 pub const DEFAULT_BIND: &str = "127.0.0.1:19789";
 
-/// The **verbatim** agent system prompt (E7-S13 constant, ported byte-for-byte from
-/// `docs/reference/agent-instructions.md` VERBATIM block / reference
-/// `AgentInstructions.serverInstructions`). Embedded as `include_str!` so the bytes
-/// are reviewable as plain text and never re-authored. Preserves Unicode
-/// (`×` U+00D7, `–` U+2013, `•` U+2022, `…`) as UTF-8 — do **not** ASCII-fold.
+/// The **verbatim** agent system prompt — the `instructions` field of the MCP
+/// `initialize` result.
 ///
-/// This is the `instructions` field of the MCP `initialize` result. E7-S13 will move
-/// this to a shared `palmier-prompt` module imported by both this crate and
-/// `palmier-agent` (ruling #2 — single constant, no drift between injection sites).
-pub const AGENT_INSTRUCTIONS: &str = include_str!("agent_instructions.txt");
+/// Re-exported from the shared [`palmier_prompt`] crate (ruling #2 — single constant,
+/// no drift between the MCP `instructions` field and the in-app agent `system` field
+/// in `palmier-agent`). The byte-for-byte fidelity gate (length, opening/closing
+/// lines, section headers, Unicode-glyph counts) lives in `palmier-prompt`'s tests.
+pub use palmier_prompt::AGENT_INSTRUCTIONS;
 
 #[cfg(test)]
 mod tests {
@@ -108,34 +106,12 @@ mod tests {
         assert_eq!(SERVER_VERSION, "1.0.0");
     }
 
-    /// Verbatim-fidelity gate on the embedded agent instructions. These assertions
-    /// live in-crate (the source `.md` block is outside the crate). E7-S13 adds the
-    /// byte-diff-vs-md gate when it hoists the constant to the shared module.
+    /// The re-exported prompt is wired (the byte-fidelity gate itself lives in
+    /// `palmier-prompt`). This just proves the `initialize` `instructions` field is
+    /// non-empty and is the shared constant — a smoke test for the re-export seam.
     #[test]
-    fn agent_instructions_are_verbatim() {
-        // Exact opening line (reference first line).
-        assert!(AGENT_INSTRUCTIONS.starts_with(
-            "You are a creative AI assistant connected to palmier-pro, an AI-native video editor."
-        ));
-        // The literal product token stays as written.
-        assert!(AGENT_INSTRUCTIONS.contains("palmier-pro"));
-        // Every section header in order (the prompt's behavioral contract).
-        for header in [
-            "# Core model",
-            "# Always do",
-            "# Editing",
-            "# Generation",
-            "# Audio generation",
-            "# Prompt craft",
-            "# Communication",
-        ] {
-            assert!(AGENT_INSTRUCTIONS.contains(header), "missing section {header}");
-        }
-        // Unicode glyphs survive as UTF-8 (do NOT ASCII-fold).
-        assert!(AGENT_INSTRUCTIONS.contains('×'), "× U+00D7 preserved");
-        assert!(AGENT_INSTRUCTIONS.contains('–'), "– U+2013 preserved");
-        assert!(AGENT_INSTRUCTIONS.contains('•'), "• U+2022 preserved");
-        // Exact byte length of the ported block (drift tripwire).
-        assert_eq!(AGENT_INSTRUCTIONS.len(), 8694, "instructions byte length drifted");
+    fn agent_instructions_reexport_is_wired() {
+        assert!(!AGENT_INSTRUCTIONS.is_empty());
+        assert!(std::ptr::eq(AGENT_INSTRUCTIONS, palmier_prompt::AGENT_INSTRUCTIONS));
     }
 }
