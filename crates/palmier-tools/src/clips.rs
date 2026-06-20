@@ -38,7 +38,7 @@ use crate::undo::agent_edit;
 /// internally for `Clip::new` / `Track::new`; this borrows `Track::new`'s id
 /// generator (a hyphenated UUID) for the few sites that need a standalone id (the
 /// split right-fragment generator and link-group ids).
-fn new_uuid() -> String {
+pub(crate) fn new_uuid() -> String {
     palmier_model::Track::new(ClipType::Video).id
 }
 
@@ -46,7 +46,7 @@ fn new_uuid() -> String {
 /// (visual tracks sit at/above the first audio track; audio at/below it). Returns
 /// the index of the inserted track. Reference `insertTrack(at:type:)` /
 /// `partitionedInsertionIndex`.
-fn insert_track(timeline: &mut Timeline, track_type: ClipType, requested: usize) -> usize {
+pub(crate) fn insert_track(timeline: &mut Timeline, track_type: ClipType, requested: usize) -> usize {
     let first_audio = timeline
         .tracks
         .iter()
@@ -65,7 +65,7 @@ fn insert_track(timeline: &mut Timeline, track_type: ClipType, requested: usize)
 /// `clearRegion`), returning the ids of clips fully removed. Re-derives split right
 /// fragments through `split_clip` exactly as palmier-edit's orchestration does
 /// (the engine's advisory Split fields are ignored).
-fn clear_region(timeline: &mut Timeline, track_index: usize, start: i32, end: i32) -> Vec<String> {
+pub(crate) fn clear_region(timeline: &mut Timeline, track_index: usize, start: i32, end: i32) -> Vec<String> {
     let Some(track) = timeline.tracks.get(track_index) else {
         return Vec::new();
     };

@@ -42,10 +42,36 @@ pub struct EditorState {
     /// User + agent undo history over the [`Timeline`]. Agent edits land here via
     /// `with_agent_swap`; the `undo` tool calls `agent_undo` (E7-S12).
     pub history: History<Timeline>,
+    /// User + agent undo history over the **whole [`MediaLibrary`]** snapshot — the
+    /// snapshot unit the LIBRARY tools (E7-S10: import/folder/rename/delete) touch.
+    /// Those tools mutate folders/assets (and, for delete cascades, the timeline)
+    /// beyond what [`history`](Self::history)'s `Timeline`-only swap can reverse, so
+    /// they register their **one** agent-undo step here over the full library
+    /// snapshot. The `undo` tool reverses whichever agent stack
+    /// ([`history`](Self::history) or this one) holds the most-recent agent edit
+    /// (tracked by [`last_agent_edit`](Self::last_agent_edit)). Reference
+    /// `mediaLibraryUndoSnapshot` (palmier-project `MediaLibraryHistory`).
+    pub lib_history: History<MediaLibrary>,
+    /// Which agent stack received the most recent agent edit — so the single `undo`
+    /// tool reverses the genuinely most-recent agent step across both
+    /// [`history`](Self::history) (timeline) and [`lib_history`](Self::lib_history)
+    /// (library). `None` ⇒ no agent edit this session.
+    pub last_agent_edit: Option<AgentStack>,
     /// Whether the account can run generation/upscale tools (reference
     /// `canGenerate` = signed-in AND has credits). M2 default `false`; Epic 9
     /// supplies the real value.
     pub can_generate: bool,
+}
+
+/// Which agent undo stack an agent edit landed on (timeline vs whole-library). The
+/// `undo` tool uses [`EditorState::last_agent_edit`] to reverse the genuinely most
+/// recent agent step across both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentStack {
+    /// The [`Timeline`] agent stack ([`EditorState::history`]) — clip/text edits.
+    Timeline,
+    /// The [`MediaLibrary`] agent stack ([`EditorState::lib_history`]) — library ops.
+    Library,
 }
 
 impl Default for EditorState {
@@ -60,6 +86,8 @@ impl EditorState {
         EditorState {
             library: MediaLibrary::new(),
             history: History::new(),
+            lib_history: History::new(),
+            last_agent_edit: None,
             can_generate: false,
         }
     }
@@ -70,6 +98,8 @@ impl EditorState {
         EditorState {
             library,
             history: History::new(),
+            lib_history: History::new(),
+            last_agent_edit: None,
             can_generate: false,
         }
     }
