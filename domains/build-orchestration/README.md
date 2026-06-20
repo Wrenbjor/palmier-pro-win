@@ -61,15 +61,19 @@ model + import; re-dispatched after a stall). All green.
 
 **Wave 8: COMPLETE** — E5-S5/S7 (transport), E4-S12..S14 (panel polish). **Epics 1-4 done; Epic 6 XMEML done.**
 
-**IN FLIGHT (3 workers):**
-- **E5-S8** (a98b18d9) — the wgpu compositor present (the M1 keystone; build on proven A1). **M1's sole remaining
-  critical-path story** — E5-S9/S10/S11 + E6-S5 all depend on or conflict with it, so they wait.
-- **M2 foundation, started in parallel** (disjoint crates, independent of the preview, safe regardless of E5-S8):
-  **E7-S1** (af837a44 — palmier-tools: MCP 30-tool registry + dispatch + ShortId) · **E8-S1** (a8c6511f —
-  palmier-agent: message/session model + client trait + StreamEvent).
+**E5-S8 MERGED (93c44a3) — the wgpu compositor present is in** (GPU-proven on real HW; A1 mechanism; windows-0.58
+dep fix preserved through the merge). Epic 5 now has decode + composition + transport + audio + PRESENT.
 
-**Remaining for M1:** E5-S8 → E5-S9/S10/S11 (overlays/aspect-quality/perf gate SM-2) → E6-S5 (video export, HW
-encoders) → hand-edit e2e gate → **M1 EXIT**. Then M2 proceeds (E7 tool bodies + E8 streaming loop).
+**M2 foundation MERGED** (E7-S1 30-tool registry, E8-S1 agent scaffold).
+
+**IN FLIGHT (4 workers — final M1 stretch + M2 continuation, disjoint crates):**
+- M1: **E5-S9** (ae7e31e3 — compositor text rendering, palmier-text+engine) · **E5-S10** (a93e2b91 — preview
+  viewport UI + overlays + **transport wiring** so preview plays end-to-end, src-ui+tauri)
+- M2: **E7-S2+E7-S3** (a5191c05 — MCP executor + EditorState + read-tool bodies + arg validation, palmier-tools) ·
+  **E8-S2** (ad0885ad — Anthropic request builder [2 cache breakpoints] + SSE parser, palmier-agent)
+
+**Remaining for M1:** E5-S9/S10 → E5-S11 (perf gate SM-2 + SM-C1 golden) → E6-S5 (video export, HW encoders) →
+hand-edit e2e gate → **M1 EXIT**. M2 continues in parallel (E7 mutation/generate tool bodies + MCP transport; E8 streaming loop).
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -125,4 +129,5 @@ encoders) → hand-edit e2e gate → **M1 EXIT**. Then M2 proceeds (E7 tool bodi
 2026-06-20 | E5-S5/S7 merged (698bb45) — preview transport (play/pause/seek/step/tick → TransportEvent Render/SeekDecode/CurrentFrameChanged; shared transport + per-tab state) + RenderFrame/PreviewTab model for E5-S8; SeekMode/throttle reused from E5-S2; 76 tests. E5-S8 unblocked → DISPATCHED EARLY (a98b18d9) the wgpu compositor present (build on proven A1).
 2026-06-20 | E4-S12/S13/S14 merged (cbe7110) — panel drag-out/cycle-guarded moves + OS actions (reveal/copy/relink/clipboard via tauri-plugin-opener/clipboard-manager) + Captions/Music forms (#18 case, #14 Music=gen form). cargo+pnpm green. **Epic 4 (media) COMPLETE** (~38 stories). Only E5-S8 in flight (watch palmier-tauri merge conflict).
 2026-06-20 | heartbeat — M1 critical path fully serialized behind E5-S8 (everything else depends on/conflicts with it). To use idle capacity, dispatched M2 FOUNDATION in parallel (disjoint crates, safe regardless of E5-S8): E7-S1 (palmier-tools MCP registry/dispatch/ShortId, af837a44) + E8-S1 (palmier-agent message/session/client scaffold, a8c6511f).
+2026-06-20 | E5-S8 MERGED (93c44a3) — **M1 KEYSTONE: the wgpu compositor present**. GPU-proven on real HW (device/pipeline/texture-upload/premult-alpha-quad/readback smoke tests); A1 mechanism via Tauri WebviewWindow HasWindowHandle (rwh 0.6.2); video/image/lottie real, text→E5-S9. Worker diagnosed+fixed a gpu-allocator/windows 0.56-vs-0.58 conflict; the engine's feature-gated windows=0.58 dep preserved it through the 3-way merge (default+featured builds both green, verified). Resolved the palmier-tauri main.rs conflict (combined E4-S12 media cmds + E5-S8 preview cmds).
 2026-06-20 | E8-S1 + E7-S1 merged (5f2b5e5) — M2 FOUNDATION in. palmier-agent scaffold (message/session model, StreamEvent, AgentClient trait+selection, tier availability, chat/ session store; 47 tests). palmier-tools MCP scaffold: ToolName/registry = EXACTLY 30 (verified 3 ways), all 30 descriptions byte-for-byte verbatim from ToolDefinitions.swift, ToolDispatch seam + exhaustive 30-arm match + ShortId expand/shorten/ambiguity, 2 resources; 34 tests. ~40 stories + 3 spikes. Only E5-S8 (M1 keystone) in flight.
