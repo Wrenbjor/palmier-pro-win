@@ -3400,6 +3400,7 @@ name = "palmier-tools"
 version = "0.1.0"
 dependencies = [
  "palmier-model",
+ "regex",
  "serde_json",
 ]
 

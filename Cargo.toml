@@ -61,3 +61,7 @@ dirs = "5"
 # Recycle Bin / XDG trash for `ProjectRegistry::delete` (E2-S11). Feature-gated in
 # the crate so unit tests never hit the real trash.
 trash = "5"
+# UUID-pattern matching for the MCP tool dispatcher's ShortId layer (E7-S1) — the
+# `uuidRegex` literal port that rewrites known UUIDs in tool result text to their
+# short prefix. Owned by `palmier-tools`; declared here to pin the version.
+regex = "1"
