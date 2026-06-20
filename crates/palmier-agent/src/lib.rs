@@ -48,11 +48,27 @@
 //!   load + reload event live in `palmier-auth`. [`client::build_client`] /
 //!   [`client::select_and_build_client`] wire [`select_client`] to construct it.
 //!
+//! ## E8-S4 — agentic run loop + tool dispatch + orphan repair (this slice)
+//! - [`loop_run`] — the [`AgentLoop`](loop_run::AgentLoop) run loop
+//!   ([`run_turn`](loop_run::AgentLoop::run_turn)): drive an [`AgentClient`] stream,
+//!   accumulate the assistant turn from [`StreamEvent`]s (text deltas extend the
+//!   last text block in place; `ToolUseComplete` → a `tool_use` block), and on a
+//!   `tool_use` stop dispatch every pending tool via the [`ToolDispatcher`] seam →
+//!   append one user message of `tool_result` blocks → resume, until `end_turn`.
+//!   Includes **orphan-tool_use repair**
+//!   ([`resolve_orphan_tool_uses`](loop_run::AgentLoop::resolve_orphan_tool_uses),
+//!   run before every send + every iteration, prepend-vs-insert branch), the
+//!   **cancellation** path (drop the empty assistant turn cleanly; mid-tool cancel
+//!   yields a `"Cancelled"` `is_error` result), and the structural
+//!   [`api_messages`](loop_run::AgentLoop::api_messages) projection. The
+//!   [`ToolDispatcher`](loop_run::ToolDispatcher) seam is the agent-local boundary
+//!   to `palmier-tools` — the real adapter over `palmier_tools::ToolDispatch` + a
+//!   `ToolContext`, plus the Tauri command/event surface, is the deferred
+//!   integration (E8-S9).
+//!
 //! ## Deferred to later E8 stories (NOT in this slice)
-//! - **E8-S4** — the agentic run loop + `palmier-tools::execute` dispatch +
-//!   orphan-tool_use repair.
-//! - **E8-S5** — `api_messages()` wire projection + mentions/context-hints +
-//!   image inlining.
+//! - **E8-S5** — `api_messages()` mention/context-hint enrichment + image
+//!   inlining (S4 ships the structural projection only).
 //! - **E8-S6** — the `PalmierClient` (Convex-proxied) transport + live model
 //!   catalog.
 //! - **E8-S7** — the tab/session orchestration + save-on-document-save trigger.
@@ -65,6 +81,7 @@ pub mod anthropic_client;
 pub mod availability;
 pub mod client;
 pub mod event;
+pub mod loop_run;
 pub mod model;
 pub mod request;
 pub mod session_store;
@@ -82,6 +99,10 @@ pub use client::{
     WireMessage, DEFAULT_MAX_TOKENS, NO_BACKEND_MESSAGE, SIGN_IN_OR_ADD_KEY_MESSAGE,
 };
 pub use event::{AnthropicModel, AnthropicStopReason, StreamEvent, Usage};
+pub use loop_run::{
+    parse_json_object, AgentLoop, DispatchResult, ToolDispatcher, ORPHAN_REASON,
+    TOOL_EXECUTOR_UNAVAILABLE,
+};
 pub use model::{
     to_canonical_json, AgentContentBlock, AgentMention, AgentMessage, AgentTimelineRangeMention,
     ChatSession, Role, ToolResultBlock, DEFAULT_SESSION_TITLE,
