@@ -34,9 +34,21 @@
 //!   `error`→Error), with partial-line buffering ([`sse::SseParser::feed`]) for the
 //!   live byte stream. The reqwest HTTP transport that drives it is E8-S3.
 //!
+//! ## E8-S3 — concrete `AnthropicClient` (BYOK transport) (this slice)
+//! - [`anthropic_client`] — the real [`AnthropicClient`]: builds the body via
+//!   [`request::build_bytes`], `POST`s to `api.anthropic.com/v1/messages` with
+//!   [`request::anthropic_headers`] over **async `reqwest`** (rustls, no system
+//!   OpenSSL), streams the response bytes through [`sse::SseParser`], and yields
+//!   [`StreamEvent`]s as a `BoxStream`. HTTP ≥ 400 → a terminal
+//!   [`StreamEvent::Error`] carrying [`AgentClientError::HttpError`]; per-chunk
+//!   cancellation via a `CancellationToken` (and drop-cancellation). The HTTP send
+//!   is behind a [`ByteSource`] seam so the SSE pipeline is unit-tested off a
+//!   recorded stream; `tests/anthropic_http.rs` drives the real reqwest path over a
+//!   local `wiremock` server. The API key is a constructor parameter — the keyring
+//!   load + reload event live in `palmier-auth`. [`client::build_client`] /
+//!   [`client::select_and_build_client`] wire [`select_client`] to construct it.
+//!
 //! ## Deferred to later E8 stories (NOT in this slice)
-//! - **E8-S3** — the concrete `AnthropicClient` (BYOK `reqwest` byte-stream +
-//!   keyring reload event) replacing [`MockAgentClient`].
 //! - **E8-S4** — the agentic run loop + `palmier-tools::execute` dispatch +
 //!   orphan-tool_use repair.
 //! - **E8-S5** — `api_messages()` wire projection + mentions/context-hints +
@@ -49,6 +61,7 @@
 //! credit state both live in `palmier-auth`; this crate consumes them via
 //! [`client::select_client`] / [`client::can_stream`].
 
+pub mod anthropic_client;
 pub mod availability;
 pub mod client;
 pub mod event;
@@ -60,10 +73,13 @@ pub mod sse;
 pub use availability::{
     available_models, effective_model, Tier, AGENT_MODEL_CONFIG_KEY, DEFAULT_MODEL,
 };
+pub use anthropic_client::{
+    AnthropicClient, ByteSource, ByteStreamOpen, HttpByteSource, ANTHROPIC_MESSAGES_URL,
+};
 pub use client::{
-    can_stream, select_client, AgentClient, AgentClientError, AgentRequest, AnthropicToolSchema,
-    MockAgentClient, SelectedBackend, WireMessage, DEFAULT_MAX_TOKENS, NO_BACKEND_MESSAGE,
-    SIGN_IN_OR_ADD_KEY_MESSAGE,
+    build_client, can_stream, select_and_build_client, select_client, AgentClient,
+    AgentClientError, AgentRequest, AnthropicToolSchema, MockAgentClient, SelectedBackend,
+    WireMessage, DEFAULT_MAX_TOKENS, NO_BACKEND_MESSAGE, SIGN_IN_OR_ADD_KEY_MESSAGE,
 };
 pub use event::{AnthropicModel, AnthropicStopReason, StreamEvent, Usage};
 pub use model::{

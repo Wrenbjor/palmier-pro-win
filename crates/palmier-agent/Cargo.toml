@@ -23,12 +23,29 @@ time = { workspace = true }
 thiserror = "2"
 # Stream abstraction for the AgentClient trait. `futures-core` gives the
 # dyn-compatible `BoxStream` return type; `futures-util` gives the iter-stream
-# the MockAgentClient stub replays. The real reqwest/SSE transports land in
-# E8-S2/S3 and bring their own heavy deps then.
+# the MockAgentClient stub replays + the StreamExt combinators the SSE driver uses.
 futures-core = "0.3"
 futures-util = "0.3"
+# BYOK transport (E8-S3): async reqwest, rustls so no system OpenSSL is required on
+# Win/Linux (parity with palmier-auth's convex transport). `stream` enables
+# `Response::bytes_stream()` for the SSE byte stream.
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "stream",
+] }
+# Async runtime: the stream driver uses `tokio::select!` for per-chunk cancellation.
+# `rt-multi-thread` so the client works under the app's multi-thread runtime.
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time"] }
+# Cancellation token (per-chunk cancel + drop-cancellation).
+tokio-util = { version = "0.7", features = ["rt"] }
+# `async_stream::stream!` builds the BoxStream that drives the SSE parser.
+async-stream = "0.3"
+# `#[async_trait]` for the dyn-compatible ByteSource transport seam.
+async-trait = "0.1"
 
 [dev-dependencies]
-# Async test runtime for the AgentClient stream tests (E8-S3/S4 bring the real
-# tokio usage; the scaffold needs only the test macro + a current-thread runtime).
-tokio = { version = "1", features = ["macros", "rt"] }
+# Local mock HTTP server for the end-to-end reqwest transport tests
+# (tests/anthropic_http.rs) — serves a recorded SSE body / 4xx with zero
+# live-network calls. The live-API test is `#[ignore]`d behind ANTHROPIC_API_KEY.
+wiremock = "0.6"
+serde_json = { workspace = true }
