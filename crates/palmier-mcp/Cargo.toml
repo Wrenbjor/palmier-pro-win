@@ -9,4 +9,20 @@ publish.workspace = true
 [dependencies]
 palmier-tools = { path = "../palmier-tools" }
 
-# Heavy deps (rmcp, axum, tokio) come per-story — see FOUNDATION §2 / §6.14.
+# HTTP transport for the local loopback MCP server (E7-S11). We use `axum` + a
+# hand-rolled JSON-RPC layer rather than rmcp's transport: `palmier-tools` already
+# emits the exact MCP `CallTool.Result` JSON via `ToolResult::to_mcp_json()`, and
+# the three request validators + loopback-only bind are a security boundary we want
+# to control exactly (matching the reference's hand-rolled `MCPHTTPServer` split:
+# HTTP/validators/routing here, tool logic in `palmier-tools`). See lib.rs for the
+# decision note. FOUNDATION §6.14 / §2 (locked stack: axum, tokio).
+axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tower = "0.5"
+
+[dev-dependencies]
+# Integration test drives the spawned server with a real HTTP client over loopback.
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "macros", "sync", "time"] }
