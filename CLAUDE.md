@@ -55,6 +55,9 @@ This template was authored POSIX-first. On this box:
 - **`tmux` is not native.** `bmad-story-automator` assumes tmux; on Windows drive the autonomous
   loop via the `/loop` skill + `ship-change.js` instead. See [[build-orchestration]].
 - Use the **Bash tool (Git Bash)** for POSIX scripts, **PowerShell** for Windows-native commands.
+- **Rust/Tauri builds MUST run via `pwsh -File scripts/with-msvc.ps1 cargo …` / `… pnpm tauri …`** —
+  `vswhere` can't see the VS install, so bare `cargo build` fails at link. Never build Rust from Git Bash
+  (its coreutils `link` shadows MSVC `link.exe`). `pnpm` 11.8 is installed (user scope). See [[windows-harness-notes]].
 
 ## Knowledge base (full model: `ARCHITECTURE.md`)
 **Artifacts** are global, foldered by **kind** — `signals/` (feedback, ideas, observations) and

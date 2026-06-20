@@ -32,5 +32,26 @@ tmux isn't native on Windows. For the autonomous inner loop, drive it with the *
 - **PowerShell** = Windows-native: use for Windows build/packaging, path ops with backslashes.
 - `LOG.md`'s retrieval recipes are written for macOS (`tail -r`); use `tac` or `Get-Content` on Windows.
 
+## Build toolchain status (for Phase 4 dev)
+Checked 2026-06-20 on this box:
+- **Rust 1.94.1** + cargo + rustup — present (supports the 2024 edition FOUNDATION §2 wants). ✅
+- **Node v22.14.0** (nvm-managed: `C:\Users\Wren\AppData\Local\nvm`) + npm 11.2.0. ✅
+- **pnpm 11.8.0** — installed via the standalone Windows installer to `PNPM_HOME=%LOCALAPPDATA%\pnpm`
+  (corepack failed with EPERM into the nvm dir; standalone installer worked). On PATH for **new** shells. ✅
+- **winget** present; **scoop / gh NOT installed.**
+- **Tauri CLI** — not installed globally; add per-project as a dev dependency (`@tauri-apps/cli` via pnpm)
+  in the scaffold story rather than globally.
+- **No workspace scaffold yet** — `Cargo.toml`/`crates/`/`src-ui/`/`tauri.conf.json` do not exist; the
+  first M1 story scaffolds the 17-crate Cargo workspace + Vite/React `src-ui` + Tauri.
+- **MSVC build — RESOLVED, but builds MUST use the wrapper.** VS 2022 Community + MSVC 14.29 + Windows SDK
+  10.0.22621 are present on disk, but `vswhere` does **not** register the install, so rustc/cc can't
+  auto-detect MSVC and `cargo build` fails at link ("ensure the Visual C++ option was installed") from a
+  plain shell. **Fix:** all Rust/Tauri builds run inside the `vcvars64.bat` env via
+  **`pwsh -File scripts/with-msvc.ps1 <cargo|pnpm tauri ...>`** (verified: a trivial crate links cleanly
+  through it). Do NOT run bare `cargo build`/`cargo test` for this repo — they'll fail at link.
+  (Don't run Rust builds from Git Bash either: its coreutils `link` shadows MSVC `link.exe`.)
+- Install **gh** (`winget install GitHub.cli`) when the PR/merge phase needs it (not yet installed).
+
 ## Timeline
 2026-06-20 | setup — captured during environment prep; PYTHONUTF8 fix applied and verified.
+2026-06-20 | toolchain — verified Rust/Node present; installed pnpm 11.8.0; noted Tauri-CLI/gh/MSVC-linker as Phase 4 pre-flight.

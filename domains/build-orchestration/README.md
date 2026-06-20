@@ -30,11 +30,16 @@ draft → 3 adversarial critics (PM/architect/QA) → revise. 12 dependency-orde
 acceptance + governing reference doc; milestones M1–M5; spikes S-1 (wgpu→WebView, gates Epic 5) + S-1b
 (Convex Date encoding, M1). All §13 open questions decided.
 
-**Phase 3 — Epics + Stories: NEXT.** Decompose the 12 epics into implementable story files in
-`_bmad-output/implementation-artifacts/`, grounded in PRD + FOUNDATION + reconciliation + the governing
-`docs/reference/*`. Then sprint-plan into M1–M5 with the dependency DAG. Gate: every epic decomposed;
-independent stories identifiable for parallel dev. (Phase 2 architecture is folded in via the spike gates;
-S-1 must resolve before Epic 5 build.)
+**Phase 3 — Epics + Stories: COMPLETE.** 12 epic files + `sprint-plan.md` in
+`_bmad-output/implementation-artifacts/` — **135 stories**, each with crates, acceptance, dependencies,
+milestone, and a parallel-safe flag; sprint plan has the dependency DAG + M1–M5 + parallel-batch waves.
+
+**Phase 4 — Build: STARTING.** Toolchain unblocked (MSVC works via `scripts/with-msvc.ps1`; pnpm installed).
+Order: (1) **Scaffold** the 17-crate Cargo workspace + Vite/React `src-ui` + Tauri 2 (root of the DAG —
+must land on main before parallel dev); build-verify through the wrapper. (2) **Spike S-1** (wgpu→WebView
+texture presentation — gates Epic 5). (3) **Delegate** the M1 first-wave parallel-safe stories to worker
+agents in isolated worktrees per the worker contract (each returns a verified PR; orchestrator merges).
+Gate per story: acceptance criteria met + local verify green before merge.
 
 ## Backlog
 - [x] Record the macOS source path (`../palmier-pro/`) in `CLAUDE.md`. ✓ 2026-06-20
@@ -59,3 +64,5 @@ S-1 must resolve before Epic 5 build.)
 2026-06-20 | launch — repo attached to github.com/Wrenbjor/palmier-pro-win; orchestrator machinery written; Phase 0 docs workflow launched (after fixing a burst rate-limit via throttled batches).
 2026-06-20 | Phase 0 COMPLETE — 15/15 reference docs written; [[phase0-reconciliation]] rules 24 discrepancies; FOUNDATION corrected (30 tools). Advancing to Phase 1 (PRD). Top risk: wgpu→WebView spike.
 2026-06-20 | Phase 1 COMPLETE — docs/PRD.md validated (draft→3 adversarial critics→revise; majors fixed: 17 crates, open-30-clip perf, Convex Date sequencing S-1b). 12 epics, M1–M5, spikes S-1/S-1b. Advancing to Phase 3 (epics+stories).
+2026-06-20 | Phase 3 COMPLETE — 135 stories across 12 epic files + sprint-plan.md (DAG + M1–M5 + parallel waves). Advancing to Phase 4 (build).
+2026-06-20 | toolchain-unblocked — diagnosed + fixed the MSVC link failure (vswhere blind to the VS install); all builds now go through scripts/with-msvc.ps1 (verified). Removed a blocker that would have killed every dev worker.

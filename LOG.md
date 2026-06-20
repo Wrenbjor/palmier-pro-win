@@ -71,3 +71,13 @@ Date-encoding lock into Spike S-1b (M1) ahead of the Epic 2 serde commit. 12 dep
 with crates + acceptance + governing reference doc; milestones M1–M5; spikes S-1 (wgpu→WebView, gates Epic 5).
 Refs: [PRD](docs/PRD.md) (new), [build loop](domains/build-orchestration/README.md) (updated). Next: Phase 3 —
 decompose the 12 epics into story files in _bmad-output/implementation-artifacts/.
+
+## 2026-06-20 · Phase 3 complete (135 stories) + toolchain unblocked · #planning #stories #infra
+What: 12-agent workflow decomposed all epics into 135 implementable stories (crates, acceptance, deps,
+milestone, parallel-safe flag) + sprint-plan.md (dependency DAG, M1–M5, parallel-batch waves) in
+_bmad-output/implementation-artifacts/. Then pre-flighted the build toolchain and caught a blocker that
+would have failed every dev worker: rustc couldn't link because vswhere doesn't register this VS install.
+Fixed by routing all Rust/Tauri builds through scripts/with-msvc.ps1 (calls vcvars64.bat; verified a crate
+links cleanly). Installed pnpm 11.8. Windows SDK 10.0.22621 + MSVC 14.29 confirmed present.
+Refs: _bmad-output/implementation-artifacts/* (13 new), scripts/with-msvc.ps1 (new), windows-harness-notes.md
++ CLAUDE.md (updated). Next: Phase 4 — scaffold the workspace, run Spike S-1 (wgpu→WebView), delegate M1 first wave.
