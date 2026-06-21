@@ -21,10 +21,12 @@
 use std::sync::Arc;
 
 use palmier_tools::{
-    tool_definitions, IdUniverse, ToolContext, ToolDispatch, ToolExecutor, RESOURCE_DESCRIPTORS,
+    tool_definitions, IdUniverse, ToolContext, ToolDispatch, ToolExecutor, ToolName,
+    RESOURCE_DESCRIPTORS,
 };
 use serde_json::{json, Value};
 
+use crate::server::MutationCallback;
 use crate::validators::MCP_PROTOCOL_VERSION;
 use crate::{AGENT_INSTRUCTIONS, SERVER_NAME, SERVER_VERSION};
 
@@ -50,7 +52,20 @@ impl ToolContext for EmptyCtx {
 /// Dispatch a raw request body (single object or batch array) and return the
 /// response body string, or `None` if the whole payload was notifications (→ HTTP
 /// 202 with no body).
-pub fn handle_body(body: &str, executor: &Arc<ToolExecutor>) -> Option<String> {
+///
+/// `on_mutation`, if present, is invoked **once per successful mutating
+/// `tools/call`** (after the executor has applied the edit). "Mutating" is the
+/// shared [`ToolName::is_mutation`] classification — the SAME source the executor /
+/// in-app agent use, so read tools (`get_*`/`list_*`/`inspect_*`/`search_media`)
+/// never fire it. A tool call that returns `isError` (validation failure, unknown
+/// tool, etc.) does NOT fire it (nothing changed). In a batch, the callback fires
+/// once per qualifying entry. The Tauri layer passes a closure that emits
+/// `timeline://changed`; `palmier-mcp` itself stays Tauri-free.
+pub fn handle_body(
+    body: &str,
+    executor: &Arc<ToolExecutor>,
+    on_mutation: Option<&MutationCallback>,
+) -> Option<String> {
     let parsed: Value = match serde_json::from_str(body) {
         Ok(v) => v,
         Err(_) => {
@@ -75,7 +90,7 @@ pub fn handle_body(body: &str, executor: &Arc<ToolExecutor>) -> Option<String> {
             }
             let responses: Vec<Value> = items
                 .into_iter()
-                .filter_map(|item| handle_one(item, executor))
+                .filter_map(|item| handle_one(item, executor, on_mutation))
                 .collect();
             if responses.is_empty() {
                 None // all notifications
@@ -83,13 +98,22 @@ pub fn handle_body(body: &str, executor: &Arc<ToolExecutor>) -> Option<String> {
                 Some(serde_json::to_string(&responses).expect("serialize batch"))
             }
         }
-        single => handle_one(single, executor)
+        single => handle_one(single, executor, on_mutation)
             .map(|resp| serde_json::to_string(&resp).expect("serialize response")),
     }
 }
 
 /// Handle a single JSON-RPC message. Returns `None` for notifications (no `id`).
-fn handle_one(msg: Value, executor: &Arc<ToolExecutor>) -> Option<Value> {
+///
+/// `on_mutation` fires after a successful mutating `tools/call` (see
+/// [`handle_body`]). Notifications still run their side effect: an MCP
+/// `tools/call` notification (no `id`) that mutates DOES fire the callback even
+/// though it returns no JSON-RPC response.
+fn handle_one(
+    msg: Value,
+    executor: &Arc<ToolExecutor>,
+    on_mutation: Option<&MutationCallback>,
+) -> Option<Value> {
     let Some(obj) = msg.as_object() else {
         return Some(error_response(
             Value::Null,
@@ -111,7 +135,18 @@ fn handle_one(msg: Value, executor: &Arc<ToolExecutor>) -> Option<Value> {
         "ping" => respond(id, is_notification, json!({})),
         "tools/list" => respond(id, is_notification, tools_list_result()),
         "tools/call" => match call_tool(&params, executor) {
-            Ok(result) => respond(id, is_notification, result),
+            Ok(result) => {
+                // Fire the mutation hook iff this was a successful MUTATING tool.
+                // Classification reuses the shared `ToolName::is_mutation` (the same
+                // source the executor uses); a result with `isError:true` (validation
+                // failure / unknown tool) changed nothing, so it never fires.
+                if let Some(cb) = on_mutation
+                    && tool_call_mutated(&params, &result)
+                {
+                    cb();
+                }
+                respond(id, is_notification, result)
+            }
             Err((code, msg)) => respond_err(id, is_notification, code, msg),
         },
         "resources/list" => respond(id, is_notification, resources_list_result()),
@@ -202,6 +237,21 @@ fn call_tool(params: &Value, executor: &Arc<ToolExecutor>) -> Result<Value, (i64
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
     let result = executor.execute(name, args, &EmptyCtx);
     Ok(result.to_mcp_json())
+}
+
+/// Whether a completed `tools/call` actually mutated the shared editor state — i.e.
+/// it named a [mutating tool](ToolName::is_mutation) AND its MCP result did not carry
+/// `isError`. Drives the [`handle_body`] mutation hook (so the live UI refetches only
+/// when an external client's edit changed the timeline/library).
+fn tool_call_mutated(params: &Value, result: &Value) -> bool {
+    let Some(name) = params.get("name").and_then(Value::as_str) else {
+        return false;
+    };
+    let is_mutating = ToolName::from_wire(name).is_some_and(ToolName::is_mutation);
+    // `to_mcp_json` only emits `isError` on failure (success omits it), so an absent
+    // or non-`true` flag means the tool succeeded.
+    let succeeded = result.get("isError") != Some(&Value::Bool(true));
+    is_mutating && succeeded
 }
 
 /// `resources/list` — the two `palmier://models/*` descriptors (NOT tools; SM-C2).
@@ -305,7 +355,7 @@ mod tests {
     #[test]
     fn single_request_round_trips() {
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
-        let out = handle_body(body, &exec()).unwrap();
+        let out = handle_body(body, &exec(), None).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["id"], 1);
         assert_eq!(v["result"]["tools"].as_array().unwrap().len(), 30);
@@ -317,7 +367,7 @@ mod tests {
             {"jsonrpc":"2.0","id":1,"method":"initialize"},
             {"jsonrpc":"2.0","id":2,"method":"tools/list"}
         ]"#;
-        let out = handle_body(body, &exec()).unwrap();
+        let out = handle_body(body, &exec(), None).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         let arr = v.as_array().unwrap();
         assert_eq!(arr.len(), 2);
@@ -329,26 +379,26 @@ mod tests {
     fn notification_produces_no_response() {
         // `initialized` notification has no id → no body.
         let body = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-        assert!(handle_body(body, &exec()).is_none());
+        assert!(handle_body(body, &exec(), None).is_none());
     }
 
     #[test]
     fn batch_of_only_notifications_produces_no_body() {
         let body = r#"[{"jsonrpc":"2.0","method":"notifications/initialized"}]"#;
-        assert!(handle_body(body, &exec()).is_none());
+        assert!(handle_body(body, &exec(), None).is_none());
     }
 
     #[test]
     fn unknown_method_returns_method_not_found() {
         let body = r#"{"jsonrpc":"2.0","id":7,"method":"does/not/exist"}"#;
-        let out = handle_body(body, &exec()).unwrap();
+        let out = handle_body(body, &exec(), None).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["error"]["code"], codes::METHOD_NOT_FOUND);
     }
 
     #[test]
     fn malformed_json_returns_parse_error() {
-        let out = handle_body("{not json", &exec()).unwrap();
+        let out = handle_body("{not json", &exec(), None).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["error"]["code"], codes::PARSE_ERROR);
     }
@@ -358,7 +408,7 @@ mod tests {
         // get_timeline is a real READ body on an empty editor → not an error.
         let body =
             r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"get_timeline","arguments":{}}}"#;
-        let out = handle_body(body, &exec()).unwrap();
+        let out = handle_body(body, &exec(), None).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert!(v["result"]["content"].is_array());
         // success result omits isError
@@ -369,7 +419,7 @@ mod tests {
     fn tools_call_unknown_tool_returns_tool_error_shape() {
         let body =
             r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"not_a_tool","arguments":{}}}"#;
-        let out = handle_body(body, &exec()).unwrap();
+        let out = handle_body(body, &exec(), None).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         // Tool errors live INSIDE the result (isError:true), not as a JSON-RPC error.
         assert_eq!(v["result"]["isError"], true);
@@ -382,8 +432,91 @@ mod tests {
     #[test]
     fn tools_call_missing_name_is_invalid_params() {
         let body = r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{}}"#;
-        let out = handle_body(body, &exec()).unwrap();
+        let out = handle_body(body, &exec(), None).unwrap();
         let v: Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["error"]["code"], codes::INVALID_PARAMS);
+    }
+
+    // ── on_mutation hook (the live-UI seam) ───────────────────────────────────
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Build an `(callback, counter)` pair: the callback bumps an `AtomicUsize` each
+    /// time it fires, the counter reads it back.
+    fn counting_hook() -> (super::MutationCallback, Arc<AtomicUsize>) {
+        let count = Arc::new(AtomicUsize::new(0));
+        let c = Arc::clone(&count);
+        let cb: super::MutationCallback = Arc::new(move || {
+            c.fetch_add(1, Ordering::SeqCst);
+        });
+        (cb, count)
+    }
+
+    #[test]
+    fn mutating_tool_call_fires_the_hook_once() {
+        // create_folder is a MUTATING tool that succeeds on a fresh editor.
+        let (cb, count) = counting_hook();
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_folder","arguments":{"name":"Clips"}}}"#;
+        let out = handle_body(body, &exec(), Some(&cb)).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        // The call itself succeeded (no isError) …
+        assert!(v["result"].get("isError").is_none(), "create_folder should succeed");
+        // … and the hook fired exactly once.
+        assert_eq!(count.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn read_tool_call_does_not_fire_the_hook() {
+        // get_timeline is a READ tool → the hook must NOT fire even on success.
+        let (cb, count) = counting_hook();
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_timeline","arguments":{}}}"#;
+        let out = handle_body(body, &exec(), Some(&cb)).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert!(v["result"].get("isError").is_none(), "get_timeline should succeed");
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn failed_mutating_tool_call_does_not_fire_the_hook() {
+        // create_folder with NO name → tool-error (isError:true); nothing changed,
+        // so a mutating-but-failed call must NOT fire the hook.
+        let (cb, count) = counting_hook();
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_folder","arguments":{}}}"#;
+        let out = handle_body(body, &exec(), Some(&cb)).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["result"]["isError"], true, "create_folder w/o name should error");
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn unknown_tool_call_does_not_fire_the_hook() {
+        // Unknown tool → isError + unknown name → never mutating.
+        let (cb, count) = counting_hook();
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"not_a_tool","arguments":{}}}"#;
+        let _ = handle_body(body, &exec(), Some(&cb)).unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn batch_fires_the_hook_per_qualifying_mutation() {
+        // Two mutations (create_folder ×2) + one read (get_timeline) → hook fires twice.
+        let (cb, count) = counting_hook();
+        let body = r#"[
+            {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_folder","arguments":{"name":"A"}}},
+            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_timeline","arguments":{}}},
+            {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"create_folder","arguments":{"name":"B"}}}
+        ]"#;
+        let _ = handle_body(body, &exec(), Some(&cb)).unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn mutating_tools_call_notification_still_fires_the_hook() {
+        // A `tools/call` with NO id is a notification (no JSON-RPC response) — but the
+        // side effect (the edit) still happened, so the hook fires for live refetch.
+        let (cb, count) = counting_hook();
+        let body = r#"{"jsonrpc":"2.0","method":"tools/call","params":{"name":"create_folder","arguments":{"name":"Clips"}}}"#;
+        assert!(handle_body(body, &exec(), Some(&cb)).is_none(), "notification → no body");
+        assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 }

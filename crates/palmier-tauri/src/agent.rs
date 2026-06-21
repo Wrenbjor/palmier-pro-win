@@ -547,11 +547,29 @@ pub fn start_mcp<R: Runtime>(app: &AppHandle<R>, mcp_enabled: bool) -> bool {
     let executor = Arc::clone(&agent_state.executor);
     let config = palmier_mcp::ServerConfig::default();
 
-    // `McpServer::start` is async (binds a TcpListener); run it to completion on the
-    // Tauri async runtime. We block on JUST the bind (returns as soon as the listener
-    // is bound — serving runs on a background task), so boot is not stalled by I/O.
-    let start_result =
-        tauri::async_runtime::block_on(palmier_mcp::McpServer::start(executor, config));
+    // The live-UI seam: after an EXTERNAL MCP client's successful MUTATING tool call,
+    // emit the SAME `timeline://changed` the UI's `editor_edit` and the in-app agent's
+    // dispatch emit, so the open Project window's panels refetch. `palmier-mcp` only
+    // knows about a plain `Fn`; this closure captures the `AppHandle` (Tauri-side).
+    let app_for_hook = app.clone();
+    let on_mutation: palmier_mcp::MutationCallback = Arc::new(move || {
+        if let Err(err) = app_for_hook.emit(crate::commands::TIMELINE_CHANGED_EVENT, ()) {
+            tracing::warn!(
+                target: "mcp",
+                error = %err,
+                "failed to emit timeline://changed after external MCP mutation"
+            );
+        }
+    });
+
+    // `McpServer::start_with_hook` is async (binds a TcpListener); run it to completion
+    // on the Tauri async runtime. We block on JUST the bind (returns as soon as the
+    // listener is bound — serving runs on a background task), so boot is not stalled.
+    let start_result = tauri::async_runtime::block_on(palmier_mcp::McpServer::start_with_hook(
+        executor,
+        config,
+        Some(on_mutation),
+    ));
 
     match start_result {
         Ok(server) => {
