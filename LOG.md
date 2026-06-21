@@ -216,3 +216,14 @@ NLE composition), and M5 backend (E12-S1 VolumeScale floor=-60, E12-S12 telemetr
 tests, E12-S13 updater config w/ placeholder key). All gates green: cargo build/test, tsc, mcp-smoke
 (live boot + edit→undo). Live WebView2 editor render pending the --open-project affordance (in flight).
 Refs: main @ d117ee5; [autonomous-finish](domains/build-orchestration/autonomous-finish.md).
+
+## 2026-06-21 · Agentic editor working live — review milestone · #build #editor #agentic #autonomous
+What: Autonomous waves merged to main (a3a9912): full-fidelity timeline serializer, Inspector
+property tabs (E12-S3..S8 wired), Settings UI (S10/S11) confirmed, MCP→UI live event (external
+agent edits emit timeline://changed → open editor refetches). VERIFIED LIVE on the real app:
+launched into the editor, drove import_media+add_clips via the external MCP server, and the open
+Project window updated automatically — media tile appeared + video/linked-audio clips landed on the
+timeline with NO UI interaction. The agent-controlled-editing differentiator works end-to-end.
+Remaining for a shippable release: human-click edit live-verification, E12-S9 toolbar, packaging
+(S14-16, blocked on Ed25519 signing key), in-app chat model (Anthropic key / nemotron bridge),
+Convex/Clerk creds. Refs: main @ a3a9912; [autonomous-finish](domains/build-orchestration/autonomous-finish.md).

@@ -20,3 +20,4 @@ crates/*/gen/schemas/
 .playwright-mcp/
 test-assets/
 *.log
+*.png
