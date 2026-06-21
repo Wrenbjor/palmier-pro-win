@@ -227,3 +227,17 @@ timeline with NO UI interaction. The agent-controlled-editing differentiator wor
 Remaining for a shippable release: human-click edit live-verification, E12-S9 toolbar, packaging
 (S14-16, blocked on Ed25519 signing key), in-app chat model (Anthropic key / nemotron bridge),
 Convex/Clerk creds. Refs: main @ a3a9912; [autonomous-finish](domains/build-orchestration/autonomous-finish.md).
+
+## 2026-06-21 · CORE VIDEO EDITOR WORKING — preview + playback + direct manipulation · #build #editor #core
+What: Refocused on the actual NLE baseline per Wren. Fixed the three things that made it not-a-video-editor,
+verified LIVE on the running app (SendInput + screenshots + MCP state):
+- VIDEO PREVIEW renders: replaced fragile wgpu-on-window present with offscreen composite→GPU readback→<canvas>;
+  fixed palmier-media decode (D3D11VA without get_format → "Invalid data"; CPU-default now) + seek units
+  (AV_TIME_BASE); forced DX12 headless adapter (was falling back to WARP/black). Readback went black→1.9M nonzero px.
+- PLAYBACK works at ~24fps (timecode 0→2:12 in 3s), scrub/seek render frames.
+- DRAG MOVES clips (overlay <canvas> had no width/height → all gestures fell through to select; + grab-offset).
+  Verified: simulated drag moved clip 0→60 frames, persisted to backend.
+- Inspector shows selected-clip properties; toolbar/transport/media all functional.
+Trim + other gestures: unit-tested + same overlay/dispatch plumbing as the verified move (blind SendInput can't
+hit the 4px edge handle reliably). Known follow-up: playback ~24fps not 30 (per-frame base64 readback IPC — fine, optimizable).
+Refs: main @ HEAD; preview_render.rs, palmier-media decode fix (1be3a15), editor drag fix (5c6bf8f), DX12 (0e3c243).
