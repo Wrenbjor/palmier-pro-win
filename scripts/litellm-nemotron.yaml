@@ -1,0 +1,18 @@
+# LiteLLM proxy config: bridge the in-app agent (Anthropic /v1/messages wire format)
+# to Wren's local OpenAI-compatible nemotron endpoint.
+#
+# Run:  litellm --config scripts/litellm-nemotron.yaml --port 4000
+# Then point the app at it:  PALMIER_ANTHROPIC_BASE_URL=http://127.0.0.1:4000/v1/messages
+# (BYOK key can be any non-empty string, e.g. sk-dummy — the proxy ignores it.)
+#
+# The "*" wildcard routes ANY requested model name (whatever Anthropic model id the app
+# sends) to the single available nemotron model, so model-name drift never breaks it.
+model_list:
+  - model_name: "*"
+    litellm_params:
+      model: openai/nemotron-super-49b
+      api_base: http://10.20.1.141:8000/v1
+      api_key: sk-dummy
+
+litellm_settings:
+  drop_params: true   # silently drop any params nemotron/vLLM doesn't accept
