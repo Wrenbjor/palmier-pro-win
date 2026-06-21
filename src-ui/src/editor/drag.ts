@@ -37,6 +37,14 @@ export type DragState =
       clipIds: string[];
       /** Lead's original start frame. */
       leadOriginalFrame: number;
+      /**
+       * Frames between the grab point and the lead's start
+       * (`grabFrame - leadOriginalFrame`). Subtracted from the cursor frame so the
+       * clip tracks the pointer by displacement instead of snapping its start under
+       * the cursor — mirrors `MoveClipDrag.grabOffsetFrames` in the macOS reference
+       * (`TimelineInputController.mouseDown`/`mouseDragged`).
+       */
+      grabOffsetFrames: number;
       /** Min original start frame across movers (floor for frameDelta). */
       minOriginalFrame: number;
       originStartFrame: number;

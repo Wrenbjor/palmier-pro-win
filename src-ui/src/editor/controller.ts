@@ -117,21 +117,7 @@ export class EditController {
         // from the per-clip destination map. (Duplicate-move has no direct tool; it
         // falls back to the optimistic local apply only — a follow-up seam.)
         if (intent.duplicate) return;
-        const startById = new Map<string, number>();
-        for (const t of before.tracks) {
-          for (const c of t.clips) startById.set(c.id, c.startFrame);
-        }
-        const moves = intent.clipIds.map((clipId) => {
-          const cur = startById.get(clipId) ?? 0;
-          const m: Record<string, unknown> = {
-            clipId,
-            toFrame: cur + intent.frameDelta,
-          };
-          const toTrack = intent.trackForClip[clipId];
-          if (toTrack !== undefined) m.toTrack = toTrack;
-          return m;
-        });
-        await editorEdit("move_clips", { moves });
+        await editorEdit("move_clips", { moves: buildMoveClipsArgs(intent, before) });
         return;
       }
 
@@ -219,6 +205,38 @@ export class EditController {
   snapshot(): TimelineView | null {
     return this.store.getState().timeline;
   }
+}
+
+/** One `move_clips` move entry (wire shape consumed by the `move_clips` tool). */
+export interface MoveClipsArg {
+  clipId: string;
+  /** Absolute destination frame = current start + frameDelta. */
+  toFrame: number;
+  /** Absolute destination track (omitted when the clip keeps its row). */
+  toTrack?: number;
+}
+
+/**
+ * Translate a `move` intent into the absolute `move_clips` tool args, resolving each
+ * clip's pre-edit start from `before`. Pure + exported so the input controller and the
+ * parity checks share ONE implementation (no drift between what the UI dispatches and
+ * what the test asserts).
+ */
+export function buildMoveClipsArgs(
+  intent: Extract<EditIntent, { kind: "move" }>,
+  before: TimelineView,
+): MoveClipsArg[] {
+  const startById = new Map<string, number>();
+  for (const t of before.tracks) {
+    for (const c of t.clips) startById.set(c.id, c.startFrame);
+  }
+  return intent.clipIds.map((clipId) => {
+    const cur = startById.get(clipId) ?? 0;
+    const m: MoveClipsArg = { clipId, toFrame: cur + intent.frameDelta };
+    const toTrack = intent.trackForClip[clipId];
+    if (toTrack !== undefined) m.toTrack = toTrack;
+    return m;
+  });
 }
 
 /** Find a clip by id across all tracks of a timeline (backend-arg geometry). */

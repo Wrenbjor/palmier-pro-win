@@ -21,10 +21,13 @@ import {
   trimClamp,
 } from "./apply";
 import { findSnap, makeSnapState, collectTargets } from "./snap";
-import { clampedTrackDelta, moveProbeOffsets } from "./drag";
-import { EditController } from "./controller";
+import { clampedTrackDelta, hitTestClip, moveProbeOffsets, subModeForLocalX } from "./drag";
+import { EditController, buildMoveClipsArgs } from "./controller";
 import { createTimelineStore } from "./store";
-import { Snap } from "./theme";
+import { Snap, Layout } from "./theme";
+import { makeFixtureTimeline } from "./fixture";
+import { clipRect, frameAt, makeLayout } from "./geometry";
+import type { EditIntent } from "./edit-types";
 
 function baseClip(over: Partial<ClipView>): ClipView {
   return {
@@ -61,6 +64,71 @@ export function runEditChecks(): string[] {
   const check = (cond: boolean, msg: string) => {
     if (!cond) fail.push(msg);
   };
+
+  // --- clip-body press enters moveClip (NOT marquee); move dispatches move_clips ---
+  // Regression guard for the "drag a clip = marquee instead of move" bug. Mirrors the
+  // TimelineEditor.handlePointerDown decision tree on the fixture, then the
+  // controller's move-intent → move_clips translation (incl. grab-offset displacement).
+  {
+    const tl = makeFixtureTimeline();
+    const ppf = 4;
+    const layout = makeLayout(ppf, tl.tracks.map((t) => t.displayHeight));
+    // clip-a: video track (index 1), startFrame 0, dur 120 → content rect x 0..480.
+    const clipA = tl.tracks[1].clips[0];
+    const r = clipRect(layout, clipA, 1);
+
+    // (1) Press at the clip BODY center → hit found + moveClip sub-mode (not marquee).
+    const bodyX = r.x + r.w / 2; // frame 60
+    const bodyY = r.y + r.h / 2;
+    check(bodyY > Layout.rulerHeight, "press below ruler band");
+    const hit = hitTestClip(tl, layout, bodyX, bodyY);
+    check(hit !== null && hit.clip.id === "clip-a", "clip-body press hits clip-a (not empty)");
+    if (hit) {
+      const sub = subModeForLocalX(bodyX - hit.rect.x, hit.rect.w);
+      check(sub === "moveClip", `clip-body sub-mode is moveClip (got ${sub})`);
+    }
+
+    // (1b) Press in the left 4px → trimLeft; right 4px → trimRight (edge handles).
+    check(subModeForLocalX(2, r.w) === "trimLeft", "left edge → trimLeft");
+    check(subModeForLocalX(r.w - 2, r.w) === "trimRight", "right edge → trimRight");
+
+    // (1c) Press on EMPTY space (a gap on the video track past clip-b) → no hit (marquee).
+    const emptyHit = hitTestClip(tl, layout, frameAt(layout, 999) /* far */ * 0 + 9999, bodyY);
+    check(emptyHit === null, "empty-space press misses all clips (marquee path)");
+
+    // (2) A horizontal body drag of +25 frames dispatches move_clips with the right
+    //     absolute toFrame. Grab at frame 60; release at frame 85 ⇒ candidate start =
+    //     85 - grabOffset(60) = 25, delta = 25, toFrame = 0 + 25 = 25 (NOT 85 — the
+    //     pre-fix teleport bug would have produced 85).
+    const grabFrame = frameAt(layout, bodyX); // 60
+    const grabOffset = grabFrame - clipA.startFrame; // 60
+    const releaseFrame = frameAt(layout, r.x + r.w / 2 + 25 * ppf); // 85
+    const candidateStart = releaseFrame - grabOffset; // 25
+    const frameDelta = candidateStart - clipA.startFrame; // 25
+    check(frameDelta === 25, `grab-offset displacement gives delta 25 (got ${frameDelta})`);
+
+    const moveIntent: Extract<EditIntent, { kind: "move" }> = {
+      kind: "move",
+      clipIds: ["clip-a"],
+      leadId: "clip-a",
+      frameDelta,
+      trackForClip: { "clip-a": 1 },
+      duplicate: false,
+    };
+    const args = buildMoveClipsArgs(moveIntent, tl);
+    check(args.length === 1, "move builds one move_clips entry");
+    check(args[0].clipId === "clip-a", "move_clips clipId");
+    check(args[0].toFrame === 25, `move_clips toFrame absolute = 25 (got ${args[0].toFrame})`);
+    check(args[0].toTrack === 1, "move_clips toTrack carried");
+
+    // (2b) Cross-track move (video clip → track index 1 stays video-compatible) keeps
+    //      the destination track in the args.
+    const crossArgs = buildMoveClipsArgs(
+      { ...moveIntent, frameDelta: 10, trackForClip: { "clip-a": 1 } },
+      tl,
+    );
+    check(crossArgs[0].toFrame === 10, "cross-track move_clips toFrame");
+  }
 
   // --- merge_ranges: touching ranges merge (<=) ---
   {

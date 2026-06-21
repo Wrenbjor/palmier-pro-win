@@ -87,7 +87,16 @@ const containerStyle: CSSProperties = {
 
 const overlayStyle: CSSProperties = {
   position: "absolute",
-  inset: 0,
+  top: 0,
+  left: 0,
+  // `<canvas>` is a REPLACED element: with width/height:auto it keeps its intrinsic
+  // 300x150 size and `inset:0` does NOT stretch it (unlike non-replaced elements).
+  // That left the interactive overlay covering only the top-left 300x150 px — presses
+  // anywhere outside it fell through to the read-only base canvas, whose minimal
+  // handler clears selection / acts like a marquee instead of moving the clip. Force
+  // an explicit 100% box so the overlay actually covers the whole timeline.
+  width: "100%",
+  height: "100%",
   pointerEvents: "none",
 };
 
@@ -341,11 +350,17 @@ export function TimelineEditor(props: TimelineEditorProps): JSX.Element {
           originalTrackOf[m.clip.id] = m.trackIndex;
           minFrame = Math.min(minFrame, m.clip.startFrame);
         }
+        // Grab offset: how far INTO the clip the press landed. The cursor frame minus
+        // this offset gives the lead's candidate start, so the clip follows the
+        // pointer by displacement (reference parity) rather than teleporting its start
+        // to the cursor.
+        const grabFrame = frameAt(layout, px);
         dragRef.current = {
           kind: "moveClip",
           leadId: hit.clip.id,
           clipIds: movers.map((m) => m.clip.id),
           leadOriginalFrame: hit.clip.startFrame,
+          grabOffsetFrames: grabFrame - hit.clip.startFrame,
           minOriginalFrame: Number.isFinite(minFrame) ? minFrame : hit.clip.startFrame,
           originStartFrame: hit.clip.startFrame,
           originY: py,
@@ -399,7 +414,9 @@ export function TimelineEditor(props: TimelineEditorProps): JSX.Element {
           break;
         }
         case "moveClip": {
-          const candidateFrame = frameAt(layout, px);
+          // Cursor frame minus the grab offset = lead's candidate start (so the clip
+          // tracks the pointer by displacement, not start-snaps to the cursor).
+          const candidateFrame = frameAt(layout, px) - drag.grabOffsetFrames;
           const rawDelta = candidateFrame - drag.leadOriginalFrame;
           // Live snap with two probes per mover.
           const movers = drag.clipIds
@@ -471,7 +488,7 @@ export function TimelineEditor(props: TimelineEditorProps): JSX.Element {
 
       switch (drag.kind) {
         case "moveClip": {
-          const candidateFrame = frameAt(layout, px);
+          const candidateFrame = frameAt(layout, px) - drag.grabOffsetFrames;
           const rawDelta = candidateFrame - drag.leadOriginalFrame;
           const movers = drag.clipIds
             .map((id) => findClipView(timeline, id))
