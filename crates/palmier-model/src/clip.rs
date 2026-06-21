@@ -593,6 +593,37 @@ mod tests {
     }
 
     #[test]
+    fn e12_s1_volume_keyframe_storage_floor_round_trip() {
+        // E12-S1: the keyframe-storage path stores raw dB with NO storage clamp;
+        // the only floor is the editing range [−60, +15] (single source of truth).
+        // A keyframe at the floor (−60 dB) yields a hard-mute (linear 0) gain.
+        let mut c = Clip::new("m", 0, 100);
+        c.media_type = ClipType::Audio;
+        c.volume = 1.0;
+
+        let mut track = KeyframeTrack::new();
+        track.upsert(Keyframe::new(0, VolumeScale::FLOOR_DB)); // −60 dB
+        track.upsert(Keyframe::new(100, VolumeScale::FLOOR_DB));
+        c.volume_track = Some(track);
+        // At the floor, kf_gain → linear_from_db(−60) == 0 → true mute.
+        assert_eq!(c.volume_at(50), 0.0);
+
+        // A keyframe at the ceiling (+15 dB) amplifies past unity (not clamped to 1).
+        let mut track2 = KeyframeTrack::new();
+        track2.upsert(Keyframe::new(0, VolumeScale::CEILING_DB)); // +15 dB
+        track2.upsert(Keyframe::new(100, VolumeScale::CEILING_DB));
+        c.volume_track = Some(track2);
+        let expected = 1.0 * VolumeScale::linear_from_db(VolumeScale::CEILING_DB);
+        assert!(expected > 1.0);
+        assert!((c.volume_at(50) - expected).abs() < 1e-12);
+
+        // The stored value confirms the storage floor equals the editing floor:
+        // round-tripping the stored dB back is exact for values in (floor, ceil].
+        let stored_db = c.volume_track.as_ref().unwrap().sample(50, 0.0);
+        assert_eq!(stored_db, VolumeScale::CEILING_DB);
+    }
+
+    #[test]
     fn opacity_at_audio_vs_visual_fade_gating() {
         // Visual clip with a fade: fade is applied.
         let mut v = Clip::new("m", 0, 100);
