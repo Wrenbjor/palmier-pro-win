@@ -898,7 +898,22 @@ pub fn agent_send<R: Runtime>(
         _ => None,
     };
     let is_signed_in = matches!(backend, SelectedBackend::Palmier);
-    let client = match select_and_build_client(api_key.as_deref(), is_signed_in) {
+
+    // Optional custom Anthropic endpoint for LOCAL-BRIDGE / SELF-HOST use:
+    // `PALMIER_ANTHROPIC_BASE_URL` lets a BYOK user point the in-app agent at a
+    // local Anthropic-compatible bridge (e.g. LiteLLM fronting an OpenAI-compatible
+    // model) instead of `api.anthropic.com`. Trim + ignore-empty; `None` ⇒ default
+    // endpoint. The key is NEVER logged — only which endpoint is in use.
+    let base_url = std::env::var("PALMIER_ANTHROPIC_BASE_URL")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    match &base_url {
+        Some(url) => tracing::info!(target: "agent", endpoint = %url, "agent client endpoint: custom (local-bridge/self-host via PALMIER_ANTHROPIC_BASE_URL)"),
+        None => tracing::info!(target: "agent", "agent client endpoint: default (api.anthropic.com)"),
+    }
+
+    let client = match select_and_build_client(api_key.as_deref(), is_signed_in, base_url.as_deref()) {
         Ok(client) => client,
         Err(err) => {
             emit_event(
