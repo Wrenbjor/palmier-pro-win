@@ -86,6 +86,24 @@ impl ProjectState {
             samples,
         }
     }
+
+    /// Autonomous-test affordance: which project (if any) to auto-open at boot, from env.
+    /// `PALMIER_OPEN_PROJECT=<id>` opens that registry entry; `PALMIER_OPEN_FIRST_RECENT=1`
+    /// opens the most-recently-opened entry. Returns `None` in the normal case (neither
+    /// set ⇒ boot shows only Home). Lets the orchestrator drive the editor without a click.
+    pub fn boot_open_id(&self) -> Option<String> {
+        let reg = self.registry.lock().expect("registry mutex");
+        if let Ok(id) = std::env::var("PALMIER_OPEN_PROJECT") {
+            let id = id.trim();
+            if !id.is_empty() && reg.sorted_entries().iter().any(|e| e.id.to_string() == id) {
+                return Some(id.to_string());
+            }
+        }
+        if std::env::var("PALMIER_OPEN_FIRST_RECENT").is_ok() {
+            return reg.sorted_entries().first().map(|e| e.id.to_string());
+        }
+        None
+    }
 }
 
 /// Build the managed [`ProjectState`] from the booted [`palmier_auth::Auth`].

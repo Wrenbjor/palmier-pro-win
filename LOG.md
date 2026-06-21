@@ -206,3 +206,13 @@ Refs: main @629ab46; crate palmier-search (embedder/store/sampler/indexer/visual
 coordinator/export_pause), palmier-tools/src/search.rs, src-ui/media-panel; [phase0-reconciliation](docs/phase0-reconciliation.md).
 Next: M5 (Epic 12 packaging/release) — bundle FFmpeg + whisper small.en + onnxruntime.dll + SigLIP2 weights,
 host the model manifests (fill SHA placeholders), .mcpb, Ed25519 updater, and the §13 open questions. Milestones M1–M4 all complete.
+
+## 2026-06-21 · Autonomous finish loop: editor integration + M5 backend merged · #build #m5 #editor #autonomous
+What: Switched to autonomous multi-agent mode (Wren directive). Merged to main: runtime fixes
+(manifest comctl32-v6 → fixes STATUS_ENTRYPOINT_NOT_FOUND boot crash; window build off main
+thread → fixes WebView2 deadlock), self-validation harness (mcp-smoke backend oracle + Playwright
+UI smoke), editor UI↔backend bridge (editor_get_timeline/get_media/edit + timeline://changed +
+NLE composition), and M5 backend (E12-S1 VolumeScale floor=-60, E12-S12 telemetry Sentry-lifecycle
+tests, E12-S13 updater config w/ placeholder key). All gates green: cargo build/test, tsc, mcp-smoke
+(live boot + edit→undo). Live WebView2 editor render pending the --open-project affordance (in flight).
+Refs: main @ d117ee5; [autonomous-finish](domains/build-orchestration/autonomous-finish.md).

@@ -209,6 +209,14 @@ fn main() {
                 );
             }
 
+            // Autonomous-test affordance (no-op unless PALMIER_OPEN_* is set): open a
+            // project window at boot so the editor can be driven/screenshotted without a
+            // click. See domains/build-orchestration/autonomous-finish.md.
+            if let Some(id) = app.state::<project::ProjectState>().boot_open_id() {
+                tracing::info!(target: "app", id = %id, "boot: auto-opening project window (PALMIER_OPEN_*)");
+                let _ = window::open_project_window(&app.handle().clone(), &id);
+            }
+
             // E1-S10 — touch the updater (reference `AppDelegate` touches
             // `Updater.shared`). Runs a real check only when a signed feed is
             // configured; a dev build with no feed stays completely silent.
