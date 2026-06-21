@@ -20,7 +20,7 @@
 //   - selection + playhead are shared store state, synced timeline ↔ inspector ↔ preview.
 //   - media→timeline drag = `add_clips` at the playhead (the drop zone below the canvas).
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import UpdateBadge from "./UpdateBadge";
@@ -35,7 +35,7 @@ import {
   type ToolMode,
 } from "../editor";
 import { adaptTimeline } from "../editor/adapt";
-import { getMedia, getTimeline, onTimelineChanged, editorEdit, inTauri } from "../editor/bridge";
+import { getMedia, getTimeline, onTimelineChanged, editorEdit } from "../editor/bridge";
 
 import {
   MediaPanel,
@@ -176,22 +176,35 @@ export default function Project({ projectId }: { projectId: string }) {
     [timeline?.width, timeline?.height, timeline?.fps],
   );
 
-  // Push the timeline to the preview engine when it changes (the engine rebuilds its
-  // source resolver). No-op outside Tauri (preview/api.ts degrades gracefully).
-  // The serialized view-model is what `preview_set_timeline` accepts today.
-  const lastPushedRef = useRef<string>("");
-  useEffect(() => {
-    if (!timeline || !inTauri()) return;
-    const serialized = JSON.stringify(timeline);
-    if (serialized === lastPushedRef.current) return;
-    lastPushedRef.current = serialized;
-    void import("../preview/api").then((api) =>
-      api.previewSetTimeline(timeline),
-    );
+  // Total timeline length in frames (max clip end over all tracks) — drives the preview
+  // scrub bar range + the playback stop-at-end. Mirrors `Timeline::total_frames`.
+  const totalFrames = useMemo(() => {
+    if (!timeline) return 0;
+    let max = 0;
+    for (const track of timeline.tracks) {
+      for (const clip of track.clips) {
+        max = Math.max(max, clip.startFrame + clip.durationFrames);
+      }
+    }
+    return max;
   }, [timeline]);
 
+  // A revision counter bumped whenever the timeline content changes, so the preview
+  // recomposites the CURRENT frame even when the playhead didn't move (e.g. a clip was
+  // added/trimmed at the playhead). The serialized timeline is a cheap structural key.
+  const revision = useMemo(
+    () => (timeline ? JSON.stringify(timeline).length + timeline.tracks.length : 0),
+    [timeline],
+  );
+
+  // Keep the preview store's active-tab duration in sync (the scrub bar reads it).
+  useEffect(() => {
+    preview.setDuration(preview.getState().activeTabId, totalFrames);
+  }, [preview, totalFrames]);
+
   // Mirror the timeline playhead into the preview store so the scrub bar follows
-  // timeline seeks (timeline ↔ preview sync).
+  // timeline seeks (timeline → preview sync). The preview drives back via
+  // `onPlayheadChange` (preview → timeline) during playback/seek.
   useEffect(() => {
     preview.setActivePlayhead(playheadFrame);
   }, [preview, playheadFrame]);
@@ -260,7 +273,9 @@ export default function Project({ projectId }: { projectId: string }) {
           <div className="flex-1 min-h-0">
             <PreviewPanel
               composition={composition}
-              durationFrames={0}
+              durationFrames={totalFrames}
+              revision={revision}
+              onPlayheadChange={(frame) => editor.store.setPlayhead(frame)}
               store={preview}
             />
           </div>

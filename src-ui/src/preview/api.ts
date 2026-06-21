@@ -87,6 +87,31 @@ export const previewStep = (delta: number) => tryInvoke<number>("preview_step", 
 /** Activate a preview tab by id (engine `Transport::activate_tab`). Returns the restored frame. */
 export const previewSetTab = (tabId: string) => tryInvoke<number>("preview_set_tab", { tabId });
 
+// ── robust preview render (offscreen composite → GPU readback → <canvas>) ──────
+
+/** One rendered preview frame (mirrors Rust `PreviewFrame`). */
+export interface PreviewFrameData {
+  /** Backing (downscaled) width in pixels. */
+  width: number;
+  /** Backing (downscaled) height in pixels. */
+  height: number;
+  /** Base64 of the row-major RGBA8 pixels (`width * height * 4` bytes). */
+  rgbaBase64: string;
+}
+
+/**
+ * Composite the ACTIVE project's timeline at `frame`, downscaled to at most
+ * `maxWidth` px wide, and read it back as base64 RGBA for the `<canvas>`. The
+ * backend reads the SAME shared timeline `editor_get_timeline` does, so this always
+ * reflects the live edit state. Returns `undefined` outside a Tauri webview (the
+ * panel then shows the empty viewport for design work).
+ */
+export const previewRenderFrame = (frame: number, maxWidth?: number) =>
+  tryInvoke<PreviewFrameData>("preview_render_frame", {
+    frame,
+    maxWidth: maxWidth ?? null,
+  });
+
 /** Commit a transform edit for a clip (flows into the edit engine). */
 export const previewApplyTransform = (clipId: string, transform: Transform) =>
   tryInvoke<void>("preview_apply_transform", { clipId, transform });

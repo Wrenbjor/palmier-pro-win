@@ -36,6 +36,10 @@ mod menu;
 // HWND under a transparent WebView2 child). Self-contained to stay parallel-safe with
 // concurrent panel/overlay work (E5-S10).
 mod preview;
+// Robust preview path: composite the active timeline OFFSCREEN → GPU readback → base64
+// → a <canvas> in the webview. Replaces the fragile/unused on-window present (plan A1)
+// as the actual preview surface. Reuses the export crate's offscreen render+readback.
+mod preview_render;
 mod project;
 mod settings;
 mod update;
@@ -121,6 +125,9 @@ fn main() {
             preview::preview_seek,
             preview::preview_step,
             preview::preview_set_tab,
+            // Robust preview: composite the active timeline offscreen + read it back as
+            // base64 RGBA for the <canvas> (the actual preview path the viewport uses).
+            preview_render::preview_render_frame,
             // Project editor bridge — read the shared timeline / media library and
             // dispatch mutating tools through the ONE shared executor (the same owner
             // the MCP server + in-app agent drive). `editor_edit` emits
@@ -166,6 +173,9 @@ fn main() {
             // E5-S8 — the preview present session slot (None until a project window
             // calls `preview_init`). Holds the wgpu compositor + decode owner.
             app.manage(preview::PreviewState::default());
+            // The cached headless compositor for the robust offscreen preview path
+            // (None until the first `preview_render_frame`; rebuilt on a size change).
+            app.manage(preview_render::PreviewRenderState::default());
 
             // M2 boot integration — the agent state owns the ONE shared
             // `Arc<ToolExecutor>` (single `EditorState`) that BOTH the loopback MCP

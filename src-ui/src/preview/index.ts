@@ -56,6 +56,7 @@ export {
   previewSeek,
   previewStep,
   previewSetTab,
+  previewRenderFrame,
   previewApplyTransform,
   previewApplyCrop,
   onCurrentFrame,
@@ -63,4 +64,4 @@ export {
   CURRENT_FRAME_EVENT,
   PLAYBACK_STATE_EVENT,
 } from "./api";
-export type { SeekMode, CurrentFramePayload } from "./api";
+export type { SeekMode, CurrentFramePayload, PreviewFrameData } from "./api";

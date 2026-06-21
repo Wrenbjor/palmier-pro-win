@@ -1,34 +1,27 @@
-// Preview panel (E5-S10) — the viewport that composes the whole preview surface.
+// Preview panel — the viewport that composes the whole preview surface AND shows the
+// actual video frame.
 //
-// Port of the macOS reference `PreviewContainerView`: a tab bar on top, a transparent
-// center viewport (the native wgpu surface from E5-S1 plan A1 shows THROUGH this region
-// — the webview is transparent here so DWM composites the swapchain underneath), the
-// transform/crop overlays floating over it, and the scrub + transport + settings bar
-// at the bottom. Keyboard transport (J/K/L/Space/Home/End/←/→) and cmd/ctrl-scroll zoom
-// are bound here.
+// ## What changed (the robust preview path)
+// The original panel mounted a transparent viewport expecting a native wgpu swapchain
+// to show THROUGH it ("plan A1"). That path was fragile (tao clip_children flicker)
+// and never actually presented a frame. This panel instead paints the frame the
+// backend composites OFFSCREEN: it calls `preview_render_frame(frame, maxWidth)` (a
+// Tauri command that composites the ACTIVE timeline through the shared engine
+// compositor and reads it back as base64 RGBA), decodes it, and draws it onto a
+// `<canvas>` letterboxed to the composition aspect.
 //
-// Strict layering (FOUNDATION §4): every transport/edit action calls a Tauri command
-// into `palmier-engine`; the engine streams the reactive `current_frame` back as the
-// `preview://current-frame` event, which this panel subscribes to and writes into the
-// store. Outside Tauri (`vite dev`) the commands are no-ops and the playhead is driven
-// locally so the panel still renders for design work.
+// Playback is a `requestAnimationFrame` loop throttled to `composition.fps`: Play
+// advances the playhead frame-by-frame, renders each frame, and stops/loops at the
+// end; Pause stops it. Seek/scrub and step (±1) render a single frame. The playhead
+// is kept in sync with the editor timeline via `onPlayheadChange` (preview ↔ timeline).
+//
+// Tabs / overlays / zoom / keyboard transport / settings are unchanged.
 
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import {
   inTauri,
-  onCurrentFrame,
-  onPlaybackState,
-  previewApplyCrop,
-  previewApplyTransform,
-  previewInit,
-  previewResize,
-  previewSeek,
-  previewSetTab,
-  previewStep,
-  previewTeardown,
-  previewTogglePlayback,
-  type SeekMode,
+  previewRenderFrame,
 } from "./api";
 import { zoomAboutPoint } from "./geometry";
 import { ZOOM_MAX, ZOOM_MIN } from "./presets";
@@ -40,12 +33,15 @@ import { TransportControls } from "./TransportControls";
 import { createPreviewStore, usePreviewStore, type PreviewStore } from "./store";
 import { type Crop, type Transform } from "./types";
 
+/** Default preview render width (matches the backend `DEFAULT_MAX_WIDTH`). */
+const PREVIEW_MAX_WIDTH = 960;
+
 export interface PreviewPanelProps {
   /** The Tauri window label whose native surface this panel presents into. */
   windowLabel?: string;
   /** Composition geometry — timeline width/height/fps (drives aspect + timecode). */
   composition: { width: number; height: number; fps: number };
-  /** Duration of the active tab in frames (for the scrub bar). */
+  /** Duration of the active tab in frames (for the scrub bar + playback stop). */
   durationFrames?: number;
   /** The selected clip's transform/crop (the overlays manipulate these). */
   selected?: { clipId: string; transform: Transform; crop: Crop; mediaCanvasAspect?: number | null } | null;
@@ -53,21 +49,50 @@ export interface PreviewPanelProps {
   cropEditing?: boolean;
   /** Apply new timeline settings (aspect/fps/quality menu). */
   onApplyTimelineSettings?: (settings: { fps: number; width: number; height: number }) => void;
+  /**
+   * Called whenever the preview moves the playhead (playback tick / seek / step), so
+   * the host can mirror it into the timeline store (preview ↔ timeline sync). The
+   * editor's playhead is the source of truth on external seeks; this closes the loop
+   * for preview-driven motion.
+   */
+  onPlayheadChange?: (frame: number) => void;
+  /**
+   * Bump this to force a repaint of the current frame WITHOUT moving the playhead —
+   * e.g. when the timeline content changed (`timeline://changed`) so the same frame
+   * now composites differently (a clip was added/trimmed/recolored at the playhead).
+   */
+  revision?: number;
   /** Optional shared store (else the panel owns one). */
   store?: PreviewStore;
 }
 
+/**
+ * Decode a base64 string to a `Uint8ClampedArray` over a fresh (non-shared)
+ * `ArrayBuffer` — the exact shape `ImageData`'s constructor accepts.
+ */
+function decodeBase64(b64: string): Uint8ClampedArray<ArrayBuffer> {
+  const bin = atob(b64);
+  const buf = new ArrayBuffer(bin.length);
+  const out = new Uint8ClampedArray(buf);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 export function PreviewPanel({
-  windowLabel = "main",
   composition,
   durationFrames = 0,
   selected = null,
   cropEditing = false,
   onApplyTimelineSettings,
+  onPlayheadChange,
+  revision = 0,
   store: providedStore,
 }: PreviewPanelProps) {
   const store = useMemo(() => providedStore ?? createPreviewStore(), [providedStore]);
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Offscreen canvas holding the backing-size frame, blitted scaled to the visible one.
+  const backingRef = useRef<HTMLCanvasElement | null>(null);
   const sizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
 
   const tabs = usePreviewStore(store, (s) => s.tabs);
@@ -79,68 +104,180 @@ export function PreviewPanel({
 
   const aspect = composition.height > 0 ? composition.width / composition.height : 16 / 9;
 
-  // ── Surface lifecycle: init the wgpu present surface, track viewport resize. ──
-  useEffect(() => {
-    if (!inTauri()) return;
-    void previewInit(windowLabel);
-    return () => {
-      void previewTeardown();
-    };
-  }, [windowLabel]);
+  // ── Frame painting: composite offscreen (backend) → draw letterboxed on canvas. ──
+  // Tracks the latest in-flight request so a stale async render never paints over a
+  // newer one (rapid scrub / play).
+  const reqIdRef = useRef(0);
+  const lastDrawnRef = useRef<number>(-1);
 
+  // Paint a single frame index. Returns a promise that resolves once drawn (or skipped).
+  const paintFrame = useCallback(
+    async (frameIndex: number) => {
+      const canvas = canvasRef.current;
+      const viewport = viewportRef.current;
+      if (!canvas || !viewport) return;
+
+      // Size the visible canvas to the viewport (device-pixel aware), letterboxing the
+      // composition aspect inside it.
+      const vw = Math.max(1, Math.round(viewport.clientWidth));
+      const vh = Math.max(1, Math.round(viewport.clientHeight));
+      if (canvas.width !== vw || canvas.height !== vh) {
+        canvas.width = vw;
+        canvas.height = vh;
+      }
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      const reqId = ++reqIdRef.current;
+      const data = inTauri()
+        ? await previewRenderFrame(frameIndex, PREVIEW_MAX_WIDTH)
+        : undefined;
+      // A newer request superseded this one — drop it (avoid out-of-order paints).
+      if (reqId !== reqIdRef.current) return;
+
+      // Clear to black (letterbox bars + the empty/no-Tauri case).
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      if (!data) {
+        lastDrawnRef.current = frameIndex;
+        return;
+      }
+
+      // Put the backing-size RGBA into the offscreen canvas.
+      let backing = backingRef.current;
+      if (!backing) {
+        backing = document.createElement("canvas");
+        backingRef.current = backing;
+      }
+      if (backing.width !== data.width || backing.height !== data.height) {
+        backing.width = data.width;
+        backing.height = data.height;
+      }
+      const bctx = backing.getContext("2d");
+      if (!bctx) return;
+      const pixels = decodeBase64(data.rgbaBase64);
+      if (pixels.length >= data.width * data.height * 4) {
+        bctx.putImageData(new ImageData(pixels, data.width, data.height), 0, 0);
+      }
+
+      // Letterbox the composition aspect inside the canvas.
+      const canvasAspect = canvas.width / canvas.height;
+      let dw = canvas.width;
+      let dh = canvas.height;
+      if (canvasAspect > aspect) {
+        dh = canvas.height;
+        dw = dh * aspect;
+      } else {
+        dw = canvas.width;
+        dh = dw / aspect;
+      }
+      const dx = (canvas.width - dw) / 2;
+      const dy = (canvas.height - dh) / 2;
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(backing, 0, 0, data.width, data.height, dx, dy, dw, dh);
+      lastDrawnRef.current = frameIndex;
+    },
+    [aspect],
+  );
+
+  // ── Resize tracking: re-measure + repaint the current frame on viewport resize. ──
   useEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
     const ro = new ResizeObserver((entries) => {
       const r = entries[0].contentRect;
       sizeRef.current = { width: r.width, height: r.height };
-      void previewResize(Math.max(1, Math.round(r.width)), Math.max(1, Math.round(r.height)));
-      // Force a re-render so overlays re-measure (store touch).
+      void paintFrame(store.getState().playheads[store.getState().activeTabId] ?? 0);
+      // Force overlays to re-measure (store touch).
       store.setOffset({ ...store.getState().canvasOffset });
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [store]);
+  }, [store, paintFrame]);
 
-  // ── Reactive playhead + playback-state from the engine. ──
+  // ── Initial paint + repaint when the external playhead / tab changes (seek). ──
+  // The playback loop owns motion WHILE playing; this handles paused seeks/steps and
+  // the timeline→preview mirror. Skips a redundant repaint of the already-drawn frame.
   useEffect(() => {
-    let unCurrent: (() => void) | undefined;
-    let unPlay: (() => void) | undefined;
-    onCurrentFrame((p) => {
-      // Route to the timeline tab or the active asset tab.
-      if (p.isTimeline) store.setPlayhead("__timeline__", p.frame);
-      else store.setActivePlayhead(p.frame);
-    }).then((un) => (unCurrent = un));
-    onPlaybackState((pl) => store.setPlaying(pl)).then((un) => (unPlay = un));
-    return () => {
-      unCurrent?.();
-      unPlay?.();
-    };
-  }, [store]);
+    if (playing) return; // the rAF loop is driving frames.
+    if (lastDrawnRef.current === frame) return;
+    void paintFrame(frame);
+  }, [frame, activeTabId, playing, paintFrame]);
 
-  // ── Transport actions (Tauri commands; local fallback outside Tauri). ──
+  // ── Content repaint: the timeline changed at the same frame → recomposite it. ──
+  useEffect(() => {
+    if (playing) return;
+    void paintFrame(store.getState().playheads[store.getState().activeTabId] ?? 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision]);
+
+  // ── Playback loop: rAF throttled to fps; advance the playhead, paint, stop at end. ──
+  useEffect(() => {
+    if (!playing) return;
+    const fps = Math.max(1, composition.fps);
+    const frameDurMs = 1000 / fps;
+    let raf = 0;
+    let cancelled = false;
+    let lastTs = performance.now();
+    // Render the current frame immediately on play.
+    let current = store.getState().playheads[store.getState().activeTabId] ?? 0;
+    const total = store.getState().durations[store.getState().activeTabId] ?? durationFrames;
+
+    void paintFrame(current);
+
+    const tick = (ts: number) => {
+      if (cancelled) return;
+      const elapsed = ts - lastTs;
+      if (elapsed >= frameDurMs) {
+        // Advance by however many frame-durations elapsed (catch up, don't accumulate lag).
+        const steps = Math.max(1, Math.floor(elapsed / frameDurMs));
+        lastTs = ts;
+        current += steps;
+        if (total > 0 && current >= total) {
+          // Stop at the end (no loop — matches the reference's play-to-end-then-pause).
+          current = total;
+          store.setActivePlayhead(current);
+          onPlayheadChange?.(current);
+          store.setPlaying(false);
+          void paintFrame(current);
+          return;
+        }
+        store.setActivePlayhead(current);
+        onPlayheadChange?.(current);
+        void paintFrame(current);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playing, composition.fps, durationFrames, store, paintFrame, onPlayheadChange]);
+
+  // ── Transport actions (local playhead + canvas render; no engine transport). ──
   const seek = useCallback(
-    (target: number, mode: SeekMode) => {
-      const f = Math.max(0, target);
-      store.setActivePlayhead(f); // optimistic; engine echoes via event.
-      void previewSeek(f, mode);
+    (target: number) => {
+      const dur = store.getState().durations[store.getState().activeTabId] ?? durationFrames;
+      const f = Math.max(0, dur > 0 ? Math.min(target, dur) : target);
+      store.setActivePlayhead(f);
+      onPlayheadChange?.(f);
+      void paintFrame(f);
     },
-    [store],
+    [store, durationFrames, paintFrame, onPlayheadChange],
   );
 
   const togglePlay = useCallback(() => {
-    const next = !store.getState().playing;
-    store.setPlaying(next); // optimistic; engine echoes.
-    void previewTogglePlayback();
+    store.setPlaying(!store.getState().playing);
   }, [store]);
 
   const step = useCallback(
     (delta: number) => {
-      const f = Math.max(0, store.getState().playheads[store.getState().activeTabId] ?? 0) + delta;
-      store.setActivePlayhead(Math.max(0, f));
-      void previewStep(delta);
+      const cur = store.getState().playheads[store.getState().activeTabId] ?? 0;
+      seek(cur + delta);
     },
-    [store],
+    [store, seek],
   );
 
   // ── Keyboard transport: Space/K play-pause, J/L step, Home/End, ←/→ frame. ──
@@ -170,11 +307,11 @@ export function PreviewPanel({
           break;
         case "Home":
           e.preventDefault();
-          seek(0, "exact");
+          seek(0);
           break;
         case "End":
           e.preventDefault();
-          seek(dur, "exact");
+          seek(dur);
           break;
         default:
           break;
@@ -216,19 +353,13 @@ export function PreviewPanel({
   // ── Overlay edit routing (Tauri commands into the edit engine). ──
   const applyTransform = useCallback(
     (t: Transform) => {
-      if (selected) void previewApplyTransform(selected.clipId, t);
-    },
-    [selected],
-  );
-  const commitTransform = useCallback(
-    (t: Transform) => {
-      if (selected) void previewApplyTransform(selected.clipId, t);
+      if (selected) void import("./api").then((api) => api.previewApplyTransform(selected.clipId, t));
     },
     [selected],
   );
   const applyCrop = useCallback(
     (c: Crop) => {
-      if (selected) void previewApplyCrop(selected.clipId, c);
+      if (selected) void import("./api").then((api) => api.previewApplyCrop(selected.clipId, c));
     },
     [selected],
   );
@@ -242,22 +373,24 @@ export function PreviewPanel({
       <PreviewTabs
         tabs={tabs}
         activeTabId={activeTabId}
-        onSelect={(id) => {
-          store.selectTab(id);
-          void previewSetTab(id);
-        }}
+        onSelect={(id) => store.selectTab(id)}
         onClose={(id) => store.closeTab(id)}
         onCloseAll={() => store.closeAllTabs()}
       />
 
-      {/* Transparent viewport — the native wgpu surface shows through here. */}
+      {/* Viewport — the composited frame is painted on the canvas below; overlays float over it. */}
       <div
         ref={viewportRef}
         className="relative flex-1 overflow-hidden"
-        style={{ background: "transparent" }}
         onWheel={onWheel}
         data-preview-viewport
       >
+        {/* The composited preview frame (offscreen render → readback → here). */}
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 h-full w-full"
+          data-preview-canvas
+        />
         <div
           className="absolute"
           style={{
@@ -285,7 +418,7 @@ export function PreviewPanel({
               transform={transform}
               mediaCanvasAspect={selected?.mediaCanvasAspect ?? null}
               onApply={applyTransform}
-              onCommit={commitTransform}
+              onCommit={applyTransform}
             />
           )}
         </div>
@@ -298,11 +431,11 @@ export function PreviewPanel({
           durationFrames={store.getState().durations[activeTabId] ?? durationFrames}
           playing={playing}
           onTogglePlay={togglePlay}
-          onSeek={seek}
+          onSeek={(f) => seek(f)}
           onScrubBegin={() => store.setScrubbing(true)}
           onScrubEnd={(f) => {
             store.setScrubbing(false);
-            seek(f, "exact");
+            seek(f);
           }}
         />
         <div className="flex items-center justify-end px-4 pb-2">
