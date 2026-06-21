@@ -33,6 +33,8 @@ import type {
   MediaSnapshot,
   ViewMode,
 } from "./types";
+import { editorEdit, getMedia, inTauri } from "../editor/bridge";
+import { adaptMedia } from "./adapt";
 
 /** Generate a local UUID-ish id (replaced by backend ids when commands land). */
 export function localId(prefix = "id"): string {
@@ -45,43 +47,63 @@ export class MediaPanelController {
 
   constructor(private store: MediaPanelStore) {}
 
-  // --- Load (E7 seam) ---------------------------------------------------------
+  // --- Load (WIRED: editor_get_media) -----------------------------------------
 
   /**
-   * Seed the panel with a media snapshot.
-   * TODO(E7): replace with
-   *   const snap = adaptMedia(await invoke('get_media'));
-   *   this.store.setSnapshot(snap);
+   * Seed the panel with an explicit media snapshot (fixture / tests / design preview).
    */
   loadMedia(snapshot: MediaSnapshot): void {
     this.store.setSnapshot(snapshot);
+  }
+
+  /**
+   * Refetch the media library from the shared `EditorState` and replace the snapshot
+   * (reference `get_media`). Runs the real `editor_get_media` Tauri command via the
+   * editor bridge + `adaptMedia`; outside Tauri it is a no-op (the fixture stands in).
+   * The Project surface calls this on mount and on every `timeline://changed`.
+   */
+  async refreshMedia(): Promise<void> {
+    if (!inTauri()) return;
+    const wire = await getMedia();
+    if (wire !== undefined) this.store.setSnapshot(adaptMedia(wire));
   }
 
   // --- Folder ops (E6/E7 seam) ------------------------------------------------
 
   /**
    * Create a folder under the current folder (inline create).
-   * TODO(E7): route through palmier-model `create_folder` (snapshot-undo via
-   * palmier-history) instead of the local store mutation.
+   *
+   * WIRED: inside a Tauri webview this dispatches `create_folder` through the shared
+   * executor (the `timeline://changed` refetch reconciles the authoritative folder id).
+   * The local `addFolder` runs first for instant feedback (and is the sole path
+   * outside Tauri). Returns the optimistic folder row.
    */
   createFolder(name = "New Folder"): MediaFolderView {
+    const parentFolderId = this.store.getState().currentFolderId;
     const folder: MediaFolderView = {
       id: localId("folder"),
       name,
-      parentFolderId: this.store.getState().currentFolderId,
+      parentFolderId,
     };
     this.store.addFolder(folder);
+    if (inTauri()) {
+      const args: Record<string, unknown> = { name };
+      if (parentFolderId) args.parentFolderId = parentFolderId;
+      void editorEdit("create_folder", args);
+    }
     return folder;
   }
 
-  /** Inline rename a folder. TODO(E7): `rename_folder` model op. */
+  /** Inline rename a folder (WIRED: `rename_folder`). */
   renameFolder(id: string, name: string): void {
     this.store.renameFolder(id, name);
+    if (inTauri()) void editorEdit("rename_folder", { folderId: id, name });
   }
 
-  /** Inline rename an asset. TODO(E7): `rename_asset` model op. */
+  /** Inline rename an asset (WIRED: `rename_media`). */
   renameAsset(id: string, name: string): void {
     this.store.renameAsset(id, name);
+    if (inTauri()) void editorEdit("rename_media", { mediaRef: id, name });
   }
 
   /** Walk to the parent of the current folder (`Ctrl+Up`). */
@@ -103,10 +125,19 @@ export class MediaPanelController {
    * Native drop arrives via the Tauri `tauri://drag-drop` event (wired in E4-S12);
    * the file picker via the `dialog` plugin; paste via clipboard + `arboard`.
    */
-  async importPaths(_paths: string[]): Promise<void> {
-    // No-op stub: with the fixture data source there is nothing to import yet.
-    // The drop zone / picker call this; once Epic 7 lands it does the real work.
-    return;
+  async importPaths(paths: string[]): Promise<void> {
+    if (!inTauri() || paths.length === 0) return;
+    // One `import_media` per path (a directory path is imported recursively backend-
+    // side). The backend mints the asset + emits `timeline://changed` after each, which
+    // refetches the library; we also refetch here so a drop without an active listener
+    // still updates. Best-effort: a failed import is logged by the bridge, not fatal.
+    const folderId = this.store.getState().currentFolderId;
+    for (const path of paths) {
+      const args: Record<string, unknown> = { source: { path } };
+      if (folderId) args.folderId = folderId;
+      await editorEdit("import_media", args);
+    }
+    await this.refreshMedia();
   }
 
   /**
@@ -140,7 +171,16 @@ export class MediaPanelController {
       else assetIds.push(p.id); // asset | moment → reparent the asset
     }
     if (folderIds.length > 0) this.store.moveFolders(folderIds, targetFolderId);
-    if (assetIds.length > 0) this.store.moveAssets(assetIds, targetFolderId);
+    if (assetIds.length > 0) {
+      this.store.moveAssets(assetIds, targetFolderId);
+      // WIRED: asset reparent → `move_to_folder` (folder reparent has no tool yet, so
+      // it stays local-only — a follow-up seam). Omit folderId for the project root.
+      if (inTauri()) {
+        const args: Record<string, unknown> = { assetIds };
+        if (targetFolderId) args.folderId = targetFolderId;
+        void editorEdit("move_to_folder", args);
+      }
+    }
   }
 
   /**

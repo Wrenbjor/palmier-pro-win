@@ -17,6 +17,8 @@ import type { EditIntent, EditOrigin } from "./edit-types";
 import { applyEdit } from "./apply";
 import { TimelineHistory } from "./history";
 import type { TimelineStore } from "./store";
+import { editorEdit, inTauri } from "./bridge";
+import type { ClipView } from "./types";
 
 /** Human-readable undo-group names per intent kind (drives currentUndoActionName). */
 function actionName(intent: EditIntent): string {
@@ -42,19 +44,22 @@ export class EditController {
   /**
    * Dispatch an edit. Returns true if it mutated the timeline.
    *
-   * TODO(E7): route through Tauri get_timeline/edit commands. Replace the
-   * `applyEdit` + `setTimeline` below with:
-   *   await invoke('edit', { intent });
-   *   const next = adaptTimeline(await invoke('get_timeline'));
-   *   this.store.setTimeline(next);
-   * and let `palmier-history` own undo (call invoke('undo')/invoke('redo')). The
-   * before/after snapshotting here is the local stand-in for that crate.
+   * WIRED (Project window): inside a Tauri webview the intent is ALSO translated to a
+   * mutating tool and dispatched through the shared executor via `editor_edit`
+   * (`bridge.ts`). The backend emits `timeline://changed`; the Project surface
+   * refetches `editor_get_timeline` and `setTimeline`s the authoritative state, which
+   * reconciles the optimistic apply below. The local `applyEdit` is kept for instant
+   * feedback (and as the sole path outside Tauri / for `vite dev` design work).
+   *
+   * Undo/redo: in Tauri, undo routes to the backend `undo` tool (the agent undo stack
+   * lives in palmier-tools); the local history mirrors it for snappy UI. Outside Tauri
+   * the local history IS the undo system.
    */
   dispatch(intent: EditIntent, origin: EditOrigin = "user"): boolean {
     const before = this.store.getState().timeline;
     if (!before) return false;
 
-    // One atomic, coalesced undo step per composite edit.
+    // One atomic, coalesced undo step per composite edit (optimistic local apply).
     const { after } = this.history.withTimelineSwap(
       before,
       actionName(intent),
@@ -63,11 +68,124 @@ export class EditController {
     );
 
     this.store.setTimeline(after);
+
+    // Backend dispatch (Project window): translate the intent to tool calls and run
+    // them through the shared executor. The `timeline://changed` refetch reconciles.
+    if (inTauri()) {
+      void this.dispatchToBackend(intent, before);
+    }
     return true;
+  }
+
+  /**
+   * Translate an `EditIntent` to one or more mutating tool calls and dispatch them
+   * through the shared executor. Absolute tool args are computed from `before` (the
+   * pre-edit timeline) since the tools take absolute frames/tracks, not the gesture's
+   * deltas. Best-effort: a tool error is logged; the `timeline://changed` refetch (or
+   * its absence) is the source of truth.
+   */
+  private async dispatchToBackend(
+    intent: EditIntent,
+    before: TimelineView,
+  ): Promise<void> {
+    switch (intent.kind) {
+      case "split":
+        await editorEdit("split_clip", {
+          clipId: intent.clipId,
+          atFrame: intent.atFrame,
+        });
+        return;
+
+      case "deleteClips":
+        // Both ripple + non-ripple deletes map to remove_clips (the backend closes
+        // the gap per its own ripple semantics on linked/sync-locked tracks).
+        await editorEdit("remove_clips", { clipIds: intent.clipIds });
+        return;
+
+      case "rippleDeleteRange": {
+        const ranges = intent.ranges.map((r) => [r.start, r.end]);
+        await editorEdit("ripple_delete_ranges", {
+          trackIndex: intent.trackIndex,
+          ranges,
+          units: "frames",
+        });
+        return;
+      }
+
+      case "move": {
+        // Build a move per clip: absolute toFrame = currentStart + frameDelta; toTrack
+        // from the per-clip destination map. (Duplicate-move has no direct tool; it
+        // falls back to the optimistic local apply only — a follow-up seam.)
+        if (intent.duplicate) return;
+        const startById = new Map<string, number>();
+        for (const t of before.tracks) {
+          for (const c of t.clips) startById.set(c.id, c.startFrame);
+        }
+        const moves = intent.clipIds.map((clipId) => {
+          const cur = startById.get(clipId) ?? 0;
+          const m: Record<string, unknown> = {
+            clipId,
+            toFrame: cur + intent.frameDelta,
+          };
+          const toTrack = intent.trackForClip[clipId];
+          if (toTrack !== undefined) m.toTrack = toTrack;
+          return m;
+        });
+        await editorEdit("move_clips", { moves });
+        return;
+      }
+
+      case "trim": {
+        // Resolve the clip's pre-edit geometry to convert the edge delta into absolute
+        // properties. Right edge → durationFrames (+ trimEnd shrinks). Left edge →
+        // startFrame moves (move_clips) AND duration/trimStart change
+        // (set_clip_properties), since set_clip_properties cannot move the start.
+        const clip = findClip(before, intent.clipId);
+        if (!clip) return;
+        if (intent.edge === "right") {
+          const newDuration = Math.max(
+            1,
+            clip.durationFrames + intent.deltaFrames,
+          );
+          await editorEdit("set_clip_properties", {
+            clipIds: [intent.clipId],
+            durationFrames: newDuration,
+          });
+        } else {
+          // Left trim: new start = oldStart + delta; new duration shrinks by delta;
+          // trimStart advances by delta × speed (source frames consumed).
+          const newStart = clip.startFrame + intent.deltaFrames;
+          const newDuration = Math.max(
+            1,
+            clip.durationFrames - intent.deltaFrames,
+          );
+          const newTrimStart =
+            clip.trimStartFrame +
+            Math.round(intent.deltaFrames * (clip.speed || 1));
+          await editorEdit("set_clip_properties", {
+            clipIds: [intent.clipId],
+            durationFrames: newDuration,
+            trimStartFrame: Math.max(0, newTrimStart),
+          });
+          await editorEdit("move_clips", {
+            moves: [{ clipId: intent.clipId, toFrame: Math.max(0, newStart) }],
+          });
+        }
+        return;
+      }
+
+      default:
+        return;
+    }
   }
 
   /** Ctrl+Z — restore the previous user state. Returns true if something was undone. */
   undo(origin: EditOrigin = "user"): boolean {
+    // In Tauri, the agent undo stack lives backend-side; route undo there too so a
+    // UI undo and an agent undo share one timeline. The refetch reconciles the store.
+    if (inTauri() && origin === "user") {
+      void editorEdit("undo", {});
+    }
     const restored = this.history.undoTop(origin);
     if (!restored) return false;
     this.store.setTimeline(restored);
@@ -76,6 +194,8 @@ export class EditController {
 
   /** Ctrl+Shift+Z — re-apply the next user state. */
   redo(origin: EditOrigin = "user"): boolean {
+    // The tool surface has no redo (the reference's agent stack is undo-only); redo
+    // stays local-only for now (a follow-up seam if palmier-history grows redo).
     const restored = this.history.redoTop(origin);
     if (!restored) return false;
     this.store.setTimeline(restored);
@@ -99,4 +219,13 @@ export class EditController {
   snapshot(): TimelineView | null {
     return this.store.getState().timeline;
   }
+}
+
+/** Find a clip by id across all tracks of a timeline (backend-arg geometry). */
+function findClip(timeline: TimelineView, id: string): ClipView | null {
+  for (const track of timeline.tracks) {
+    const c = track.clips.find((cc) => cc.id === id);
+    if (c) return c;
+  }
+  return null;
 }
