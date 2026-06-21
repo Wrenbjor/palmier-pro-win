@@ -71,3 +71,10 @@ orchestrator can open a project window non-interactively for screenshot verifica
   Once the base-URL override lands, PALMIER_ANTHROPIC_BASE_URL=http://127.0.0.1:4000/v1/messages makes
   the in-app agent use the local model (clears the "Anthropic key OR bridge" blocker). Bridge tool-use
   (Anthropic tool_use ↔ OpenAI function-calling through LiteLLM) still to verify for full agentic chat.
+- 2026-06-21 — Merged: E12-S9 toolbar (849cb4a), configurable agent base URL (2c73c95,
+  PALMIER_ANTHROPIC_BASE_URL→with_base_url), ui-smoke mock fix (unregisterListener). Bridge live on
+  :4000. In-app agent→nemotron is wired+component-verified (bridge proven E2E; override unit-tested);
+  full live panel send needs the real-webview harness (UI driving). Next: complete clip-property
+  editing backend (rotation/fades in set_clip_properties); then the tauri-driver real-webview harness
+  to verify human-click editing + the agent panel end-to-end. Remaining gated: signing key, Convex/Clerk,
+  packaging .sig, deeper polish.
