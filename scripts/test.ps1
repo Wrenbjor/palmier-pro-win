@@ -68,11 +68,25 @@ $Milestones = @{
   m4 = @('search')
 }
 
+# Harness sections — automated whole-app self-validation (no cargo, no human clicks).
+# These run a script rather than `cargo test`, but feed the same PASS/FAIL summary.
+#   mcp-smoke  backend oracle: launch app, drive the live MCP server, assert editor state
+#   ui-smoke   Playwright UI smoke: render Home/Project/Settings with a mocked Tauri bridge
+# They are NOT part of the default "all sections" run (they boot the app / a browser);
+# select them explicitly:  -Section mcp-smoke   /   -Section ui-smoke
+$HarnessSections = [ordered]@{
+  'mcp-smoke' = 'mcp-smoke.ps1'
+  'ui-smoke'  = 'ui-smoke'   # handled specially below (pnpm + playwright in e2e/)
+}
+
 if ($List) {
   Write-Host "`nSections:" -ForegroundColor Cyan
   foreach ($k in $Sections.Keys) { "{0,-12} {1}" -f $k, ($Sections[$k] -join ', ') }
   Write-Host "`nMilestones:" -ForegroundColor Cyan
   foreach ($k in $Milestones.Keys | Sort-Object) { "{0,-12} {1}" -f $k, ($Milestones[$k] -join ', ') }
+  Write-Host "`nHarness (automated whole-app validation; select explicitly):" -ForegroundColor Cyan
+  "{0,-12} {1}" -f 'mcp-smoke', 'backend oracle: launch app + drive live MCP server, assert editor state'
+  "{0,-12} {1}" -f 'ui-smoke',  'Playwright UI smoke: render Home/Project/Settings (mocked Tauri bridge)'
   Write-Host "`nTiers: unit (default) | live | all`n" -ForegroundColor Cyan
   exit 0
 }
@@ -85,7 +99,11 @@ if ($Milestone) {
   if (-not $Milestones.ContainsKey($Milestone)) { throw "Unknown milestone '$Milestone'. Known: $($Milestones.Keys -join ', ')" }
   $run = $Milestones[$Milestone]
 } elseif ($Section) {
-  foreach ($s in $Section) { if (-not $Sections.Contains($s)) { throw "Unknown section '$s'. Run -List to see options." } }
+  foreach ($s in $Section) {
+    if (-not ($Sections.Contains($s) -or $HarnessSections.Contains($s))) {
+      throw "Unknown section '$s'. Run -List to see options."
+    }
+  }
   $run = $Section
 } else {
   $run = @($Sections.Keys)   # default: everything
@@ -117,10 +135,37 @@ $capArg   = if ($NoCapture) { if ($tierArgs) { '--nocapture' } else { '-- --noca
 # --- run each section, capture result ----------------------------------------
 $results = @()
 foreach ($sec in $run) {
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+
+  if ($HarnessSections.Contains($sec)) {
+    # --- harness section: run a script, not cargo ----------------------------
+    if ($sec -eq 'mcp-smoke') {
+      $script = Join-Path $PSScriptRoot 'mcp-smoke.ps1'
+      Write-Host "`n=== [$sec] pwsh -File scripts/mcp-smoke.ps1 ===" -ForegroundColor Yellow
+      & pwsh -NoProfile -File $script
+      $code = $LASTEXITCODE
+    }
+    elseif ($sec -eq 'ui-smoke') {
+      # Playwright (mock-Tauri) UI smoke. Vite auto-starts via the e2e webServer
+      # config. `cmd /c` so PATHEXT resolves pnpm/npx (.cmd) without the .ps1 dialog.
+      $e2e = Join-Path $repo 'e2e'
+      Write-Host "`n=== [$sec] (cd e2e) pnpm install + npx playwright test ui-smoke ===" -ForegroundColor Yellow
+      cmd /c "cd /d `"$e2e`" && (if not exist node_modules pnpm install) && npx playwright test ui-smoke --reporter=list"
+      $code = $LASTEXITCODE
+    }
+    $sw.Stop()
+    $results += [pscustomobject]@{
+      Section = $sec
+      Status  = if ($code -eq 0) { 'PASS' } else { "FAIL($code)" }
+      Seconds = [math]::Round($sw.Elapsed.TotalSeconds,1)
+    }
+    continue
+  }
+
+  # --- normal cargo section --------------------------------------------------
   $pkgs = ($Sections[$sec] | ForEach-Object { "-p $_" }) -join ' '
   $cmd  = "cargo test $pkgs $featArgs $tierArgs $capArg".Trim() -replace '\s+',' '
   Write-Host "`n=== [$sec] $cmd ===" -ForegroundColor Yellow
-  $sw = [System.Diagnostics.Stopwatch]::StartNew()
   cmd /c "call `"$vcvars`" >nul 2>&1 && cd /d `"$repo`" && $cmd"
   $code = $LASTEXITCODE
   $sw.Stop()

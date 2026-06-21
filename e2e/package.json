@@ -1,0 +1,15 @@
+{
+  "name": "palmier-pro-e2e",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Automated UI smoke tests for palmier-pro-win. Layer A is a mock-Tauri Playwright suite that drives the Vite-served React UI in headless Chromium with a seeded window.__TAURI_INTERNALS__ bridge. Layer B (optional) is real-webview e2e via tauri-driver.",
+  "scripts": {
+    "test": "playwright test",
+    "test:ui-smoke": "playwright test ui-smoke",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0"
+  }
+}
