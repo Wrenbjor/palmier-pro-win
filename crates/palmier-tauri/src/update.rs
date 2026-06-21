@@ -24,6 +24,18 @@
 //! than failing). A release build that ships a feed enables `updater-plugin` and the
 //! real `app.updater()?.check()` runs. This keeps the default build green with no
 //! signing material while preserving the full glue.
+//!
+//! ## E12-S13 placeholders — HUMAN-OWNED RELEASE BLOCKERS
+//! `tauri.conf.json` ships a `plugins.updater` block with **placeholder** values that
+//! a human must replace before public release:
+//!   - `pubkey`: the literal `PLACEHOLDER_REPLACE_WITH_REAL_TAURI_ED25519_PUBKEY_…`.
+//!     Generate the real keypair with `tauri signer generate`; commit the **public**
+//!     key here and keep the **private** key in CI secrets
+//!     (`TAURI_SIGNING_PRIVATE_KEY` / `…_PASSWORD`).
+//!   - `endpoints[0]`: the placeholder host `https://updates.palmier.io/win/latest.json`
+//!     (OQ-9 — the Convex/manifest backend does not exist yet).
+//! Until BOTH are real (and `updater-plugin` is enabled), the updater stays silently
+//! disabled — exactly the Sparkle-without-`SUFeedURL` no-op (E12-S13 AC).
 
 use palmier_update::{CheckOutcome, UpdateEvent, Updater, UPDATE_EVENT};
 use tauri::{AppHandle, Emitter, Runtime};
