@@ -199,14 +199,30 @@ pub fn select_client(api_key: Option<&str>, is_signed_in: bool) -> SelectedBacke
 /// - [`SelectedBackend::None`] → [`AgentClientError::Upstream`] carrying
 ///   [`NO_BACKEND_MESSAGE`].
 ///
+/// `base_url` optionally overrides the Anthropic Messages endpoint for the BYOK
+/// path (e.g. a **local Anthropic-compatible bridge** such as LiteLLM fronting an
+/// OpenAI-compatible model — BYOK-with-a-custom-endpoint / self-host). `None`
+/// preserves the default direct-to-`api.anthropic.com` behavior. The override only
+/// affects the Anthropic branch; the proxied/none branches ignore it.
+///
 /// # Errors
 /// - [`AgentClientError::Upstream`] when no backend is available, the proxied path
 ///   is selected (E8-S6 not yet landed), or the `reqwest`/rustls client fails to
 ///   build.
-pub fn build_client(backend: SelectedBackend) -> Result<Box<dyn AgentClient>, AgentClientError> {
+pub fn build_client(
+    backend: SelectedBackend,
+    base_url: Option<&str>,
+) -> Result<Box<dyn AgentClient>, AgentClientError> {
     match backend {
         SelectedBackend::Anthropic { api_key } => {
-            let client = crate::anthropic_client::AnthropicClient::new(api_key)?;
+            // A custom base URL (local bridge / self-host) routes through
+            // `with_base_url`; absent it, the default endpoint via `new`.
+            let client = match base_url {
+                Some(url) => {
+                    crate::anthropic_client::AnthropicClient::with_base_url(api_key, url)?
+                }
+                None => crate::anthropic_client::AnthropicClient::new(api_key)?,
+            };
             Ok(Box::new(client))
         }
         SelectedBackend::Palmier => Err(AgentClientError::Upstream(
@@ -221,14 +237,19 @@ pub fn build_client(backend: SelectedBackend) -> Result<Box<dyn AgentClient>, Ag
 /// (key present) yields a real
 /// [`AnthropicClient`](crate::anthropic_client::AnthropicClient).
 ///
+/// `base_url` optionally overrides the Anthropic Messages endpoint for the BYOK
+/// path (local Anthropic-compatible bridge / self-host). `None` ⇒ the default
+/// `api.anthropic.com` behavior.
+///
 /// # Errors
 /// Propagates [`build_client`]'s errors (no backend / proxied-not-wired / client
 /// build failure).
 pub fn select_and_build_client(
     api_key: Option<&str>,
     is_signed_in: bool,
+    base_url: Option<&str>,
 ) -> Result<Box<dyn AgentClient>, AgentClientError> {
-    build_client(select_client(api_key, is_signed_in))
+    build_client(select_client(api_key, is_signed_in), base_url)
 }
 
 /// Whether a turn may be streamed at all (reference `canStream =
@@ -355,10 +376,30 @@ mod tests {
     #[test]
     fn build_client_byok_key_yields_a_real_client() {
         // A present key builds a concrete AnthropicClient (no network at build time).
-        let client = build_client(SelectedBackend::Anthropic {
-            api_key: "sk-ant-xyz".to_string(),
-        });
+        let client = build_client(
+            SelectedBackend::Anthropic {
+                api_key: "sk-ant-xyz".to_string(),
+            },
+            None,
+        );
         assert!(client.is_ok(), "BYOK key must build a live client");
+    }
+
+    #[test]
+    fn build_client_byok_with_custom_base_url_yields_a_real_client() {
+        // A custom base URL (local Anthropic-compatible bridge / self-host) routes
+        // through `with_base_url`; it still builds a live client (no network at
+        // build time). This is the seam selection the env-var override drives.
+        let client = build_client(
+            SelectedBackend::Anthropic {
+                api_key: "sk-ant-xyz".to_string(),
+            },
+            Some("http://127.0.0.1:4000/v1/messages"),
+        );
+        assert!(
+            client.is_ok(),
+            "BYOK key + custom base URL must build a live client"
+        );
     }
 
     #[test]
@@ -366,7 +407,7 @@ mod tests {
         // E8-S6 lands the proxied transport; until then this is an explicit error,
         // not a silent no-op. (Box<dyn AgentClient> isn't Debug, so match rather
         // than unwrap_err.)
-        match build_client(SelectedBackend::Palmier) {
+        match build_client(SelectedBackend::Palmier, None) {
             Err(AgentClientError::Upstream(_)) => {}
             Ok(_) => panic!("proxied path must not build a client yet (E8-S6)"),
             Err(other) => panic!("unexpected error: {other}"),
@@ -375,7 +416,7 @@ mod tests {
 
     #[test]
     fn build_client_none_carries_no_backend_message() {
-        match build_client(SelectedBackend::None) {
+        match build_client(SelectedBackend::None, None) {
             Err(e) => assert_eq!(e, AgentClientError::Upstream(NO_BACKEND_MESSAGE.to_string())),
             Ok(_) => panic!("no backend must not build a client"),
         }
@@ -384,9 +425,14 @@ mod tests {
     #[test]
     fn select_and_build_prefers_byok() {
         // A key present + signed in → the BYOK client is built (key wins).
-        assert!(select_and_build_client(Some("sk-ant-xyz"), true).is_ok());
+        assert!(select_and_build_client(Some("sk-ant-xyz"), true, None).is_ok());
+        // The same with a custom base URL still builds (local-bridge path).
+        assert!(
+            select_and_build_client(Some("sk-ant-xyz"), true, Some("http://127.0.0.1:4000/v1/messages"))
+                .is_ok()
+        );
         // No key, not signed in → no-backend error.
-        match select_and_build_client(None, false) {
+        match select_and_build_client(None, false, None) {
             Err(e) => assert_eq!(e, AgentClientError::Upstream(NO_BACKEND_MESSAGE.to_string())),
             Ok(_) => panic!("no backend must not build a client"),
         }
