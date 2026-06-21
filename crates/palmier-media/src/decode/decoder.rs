@@ -7,14 +7,23 @@
 //! it); `palmier-engine` never opens its own format context.
 //!
 //! ## HW vs CPU decode
-//! The decoder *attempts* a hardware device (d3d11va / dxva2 on Windows, vaapi
-//! on Linux) and **falls back to CPU** when none initializes — the codec still
-//! decodes, just on the CPU. We attempt the HW device via the `ffmpeg-next`
-//! FFI (`av_hwdevice_ctx_create`) because the safe wrapper does not expose it on
-//! 7.1; the attempt is best-effort and never fatal. HW *surfaces* still get
-//! transferred down to CPU planes here (the engine's texture upload is E5-S8) —
-//! we are a CPU-frame producer either way; HW decode only offloads the entropy/
-//! IDCT work from the CPU. [`HwDecodeStatus`] records which path engaged.
+//! The decoder **decodes on the CPU by default**. Hardware decode (d3d11va /
+//! dxva2 on Windows, vaapi on Linux) is **opt-in** via the
+//! `PALMIER_ENABLE_HW_DECODE` env var. We are a CPU-frame producer either way —
+//! HW decode only offloads the entropy/IDCT work; the engine's texture upload is
+//! E5-S8 — so CPU is the correct, always-works default and HW is an
+//! optimization. [`HwDecodeStatus`] records which path engaged.
+//!
+//! Why CPU is the default: enabling HW requires three things to line up (a
+//! `get_format` callback that selects the HW surface format, a build that
+//! populates the frame's `hw_frames_ctx`, and a working
+//! `av_hwframe_transfer_data`). On the shipped Windows FFmpeg 7.1 + ffmpeg-next
+//! build, attaching a `hw_device_ctx` **without** a `get_format` callback made
+//! the D3D11VA decoder return `AVERROR_INVALIDDATA` for valid h264 (the
+//! black-preview bug); even with `get_format` added, the D3D11 surfaces don't
+//! transfer cleanly to CPU on this build. So HW stays behind the flag until the
+//! full surface-transfer path is verified on the target box. See
+//! [`open_video_decoder`].
 //!
 //! ## Source-frame addressing
 //! A request is `(media_ref, source_frame)`. We convert the frame index to a
@@ -64,6 +73,19 @@ impl HwKind {
             HwKind::D3d11va => ff::ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA,
             HwKind::Dxva2 => ff::ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_DXVA2,
             HwKind::Vaapi => ff::ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_VAAPI,
+        }
+    }
+
+    /// The hardware **surface** pixel format the decoder emits for this device.
+    /// The `get_format` callback must return this from the offered list, or the
+    /// decoder silently falls back to its software path and produces broken
+    /// output (the black-preview bug: without selecting the HW format the
+    /// D3D11VA decoder errors with `AVERROR_INVALIDDATA`).
+    fn hw_pix_fmt(self) -> ff::ffi::AVPixelFormat {
+        match self {
+            HwKind::D3d11va => ff::ffi::AVPixelFormat::AV_PIX_FMT_D3D11,
+            HwKind::Dxva2 => ff::ffi::AVPixelFormat::AV_PIX_FMT_DXVA2_VLD,
+            HwKind::Vaapi => ff::ffi::AVPixelFormat::AV_PIX_FMT_VAAPI,
         }
     }
 
@@ -248,9 +270,13 @@ impl Decoder {
     /// frame. The returned [`DecodedFrame`] carries `source_frame` so the cache
     /// can key it.
     pub fn decode_frame(&mut self, source_frame: u64) -> Result<DecodedFrame, DecodeError> {
-        // Convert the frame index to a stream timestamp: t = frame / fps, then
-        // express it in the stream's time base (round ties-away).
-        let target_ts = self.frame_to_stream_ts(source_frame);
+        // Seek target in AV_TIME_BASE units (microseconds). `Input::seek` calls
+        // `avformat_seek_file(stream_index = -1, …)`, which interprets the
+        // timestamp in AV_TIME_BASE — NOT the stream time-base. Passing a
+        // stream-time-base ts here (as a prior version did) over-shoots wildly
+        // for any non-zero frame (e.g. 15360-tbn streams) and lands past EOF,
+        // yielding `FrameOutOfRange`. Match the proven thumbnail path's units.
+        let target_ts = self.frame_to_av_time_base(source_frame);
 
         // Seek to slightly before the target so the decoded GOP starts at/under
         // it; the open range end `..target_ts` lands on the first keyframe ≤
@@ -310,13 +336,12 @@ impl Decoder {
         self.frame_to_decoded(frame, source_frame)
     }
 
-    /// Convert a source frame index to a stream timestamp (in `time_base`).
-    fn frame_to_stream_ts(&self, source_frame: u64) -> i64 {
+    /// Convert a source frame index to a seek timestamp in **AV_TIME_BASE**
+    /// units (microseconds) — the unit `Input::seek` (stream_index −1) expects.
+    /// `t = frame / fps` seconds × AV_TIME_BASE, rounding ties away from zero.
+    fn frame_to_av_time_base(&self, source_frame: u64) -> i64 {
         let seconds = source_frame as f64 / self.fps;
-        let tb = self.time_base;
-        // ts = seconds * (den / num)  (time_base = num/den seconds-per-unit)
-        let ts = seconds * tb.denominator() as f64 / tb.numerator() as f64;
-        ts.round() as i64
+        (seconds * f64::from(ff::ffi::AV_TIME_BASE)).round() as i64
     }
 
     /// Convert a decoded ffmpeg frame into our [`DecodedFrame`] CPU-plane form.
@@ -390,16 +415,21 @@ fn pts_to_frame_with(pts: i64, time_base: ff::Rational, fps: f64) -> u64 {
 /// If `frame` is on a HW surface (`format` is a HW pixel format), transfer it to
 /// a software frame; otherwise return it unchanged.
 fn transfer_if_hw(frame: ff::frame::Video) -> Result<ff::frame::Video, DecodeError> {
-    // A HW frame has a non-null `hw_frames_ctx`. Use the FFI transfer to pull it
-    // down to a software frame the planes-copy can read.
+    // A HW frame lives on a device surface: either it has a `hw_frames_ctx`, or —
+    // more reliably across hwaccels — its pixel format is a HW surface format
+    // (e.g. `d3d11`, `dxva2_vld`, `vaapi`) that the CPU planes-copy / swscaler
+    // can't read. Detect by BOTH so we never feed a HW surface to swscale (the
+    // "d3d11 is not supported as input pixel format" black-preview symptom).
     // SAFETY: `frame.as_ptr()` is a valid AVFrame for the call's duration.
-    let is_hw = unsafe { !(*frame.as_ptr()).hw_frames_ctx.is_null() };
+    let has_frames_ctx = unsafe { !(*frame.as_ptr()).hw_frames_ctx.is_null() };
+    let is_hw = has_frames_ctx || is_hw_pixel_format(frame.format());
     if !is_hw {
         return Ok(frame);
     }
     let mut sw = ff::frame::Video::empty();
     // SAFETY: both frames are valid AVFrames; av_hwframe_transfer_data fills `sw`
-    // from the HW surface in `frame`.
+    // from the HW surface in `frame`. `sw.format` is left as NONE so ffmpeg picks
+    // the first supported software format for the surface (e.g. nv12 for D3D11).
     let ret = unsafe {
         ff::ffi::av_hwframe_transfer_data(sw.as_mut_ptr(), frame.as_ptr(), 0)
     };
@@ -408,9 +438,28 @@ fn transfer_if_hw(frame: ff::frame::Video) -> Result<ff::frame::Video, DecodeErr
             "av_hwframe_transfer_data failed ({ret})"
         )));
     }
-    // Carry timestamps across the transfer.
+    // Carry timestamps + display dimensions across the transfer.
     sw.set_pts(frame.pts());
     Ok(sw)
+}
+
+/// Whether `format` is a hardware **surface** pixel format (one that lives on a
+/// device, not in system memory). Such a frame must be transferred to a software
+/// frame before any CPU copy / swscale. We check the pixfmt descriptor's HWACCEL
+/// flag so this stays correct for every device family (d3d11, dxva2, vaapi, …).
+fn is_hw_pixel_format(format: ff::format::Pixel) -> bool {
+    if format == ff::format::Pixel::None {
+        return false;
+    }
+    // SAFETY: `av_pix_fmt_desc_get` returns a pointer into a static table (or
+    // null for an unknown format); we only read the flags field.
+    unsafe {
+        let desc = ff::ffi::av_pix_fmt_desc_get(format.into());
+        if desc.is_null() {
+            return false;
+        }
+        ((*desc).flags & ff::ffi::AV_PIX_FMT_FLAG_HWACCEL as u64) != 0
+    }
 }
 
 /// Copy the three planar-YUV planes (each with its own sub-sampled dims/stride)
@@ -488,9 +537,26 @@ fn rate_to_f64(r: ff::Rational) -> Option<f64> {
     }
 }
 
-/// Open a video decoder from stream parameters, attempting a platform HW device
-/// first and falling back to CPU. Returns the decoder, the engaged status, and
-/// the HW device (kept alive alongside the codec).
+/// Open a video decoder from stream parameters. **Decodes on the CPU by
+/// default**; HW (D3D11VA/DXVA2/VAAPI) is **opt-in** via `PALMIER_ENABLE_HW_DECODE`.
+/// Returns the decoder, the engaged status, and the HW device (kept alive
+/// alongside the codec).
+///
+/// ## Why CPU is the default (the black-preview fix)
+/// The HW path needs three things to all line up: a `get_format` callback that
+/// selects the HW surface format, a decoder build that populates the frame's
+/// `hw_frames_ctx`, and a working `av_hwframe_transfer_data` to pull the surface
+/// back to system memory. On the shipped Windows FFmpeg 7.1 + ffmpeg-next build,
+/// attaching `hw_device_ctx` **without** a `get_format` callback made the
+/// D3D11VA decoder return `AVERROR_INVALIDDATA` ("Invalid data found when
+/// processing input") for valid h264 — the compositor then skipped the layer and
+/// the preview went black. Adding `get_format` fixes the decode, but the D3D11
+/// surfaces it emits don't transfer cleanly to CPU on this build
+/// (`av_hwframe_transfer_data` → EINVAL). Since this crate is a CPU-frame
+/// producer regardless (HW only offloads entropy/IDCT — see module docs), the
+/// correct, robust default is the CPU path, which decodes every valid clip. HW
+/// stays available behind the env flag for boxes where the full surface-transfer
+/// path is verified.
 ///
 /// Taking `parameters` (rather than a built context) lets us rebuild a fresh
 /// context for the CPU fallback after a failed HW attach — `.decoder()` consumes
@@ -498,33 +564,80 @@ fn rate_to_f64(r: ff::Rational) -> Option<f64> {
 fn open_video_decoder(
     parameters: &ff::codec::Parameters,
 ) -> Result<(ff::decoder::Video, HwDecodeStatus, Option<HwDevice>), DecodeError> {
-    for &kind in HwKind::platform_order() {
-        let Some(dev) = create_hw_device(kind) else {
-            continue;
-        };
-        // Build a fresh context for the HW attempt.
-        let ctx = ff::codec::context::Context::from_parameters(parameters.clone())?;
-        // SAFETY: `ctx.as_ptr()` is a valid, unopened AVCodecContext. `av_buffer_ref`
-        // adds a reference the codec owns; our `HwDevice` keeps the original alive.
-        // Setting `hw_device_ctx` before opening enables HW decode for codecs that
-        // support the device.
-        unsafe {
-            let raw = ctx.as_ptr() as *mut ff::ffi::AVCodecContext;
-            if !raw.is_null() && !dev.ptr.is_null() {
-                (*raw).hw_device_ctx = ff::ffi::av_buffer_ref(dev.ptr);
+    // Opt-in only: HW decode is off unless explicitly enabled. CPU is the
+    // verified-correct default that unblocks the preview on every box.
+    let hw_enabled = std::env::var_os("PALMIER_ENABLE_HW_DECODE").is_some();
+    if hw_enabled {
+        for &kind in HwKind::platform_order() {
+            let Some(dev) = create_hw_device(kind) else {
+                continue;
+            };
+            // Build a fresh context for the HW attempt.
+            let ctx = ff::codec::context::Context::from_parameters(parameters.clone())?;
+            // SAFETY: `ctx.as_ptr()` is a valid, unopened AVCodecContext.
+            // `av_buffer_ref` adds a reference the codec owns; our `HwDevice` keeps
+            // the original alive. Setting `hw_device_ctx` + the `get_format`
+            // callback before opening enables HW decode: the callback selects the
+            // HW surface format (stashed in `opaque`) — without it the decoder
+            // errors with `AVERROR_INVALIDDATA`.
+            unsafe {
+                let raw = ctx.as_ptr() as *mut ff::ffi::AVCodecContext;
+                if !raw.is_null() && !dev.ptr.is_null() {
+                    (*raw).hw_device_ctx = ff::ffi::av_buffer_ref(dev.ptr);
+                    (*raw).opaque = kind.hw_pix_fmt() as i32 as *mut std::ffi::c_void;
+                    (*raw).get_format = Some(hw_get_format);
+                }
             }
+            if let Ok(decoder) = ctx.decoder().video() {
+                return Ok((decoder, HwDecodeStatus::Hardware(kind), Some(dev)));
+            }
+            // HW open failed (codec doesn't support this device, etc.) — drop the
+            // device and fall through to the CPU path with a fresh context.
         }
-        if let Ok(decoder) = ctx.decoder().video() {
-            return Ok((decoder, HwDecodeStatus::Hardware(kind), Some(dev)));
-        }
-        // HW open failed (codec doesn't support this device, etc.) — drop the
-        // device and fall through to the CPU path with a fresh context.
     }
 
-    // CPU path: a fresh context from the same parameters.
+    // CPU path (the default): a fresh context from the same parameters.
     let ctx = ff::codec::context::Context::from_parameters(parameters.clone())?;
     let decoder = ctx.decoder().video()?;
     Ok((decoder, HwDecodeStatus::Cpu, None))
+}
+
+/// `AVCodecContext.get_format` callback for hardware decode.
+///
+/// FFmpeg calls this during stream setup with the null-terminated list of pixel
+/// formats the decoder can output (HW surface formats first, then the software
+/// fallback). We MUST return the HW surface format we set up the device for —
+/// returning the software format here (the default callback's behaviour when no
+/// `hw_frames_ctx` is pre-built) is what made the D3D11VA path emit
+/// `AVERROR_INVALIDDATA` and a black preview. The target HW pixfmt was stashed in
+/// `ctx.opaque` by [`open_video_decoder`]. If the HW format isn't offered (codec
+/// can't HW-decode this stream) we return the last entry — the software format —
+/// so the decoder degrades to CPU instead of failing.
+///
+/// SAFETY: `ctx` is a valid `AVCodecContext` and `fmts` is a valid
+/// `AV_PIX_FMT_NONE`-terminated array, both supplied by FFmpeg for the call's
+/// duration. We only read them.
+unsafe extern "C" fn hw_get_format(
+    ctx: *mut ff::ffi::AVCodecContext,
+    fmts: *const ff::ffi::AVPixelFormat,
+) -> ff::ffi::AVPixelFormat {
+    // SAFETY: `ctx`/`fmts` are valid for the call; `fmts` is AV_PIX_FMT_NONE-
+    // terminated. We only read them. (Rust 2024 requires the explicit block.)
+    unsafe {
+        let want = (*ctx).opaque as i32;
+        let mut p = fmts;
+        let mut last = ff::ffi::AVPixelFormat::AV_PIX_FMT_NONE;
+        while *p != ff::ffi::AVPixelFormat::AV_PIX_FMT_NONE {
+            last = *p;
+            if (*p) as i32 == want {
+                return *p; // the HW surface format we configured the device for
+            }
+            p = p.add(1);
+        }
+        // HW format not offered — fall back to whatever software format was last
+        // in the list so the decoder stays usable on the CPU.
+        last
+    }
 }
 
 /// Create a HW device context of `kind`, or `None` if it doesn't initialize on
