@@ -121,6 +121,13 @@ fn main() {
             preview::preview_seek,
             preview::preview_step,
             preview::preview_set_tab,
+            // Project editor bridge — read the shared timeline / media library and
+            // dispatch mutating tools through the ONE shared executor (the same owner
+            // the MCP server + in-app agent drive). `editor_edit` emits
+            // `timeline://changed` so the UI refetches without polling.
+            commands::editor_get_timeline,
+            commands::editor_get_media,
+            commands::editor_edit,
             // M2 boot integration — the in-app agent command surface (the panel's
             // agent_send/agent_cancel + agent_status/agent_set_pref seam). Tool
             // dispatch routes into the SAME shared executor the MCP server uses.

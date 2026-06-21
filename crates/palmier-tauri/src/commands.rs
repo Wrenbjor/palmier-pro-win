@@ -19,11 +19,22 @@
 use std::sync::Mutex;
 
 use serde::Serialize;
+use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
+use palmier_tools::ToolDispatch;
+
+use crate::agent::AgentState;
 use crate::settings::{self, Settings};
 use crate::window::{self, WindowKind};
 use crate::AppSettings;
+
+/// The Tauri event emitted to every window after the shared `EditorState` changes
+/// (an in-app/MCP edit or an `editor_edit` mutation). The Project surface listens
+/// for this and refetches `editor_get_timeline` / `editor_get_media` so the panels
+/// reflect the new state — the UI never polls. Emitted both here (UI edits) and
+/// from the agent's tool-dispatch path (`agent.rs`) so AGENT edits update the UI.
+pub const TIMELINE_CHANGED_EVENT: &str = "timeline://changed";
 
 /// Live (mutable) settings, behind a `Mutex`, in Tauri managed state. Seeded from the
 /// boot-time snapshot; the General-tab toggles mutate + persist it.
@@ -332,9 +343,191 @@ pub fn send_feedback(
     convex.send_feedback(jwt, &req).map_err(|e| e.to_string())
 }
 
+// ─── editor read / edit bridge (Project window) ──────────────────────────────────
+//
+// The Project surface reads the timeline + media library and dispatches mutating
+// tools through the ONE shared `Arc<ToolExecutor>` (the same owner the MCP server +
+// in-app agent drive — `agent.rs`). Reads run the real `palmier_tools::read` bodies;
+// edits run any of the 30 tools via `executor.execute`. After a successful mutation
+// we emit `timeline://changed` so every window refetches (the UI never polls).
+
+/// Pull the single JSON text block out of a [`palmier_tools::ToolResult`]. The READ
+/// bodies (`get_timeline` / `get_media`) return exactly one `Block::Text` carrying a
+/// JSON string; this parses it back to a `serde_json::Value` for the frontend. An
+/// error result (or a non-text / unparseable block) surfaces as an `Err(String)`.
+fn tool_result_to_json(result: palmier_tools::ToolResult) -> Result<Value, String> {
+    let text = result
+        .content
+        .into_iter()
+        .find_map(|block| match block {
+            palmier_tools::Block::Text(s) => Some(s),
+            palmier_tools::Block::Image { .. } => None,
+        })
+        .ok_or_else(|| "tool returned no text content".to_string())?;
+    if result.is_error {
+        return Err(text);
+    }
+    serde_json::from_str(&text).map_err(|e| format!("failed to parse tool JSON: {e}"))
+}
+
+/// `editor_get_timeline` — the shaped timeline JSON the Project window renders
+/// (reference `get_timeline`). Reads the shared `EditorState` through the executor;
+/// `args` carries the optional `{ startFrame?, endFrame? }` window (default: whole
+/// timeline). Returns the parsed JSON object (`adapt.ts` maps it to a `TimelineView`).
+#[tauri::command]
+pub fn editor_get_timeline(
+    agent: State<'_, AgentState>,
+    args: Option<Value>,
+) -> Result<Value, String> {
+    let args = args.unwrap_or_else(|| Value::Object(Default::default()));
+    let result = agent
+        .executor
+        .with_state_ref(|state| palmier_tools::read::get_timeline(state, &args));
+    tool_result_to_json(result)
+}
+
+/// `editor_get_media` — the media-library JSON the Media panel renders (reference
+/// `get_media`). Reads the shared `EditorState` through the executor and returns the
+/// parsed `{ assets: [...] }` object (`media-panel/adapt.ts` maps it to a snapshot).
+#[tauri::command]
+pub fn editor_get_media(agent: State<'_, AgentState>) -> Result<Value, String> {
+    let result = agent
+        .executor
+        .with_state_ref(palmier_tools::read::get_media);
+    tool_result_to_json(result)
+}
+
+/// `editor_edit` — dispatch any mutating tool (`add_clips`, `move_clips`,
+/// `split_clip`, `remove_clips`, `set_clip_properties`, `ripple_delete_ranges`,
+/// `undo`, `import_media`, `create_folder`, …) through the SHARED executor — the
+/// SAME `Arc<ToolExecutor>` the MCP server + in-app agent use, so UI edits land on
+/// one timeline / one undo timeline (FOUNDATION §4, PRD §10).
+///
+/// `name` is the tool wire name, `args` its inputSchema-shaped arguments. Returns the
+/// tool's result JSON (the READ-shaped payload some tools echo, else `{}`), or the
+/// tool error string. On success emits `timeline://changed` to every window so the UI
+/// refetches the new state.
+#[tauri::command]
+pub fn editor_edit<R: Runtime>(
+    app: AppHandle<R>,
+    agent: State<'_, AgentState>,
+    name: String,
+    args: Option<Value>,
+) -> Result<Value, String> {
+    let args = args.unwrap_or_else(|| Value::Object(Default::default()));
+    // `execute` ignores its ctx arg (it re-snapshots its own IdUniverse), so reuse the
+    // agent module's trivial adapter context.
+    let result = agent
+        .executor
+        .execute(&name, args, &crate::agent::adapter_context());
+
+    // Parse the result for the caller. A tool-error result becomes an `Err(String)`;
+    // a non-JSON/empty text block (some mutators return prose) becomes `Value::Null`,
+    // which the frontend treats as "no echo, refetch".
+    let parsed = if result.is_error {
+        let msg = result
+            .content
+            .into_iter()
+            .find_map(|b| match b {
+                palmier_tools::Block::Text(s) => Some(s),
+                palmier_tools::Block::Image { .. } => None,
+            })
+            .unwrap_or_else(|| format!("tool {name} failed"));
+        return Err(msg);
+    } else {
+        let text: Option<String> = result.content.into_iter().find_map(|b| match b {
+            palmier_tools::Block::Text(s) => Some(s),
+            palmier_tools::Block::Image { .. } => None,
+        });
+        match text {
+            Some(s) => serde_json::from_str::<Value>(&s).unwrap_or(Value::Null),
+            None => Value::Null,
+        }
+    };
+
+    // A successful mutation changed the shared EditorState → notify every window so the
+    // panels refetch. Logged-but-non-fatal on emit failure (the edit already landed).
+    if let Err(err) = app.emit(TIMELINE_CHANGED_EVENT, ()) {
+        tracing::warn!(target: "app", error = %err, "failed to emit timeline://changed");
+    }
+    tracing::info!(target: "app", tool = %name, "editor_edit dispatched (shared executor)");
+    Ok(parsed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use palmier_tools::{ToolExecutor, ToolResult};
+    use std::sync::Arc;
+
+    #[test]
+    fn tool_result_to_json_parses_text_block() {
+        let result = ToolResult::ok("{\"fps\":30,\"tracks\":[]}".to_string());
+        let json = tool_result_to_json(result).expect("should parse");
+        assert_eq!(json.get("fps").and_then(Value::as_i64), Some(30));
+    }
+
+    #[test]
+    fn tool_result_to_json_surfaces_error() {
+        let result = ToolResult::error("bad args");
+        let err = tool_result_to_json(result).unwrap_err();
+        assert_eq!(err, "bad args");
+    }
+
+    /// The editor read/edit bridge runs over the SAME shared executor the MCP server +
+    /// in-app agent use: a `get_timeline` read, an `add_clips`-style edit, then a read
+    /// that observes it — proving `editor_get_timeline` / `editor_edit` operate on one
+    /// `EditorState`. (Exercises the executor flow the command wrappers delegate to;
+    /// the `#[tauri::command]` fns themselves need a live `State`, covered by smoke.)
+    #[test]
+    fn editor_bridge_reads_and_edits_one_shared_state() {
+        let executor = Arc::new(ToolExecutor::new());
+
+        // Seed a media asset so add_clips has something to place (mirrors a loaded lib).
+        executor.with_state_mut(|state| {
+            state.library.assets.push(palmier_model::MediaAsset::new(
+                "asset-1",
+                "clip.mp4",
+                palmier_model::ClipType::Video,
+                palmier_model::MediaSource::External {
+                    absolute_path: "/clip.mp4".to_string(),
+                },
+                1.0,
+            ));
+        });
+
+        // get_timeline read → parses to a JSON object with the injected fields.
+        let read = executor.with_state_ref(|s| {
+            palmier_tools::read::get_timeline(s, &Value::Object(Default::default()))
+        });
+        let before = tool_result_to_json(read).expect("read parses");
+        assert!(before.get("totalFrames").is_some());
+        let tracks_before = before
+            .get("tracks")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+
+        // add_clips via execute (the same path editor_edit uses) — auto-creates a track.
+        let args = serde_json::json!({
+            "entries": [{ "mediaRef": "asset-1", "startFrame": 0, "durationFrames": 30 }]
+        });
+        let edit = executor.execute("add_clips", args, &crate::agent::adapter_context());
+        assert!(!edit.is_error, "add_clips should succeed: {:?}", edit.content);
+
+        // A subsequent read observes the new track/clip on the SAME state.
+        let read2 = executor.with_state_ref(|s| {
+            palmier_tools::read::get_timeline(s, &Value::Object(Default::default()))
+        });
+        let after = tool_result_to_json(read2).expect("read parses");
+        let tracks_after = after
+            .get("tracks")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+        assert!(tracks_after > tracks_before, "add_clips created a track");
+    }
 
     #[test]
     fn settings_snapshot_serializes_camel_case() {

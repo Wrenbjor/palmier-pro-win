@@ -70,6 +70,15 @@ impl ToolContext for AdapterContext {
     }
 }
 
+/// A trivial [`ToolContext`] for callers outside this module (the `editor_edit`
+/// command in `commands.rs`). [`ToolExecutor::execute`] ignores the ctx arg, so any
+/// context that satisfies the trait works — this hands one out without exposing the
+/// private [`AdapterContext`] type.
+#[must_use]
+pub fn adapter_context() -> impl ToolContext {
+    AdapterContext
+}
+
 /// Adapts the shared [`ToolExecutor`] (the MCP server's `palmier_tools::ToolDispatch`)
 /// to the agent loop's [`ToolDispatcher`] seam, mapping a `palmier_tools::ToolResult`
 /// to a `palmier_agent::DispatchResult` **1:1** (text/image blocks pass through, the
@@ -1055,6 +1064,15 @@ impl<R: Runtime> ToolDispatcher for StreamingDispatcher<R> {
                 text,
             },
         );
+        // The agent edits the SHARED EditorState — notify every window so the Project
+        // surface's panels refetch (the same `timeline://changed` the UI's `editor_edit`
+        // emits, so AGENT edits update the UI too). Only non-error dispatches can have
+        // mutated state; a read/echo refetch is cheap and idempotent. Logged-non-fatal.
+        if !result.is_error {
+            if let Err(err) = self.app.emit(crate::commands::TIMELINE_CHANGED_EVENT, ()) {
+                tracing::warn!(target: "agent", error = %err, "failed to emit timeline://changed");
+            }
+        }
         result
     }
 }
