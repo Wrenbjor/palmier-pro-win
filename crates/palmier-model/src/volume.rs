@@ -20,10 +20,23 @@
 //! 2. **Rubber-band DRAW axis** — `RUBBER_BAND_TOP_DB = +6`, `RUBBER_BAND_BOTTOM_DB
 //!    = −60` (reference `ClipRenderer.volumeRubberBand{Top,Bottom}Db`). The on-canvas
 //!    audio rubber-band's vertical axis; consumed by Epic 3 timeline rendering.
-//! 3. **Keyframe-storage dB floor** — **UNVERIFIED** against the reference. Volume
-//!    keyframe values are stored in dB (`Clip.volume_track`), but the storage floor
-//!    is not confirmed; do NOT silently assume −60. See the `// VERIFY:` marker on
-//!    [`KEYFRAME_STORAGE_FLOOR_DB`] below.
+//! 3. **Keyframe-storage dB floor** — **CONFIRMED = −60** (E12-S1). Volume keyframe
+//!    values are stored in dB (`Clip.volume_track`). The reference applies **no
+//!    separate storage-level clamp**: the only floor on a stored volume-keyframe dB
+//!    value is the inspector field's editing range `[−60, +15]`
+//!    (`ScrubbableNumberField range: VolumeScale.floorDb...ceilingDb`). The write
+//!    path (`writeVolume` → `upsertKeyframe(in: \.volumeTrack, value: valueDb)`) and
+//!    `KeyframeTrack` itself do not clamp. Therefore the effective storage floor is
+//!    [`FLOOR_DB`] (−60), and FOUNDATION §5.3/§5.5's claim of a **−120** storage
+//!    floor is **incorrect** — do NOT adopt −120, and do NOT silently set a 0
+//!    ceiling. See [`KEYFRAME_STORAGE_FLOOR_DB`] below.
+//!
+//! ### E12-S1 decision (ruling #9)
+//!
+//! Field clamps to **[−60, +15]**; the keyframe-storage floor is **confirmed −60**
+//! (no distinct −120 floor exists in the reference). This [`VolumeScale`] is the
+//! **single source of truth** consumed by both the Inspector volume field (E12-S5)
+//! and the keyframe lane (E12-S8); neither may re-derive these literals.
 //!
 //! (A fourth, unrelated normalization constant `dbRange = 50` exists in the
 //! reference waveform renderer `ClipRenderer.drawWaveform`; it normalizes sample
@@ -51,13 +64,17 @@ impl VolumeScale {
     /// `ClipRenderer.volumeRubberBandBottomDb`).
     pub const RUBBER_BAND_BOTTOM_DB: f64 = -60.0;
 
-    /// Keyframe-storage dB floor — constant #3 of three.
+    /// Keyframe-storage dB floor — constant #3 of three. **CONFIRMED = [`FLOOR_DB`]
+    /// (−60) by E12-S1.**
     ///
-    // VERIFY: keyframe storage dB floor against reference before locking.
-    //         Ruling #9 / PRD OQ flags this as UNVERIFIED. It is provided here as
-    //         a named seam so callers do not hard-code −60 for keyframe storage;
-    //         confirm against the reference's keyframe persistence before relying
-    //         on it. Set to FLOOR_DB provisionally only — this is NOT confirmed.
+    /// The reference stores volume keyframes as raw `Double` dB with **no
+    /// storage-level clamp** (`writeVolume` → `upsertKeyframe(value: valueDb)`;
+    /// `KeyframeTrack<Double>` does not clamp). The only floor applied to a value
+    /// that can enter the track is the inspector field's editing range
+    /// `[FLOOR_DB, CEILING_DB]` = `[−60, +15]`. Hence the effective storage floor is
+    /// −60 — there is **no** −120 floor (FOUNDATION §5.3/§5.5's −120 is wrong) and
+    /// **no** 0 ceiling. Equals [`FLOOR_DB`] by design (single source of truth), not
+    /// coincidence.
     pub const KEYFRAME_STORAGE_FLOOR_DB: f64 = Self::FLOOR_DB;
 
     /// dB from a linear amplitude (reference `dbFromLinear`):
@@ -158,6 +175,41 @@ mod tests {
         // faithful reference behavior, not a bug: the floor is a hard mute.
         assert_eq!(VolumeScale::db_from_linear(0.001), VolumeScale::FLOOR_DB);
         assert_eq!(VolumeScale::linear_from_db(VolumeScale::FLOOR_DB), 0.0);
+    }
+
+    // ---- E12-S1 acceptance-criteria assertions ----
+
+    #[test]
+    fn e12_s1_mute_path_floor_and_true_mute() {
+        // dbFromLinear(0.0) == floor → the "−∞ dB" render path; stores linear 0.0
+        // (true mute) on the inverse.
+        assert_eq!(VolumeScale::db_from_linear(0.0), VolumeScale::FLOOR_DB);
+        assert_eq!(VolumeScale::linear_from_db(VolumeScale::FLOOR_DB), 0.0);
+    }
+
+    #[test]
+    fn e12_s1_unity_is_zero_db() {
+        // dbFromLinear(1.0) == 0.0 dB.
+        assert_eq!(VolumeScale::db_from_linear(1.0), 0.0);
+    }
+
+    #[test]
+    fn e12_s1_amplification_above_unity_is_representable() {
+        // linearFromDb(15.0) == 10^(15/20) — amplification > 0 dB is representable;
+        // it is NOT clamped down to 1.0.
+        let expected = 10f64.powf(15.0 / 20.0);
+        assert_eq!(VolumeScale::linear_from_db(15.0), expected);
+        assert!(expected > 1.0, "ceiling gain must amplify (>1.0 linear)");
+    }
+
+    #[test]
+    fn e12_s1_keyframe_storage_floor_is_minus_60_not_minus_120() {
+        // E12-S1 decision: the keyframe-storage floor equals the editing floor
+        // (−60). There is NO distinct −120 storage floor (FOUNDATION §5.3/§5.5 is
+        // wrong) and NO 0 ceiling.
+        assert_eq!(VolumeScale::KEYFRAME_STORAGE_FLOOR_DB, -60.0);
+        assert_eq!(VolumeScale::KEYFRAME_STORAGE_FLOOR_DB, VolumeScale::FLOOR_DB);
+        assert_ne!(VolumeScale::KEYFRAME_STORAGE_FLOOR_DB, -120.0);
     }
 
     #[test]
