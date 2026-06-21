@@ -53,7 +53,15 @@ export default function AgentTab() {
           Anthropic API key
         </h2>
         <p className="mb-3 text-xs text-white/50">
-          Bring your own key to run the agent on your own Anthropic account.
+          Bring your own key to run the agent on your own Anthropic account.{" "}
+          <a
+            href="https://console.anthropic.com/settings/keys"
+            target="_blank"
+            rel="noreferrer"
+            className="text-[#F29933] hover:underline"
+          >
+            Get key
+          </a>
         </p>
         <div className="flex items-center gap-2">
           <input

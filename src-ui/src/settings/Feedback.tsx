@@ -5,6 +5,9 @@ import { sendFeedback } from "../app/api";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { inTauri } from "../app/api";
 
+/** Feedback message hard cap (settings-account-app.md §AccountService feedback). */
+const MESSAGE_MAX = 10000;
+
 export default function Feedback() {
   const [message, setMessage] = useState("");
   const [mayContact, setMayContact] = useState(false);
@@ -37,10 +40,14 @@ export default function Feedback() {
 
       <textarea
         value={message}
-        onChange={(e) => setMessage(e.target.value)}
+        onChange={(e) => setMessage(e.target.value.slice(0, MESSAGE_MAX))}
+        maxLength={MESSAGE_MAX}
         placeholder="What's on your mind?"
-        className="mb-4 flex-1 resize-none rounded-md border border-white/15 bg-black/30 p-3 text-sm outline-none focus:border-[#F29933]"
+        className="mb-1 flex-1 resize-none rounded-md border border-white/15 bg-black/30 p-3 text-sm outline-none focus:border-[#F29933]"
       />
+      <div className="mb-4 text-right text-xs text-white/40">
+        {message.length} / {MESSAGE_MAX}
+      </div>
 
       <label className="mb-3 flex items-center gap-2 text-sm">
         <input
