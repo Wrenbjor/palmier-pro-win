@@ -40,12 +40,24 @@ impl Default for ServerConfig {
     }
 }
 
-/// The shared state every request handler sees: the tool executor + the bound port
-/// (the port is needed to compute the allowed Origin and the `.well-known` body).
+/// A callback the server invokes after a **successful mutating** `tools/call`
+/// (see [`crate::jsonrpc::handle_body`]). It is a plain `Fn` so `palmier-mcp` stays
+/// free of any Tauri dependency: the Tauri layer passes a closure capturing its
+/// `AppHandle` that emits `timeline://changed`, so an external MCP client's edit
+/// refetches the live Project window the same way the in-app paths do.
+///
+/// `Arc`-wrapped + `Send + Sync` because the serving task runs on the tokio
+/// runtime and the closure is shared across the per-request handler clones.
+pub type MutationCallback = Arc<dyn Fn() + Send + Sync>;
+
+/// The shared state every request handler sees: the tool executor, the bound port
+/// (needed to compute the allowed Origin and the `.well-known` body), and the
+/// optional post-mutation hook.
 #[derive(Clone)]
 struct AppState {
     executor: Arc<ToolExecutor>,
     port: u16,
+    on_mutation: Option<MutationCallback>,
 }
 
 /// A running (or stopped) loopback MCP server. Construct with [`McpServer::start`];
@@ -84,11 +96,24 @@ impl McpServer {
         executor: Arc<ToolExecutor>,
         config: ServerConfig,
     ) -> std::io::Result<McpServer> {
+        McpServer::start_with_hook(executor, config, None).await
+    }
+
+    /// Like [`McpServer::start`], but also registers an `on_mutation` callback fired
+    /// after every **successful mutating** `tools/call` from an external client (see
+    /// [`MutationCallback`]). The Tauri boot seam passes a closure that emits
+    /// `timeline://changed` so the open Project window refetches; tests pass a counter
+    /// to assert the hook fires for mutations and NOT for reads.
+    pub async fn start_with_hook(
+        executor: Arc<ToolExecutor>,
+        config: ServerConfig,
+        on_mutation: Option<MutationCallback>,
+    ) -> std::io::Result<McpServer> {
         let addr = SocketAddr::from((BIND_HOST, config.port));
         let listener = TcpListener::bind(addr).await?;
         let local_addr = listener.local_addr()?;
 
-        let state = AppState { executor, port: local_addr.port() };
+        let state = AppState { executor, port: local_addr.port(), on_mutation };
         let router = McpServer::router(state);
 
         let (tx, rx) = oneshot::channel::<()>();
@@ -153,7 +178,7 @@ async fn mcp_handler(State(state): State<AppState>, headers: HeaderMap, body: By
         Err(_) => return (StatusCode::BAD_REQUEST, "body is not valid UTF-8").into_response(),
     };
 
-    match handle_body(body_str, &state.executor) {
+    match handle_body(body_str, &state.executor, state.on_mutation.as_ref()) {
         Some(response_json) => (
             StatusCode::OK,
             [("content-type", "application/json")],

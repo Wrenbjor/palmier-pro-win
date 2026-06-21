@@ -53,7 +53,7 @@ pub mod server;
 pub mod validators;
 pub mod well_known;
 
-pub use server::{McpServer, ServerConfig};
+pub use server::{McpServer, MutationCallback, ServerConfig};
 pub use validators::{ValidatorError, MCP_PROTOCOL_VERSION, SUPPORTED_PROTOCOL_VERSIONS};
 
 use std::net::Ipv4Addr;
