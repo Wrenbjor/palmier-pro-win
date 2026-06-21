@@ -4,8 +4,9 @@
 // Rows: Reset Transform, Position, Scale, Rotation, Opacity, Crop toggle, Flip H/V,
 // and Playback → Speed. Each control reads the SHARED value across the selection
 // (null → "—" mixed, scrub disabled) and writes through `set_clip_properties`
-// (transform is center-based, ruling #7) or `set_keyframes` (rotation has no static
-// property field on the tool). apply* = live preview; commit* = the committed
+// (transform + static rotation are center-based, ruling #7; static rotation clears
+// any rotation keyframe track). Animated rotation still routes through
+// `set_keyframes`. apply* = live preview; commit* = the committed
 // `set_clip_properties` so a multi-clip edit lands in ONE named undo group.
 //
 // CAVEAT (documented): `ClipView` carries no static transform scalars
@@ -87,6 +88,10 @@ export function VideoTab(props: VideoTabProps): JSX.Element {
   );
   const opacity = sharedClipValue(clips, (c) => c.opacity);
   const speed = sharedClipValue(clips, (c) => c.speed);
+  // Rotation seeds from the static transform fallback (ClipView does not yet expose
+  // the static transform rotation or a rotation track — see file caveat). The write
+  // through set_clip_properties is always correct; only the SEED is best-effort.
+  const rotation = sharedClipValue(clips, () => TRACK_FALLBACK.rotation);
   // Flip state is not exposed by ClipView (transform scalars unavailable) — seed
   // false; the toggle still writes the correct flip patch.
   const flipH: boolean | null = false;
@@ -100,11 +105,13 @@ export function VideoTab(props: VideoTabProps): JSX.Element {
     void edit("set_clip_properties", clipPropertiesArgs(ids, { transform: t }));
 
   function resetTransform(): void {
-    // One named group: center back to 0.5/0.5, scale (width/height) to canvas, no
-    // flips, opacity 1. (Rotation + fades clears are owned by the keyframe/fade
-    // tools; we reset what `set_clip_properties` exposes.)
+    // One named group: center back to 0.5/0.5, no flips, opacity 1, rotation 0
+    // (which also clears the rotation track server-side). Width/height reset to the
+    // canvas is owned by the timeline view-model; here we reset what
+    // `set_clip_properties` exposes.
     setProp({
       opacity: 1,
+      rotation: 0,
       transform: {
         centerX: 0.5,
         centerY: 0.5,
@@ -150,27 +157,10 @@ export function VideoTab(props: VideoTabProps): JSX.Element {
 
         <FieldRow label="Rotation">
           <ScrubbableNumberField
-            value={single ? TRACK_FALLBACK.rotation : null}
+            value={rotation}
             range={ROTATION_RANGE}
-            disabled={!single}
-            onChange={(v) =>
-              // Rotation has no static property on set_clip_properties — route a
-              // single keyframe through set_keyframes (rotation track).
-              single &&
-              void edit("set_keyframes", {
-                clipId: ids[0],
-                property: "rotation",
-                keyframes: [[keyframeOffset(clips[0], activeFrame ?? 0), v]],
-              })
-            }
-            onCommit={(v) =>
-              single &&
-              void edit("set_keyframes", {
-                clipId: ids[0],
-                property: "rotation",
-                keyframes: [[keyframeOffset(clips[0], activeFrame ?? 0), v]],
-              })
-            }
+            onChange={(v) => setProp({ rotation: v })}
+            onCommit={(v) => setProp({ rotation: v })}
           />
         </FieldRow>
 

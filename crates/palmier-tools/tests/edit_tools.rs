@@ -267,6 +267,95 @@ fn set_clip_properties_volume_clears_keyframe_track() {
     });
 }
 
+#[test]
+fn set_clip_properties_rotation_applies_and_clears_track() {
+    let mut lib = lib_with_clips(&[("clip-a", 0, 60)]);
+    // Seed a rotation keyframe track that a static rotation set must clear.
+    let mut kt = palmier_model::KeyframeTrack::new();
+    kt.keyframes.push(palmier_model::Keyframe::new(0, 10.0));
+    lib.timeline.tracks[0].clips[0].rotation_track = Some(kt);
+    let exec = ToolExecutor::with_state(EditorState::with_library(lib));
+    let (err, text) = call(
+        &exec,
+        "set_clip_properties",
+        json!({ "clipIds": ["clip-a"], "rotation": 45.0 }),
+    );
+    assert!(!err, "{text}");
+    assert_eq!(agent_steps(&exec), 1);
+    exec.with_state_ref(|s| {
+        let c = &s.timeline().tracks[0].clips[0];
+        assert_eq!(c.transform.rotation, 45.0);
+        assert!(c.rotation_track.is_none(), "static rotation clears its keyframe track");
+    });
+}
+
+#[test]
+fn set_clip_properties_fades_apply_and_clamp() {
+    let exec = ToolExecutor::with_state(EditorState::with_library(lib_with_clips(&[("clip-a", 0, 60)])));
+    let (err, text) = call(
+        &exec,
+        "set_clip_properties",
+        json!({
+            "clipIds": ["clip-a"],
+            "fadeInFrames": 20,
+            "fadeOutFrames": 15,
+            "fadeInInterpolation": "smooth",
+            "fadeOutInterpolation": "hold",
+        }),
+    );
+    assert!(!err, "{text}");
+    assert_eq!(agent_steps(&exec), 1);
+    exec.with_state_ref(|s| {
+        let c = &s.timeline().tracks[0].clips[0];
+        assert_eq!(c.fade_in_frames, 20);
+        assert_eq!(c.fade_out_frames, 15);
+        assert_eq!(c.fade_in_interpolation, palmier_model::Interpolation::Smooth);
+        assert_eq!(c.fade_out_interpolation, palmier_model::Interpolation::Hold);
+    });
+
+    // Over-long fades clamp so fadeIn + fadeOut <= duration (set_fade).
+    let (err, _) = call(
+        &exec,
+        "set_clip_properties",
+        json!({ "clipIds": ["clip-a"], "fadeInFrames": 80, "fadeOutFrames": 80 }),
+    );
+    assert!(!err);
+    exec.with_state_ref(|s| {
+        let c = &s.timeline().tracks[0].clips[0];
+        assert_eq!(c.fade_in_frames, 60, "fadeIn clamps to duration");
+        assert_eq!(c.fade_out_frames, 0, "fadeOut clamps to remaining room");
+    });
+}
+
+#[test]
+fn set_clip_properties_rotation_and_fades_round_trip_through_full_timeline() {
+    let exec = ToolExecutor::with_state(EditorState::with_library(lib_with_clips(&[("clip-a", 0, 60)])));
+    let (err, _) = call(
+        &exec,
+        "set_clip_properties",
+        json!({ "clipIds": ["clip-a"], "rotation": 30.0, "fadeInFrames": 12, "fadeOutFrames": 8 }),
+    );
+    assert!(!err);
+    let v = exec.with_state_ref(palmier_tools::read::full_timeline_json);
+    let clip = &v["tracks"][0]["clips"][0];
+    assert_eq!(clip["transform"]["rotation"].as_f64(), Some(30.0));
+    assert_eq!(clip["fadeInFrames"].as_i64(), Some(12));
+    assert_eq!(clip["fadeOutFrames"].as_i64(), Some(8));
+}
+
+#[test]
+fn set_clip_properties_bad_fade_interp_rejected() {
+    let exec = ToolExecutor::with_state(EditorState::with_library(lib_with_clips(&[("clip-a", 0, 60)])));
+    let (err, text) = call(
+        &exec,
+        "set_clip_properties",
+        json!({ "clipIds": ["clip-a"], "fadeInInterpolation": "bouncy" }),
+    );
+    assert!(err);
+    assert!(text.contains("fadeInInterpolation"), "{text}");
+    assert_eq!(agent_steps(&exec), 0);
+}
+
 // ── set_keyframes ────────────────────────────────────────────────────────────
 
 #[test]

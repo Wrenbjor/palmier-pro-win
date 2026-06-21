@@ -384,6 +384,16 @@ export interface ClipPropertiesArgs {
   volume?: number;
   opacity?: number;
   transform?: TransformPatchArg;
+  /** Static rotation in degrees (clockwise). Clears the rotation keyframe track. */
+  rotation?: number;
+  /** Fade-in ramp length in frames (clamped to duration server-side). */
+  fadeInFrames?: number;
+  /** Fade-out ramp length in frames (clamped so fadeIn + fadeOut <= duration). */
+  fadeOutFrames?: number;
+  /** Fade-in easing: "linear" | "hold" | "smooth". */
+  fadeInInterpolation?: string;
+  /** Fade-out easing: "linear" | "hold" | "smooth". */
+  fadeOutInterpolation?: string;
   content?: string;
   fontName?: string;
   fontSize?: number;

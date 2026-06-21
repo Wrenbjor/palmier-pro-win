@@ -213,6 +213,23 @@ export function runInspectorBodyChecks(): string[] {
     { clipIds: ["a"] },
     out,
   );
+  // Static rotation is a top-level scalar on set_clip_properties.
+  eq(
+    "args.rotation",
+    clipPropertiesArgs(["a"], { rotation: 45 }),
+    { clipIds: ["a"], rotation: 45 },
+    out,
+  );
+  // Fade lengths (frames) are top-level scalars; fadeFramesFromSeconds feeds them.
+  eq(
+    "args.fades",
+    clipPropertiesArgs(["a"], {
+      fadeInFrames: fadeFramesFromSeconds(0.5, 30),
+      fadeOutFrames: fadeFramesFromSeconds(1, 30),
+    }),
+    { clipIds: ["a"], fadeInFrames: 15, fadeOutFrames: 30 },
+    out,
+  );
 
   // ── Color hex round-trips ──────────────────────────────────────────────────
   eq("hex.white", rgbaToHex(1, 1, 1, 1), "#ffffffff", out);

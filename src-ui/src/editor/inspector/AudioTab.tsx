@@ -5,15 +5,15 @@
 // range −60…+15 dB (E12-S1 constant), `%.1f dB`, shows "−∞ dB" at floor and stores
 // true-mute 0 there. Writes the LINEAR volume through `set_clip_properties`.
 //
-// CAVEAT (documented): the 30-tool surface has NO fade-setting tool
-// (`set_clip_properties` does not accept fadeIn/fadeOut frames). The Fade In/Out
-// rows therefore DISPLAY the clip's current fade (from the view-model) but are
-// read-only here — wiring them requires an additive `palmier-tools` command (out of
-// this story's frontend-only scope). Volume + Speed are fully wired.
+// Fade In/Out write LINEAR frame counts through `set_clip_properties`
+// (fadeInFrames / fadeOutFrames): the field works in seconds, converted to frames
+// via round(seconds × fps), and the server clamps each edge to fit the duration
+// (fadeIn + fadeOut <= duration). Volume + Speed are fully wired too.
 
 import type { JSX } from "react";
 import type { ClipView } from "../types";
 import {
+  fadeFramesFromSeconds,
   fadeMaxSeconds,
   fadeRange,
   fadeSecondsFromFrames,
@@ -61,6 +61,17 @@ export function AudioTab(props: AudioTabProps): JSX.Element {
       clipPropertiesArgs(ids, { volume: volumeLinearFromDb(nextDb) }),
     );
 
+  const setFade = (edge: "in" | "out", seconds: number) =>
+    void edit(
+      "set_clip_properties",
+      clipPropertiesArgs(
+        ids,
+        edge === "in"
+          ? { fadeInFrames: fadeFramesFromSeconds(seconds, fps) }
+          : { fadeOutFrames: fadeFramesFromSeconds(seconds, fps) },
+      ),
+    );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: Spacing.xl }}>
       <Section title="Levels">
@@ -82,21 +93,18 @@ export function AudioTab(props: AudioTabProps): JSX.Element {
           <ScrubbableNumberField
             value={fadeInS}
             range={fadeRange(maxS)}
-            disabled
-            onChange={() => {}}
-            onCommit={() => {}}
+            onChange={(v) => setFade("in", v)}
+            onCommit={(v) => setFade("in", v)}
           />
         </FieldRow>
         <FieldRow label="Fade Out">
           <ScrubbableNumberField
             value={fadeOutS}
             range={fadeRange(maxS)}
-            disabled
-            onChange={() => {}}
-            onCommit={() => {}}
+            onChange={(v) => setFade("out", v)}
+            onCommit={(v) => setFade("out", v)}
           />
         </FieldRow>
-        <div style={hintStyle}>Fades are read-only (no fade tool on the edit surface yet).</div>
       </Section>
 
       {!hasVisualSelected && (
@@ -123,9 +131,4 @@ const dbReadoutStyle = {
   fontSize: FontSize.xxs,
   color: Theme.text.muted,
   textAlign: "right" as const,
-};
-
-const hintStyle = {
-  fontSize: FontSize.xxs,
-  color: Theme.text.muted,
 };

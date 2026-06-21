@@ -37,9 +37,13 @@ use crate::validate::parse_rgba;
 const TEXT_ONLY_KEYS: [&str; 5] = ["content", "fontName", "fontSize", "color", "alignment"];
 
 /// `set_clip_properties` (`clipIds[]` + any of the property fields): apply to ALL
-/// listed clips. `trim_*` are SOURCE offsets; setting `volume`/`opacity` clears that
-/// keyframe track; transform is center-based (ruling #7); text-only fields on a
-/// non-text clip → reject. Reference `setClipProperties`.
+/// listed clips. `trim_*` are SOURCE offsets; setting `volume`/`opacity`/`rotation`
+/// clears that property's keyframe track; transform + static `rotation` are
+/// center-based (ruling #7); `fadeInFrames`/`fadeOutFrames` (+ interps) are clamped
+/// to the clip duration via `Clip::set_fade`; text-only fields on a non-text clip →
+/// reject. Reference `setClipProperties` (extended with the static rotation + fade
+/// write path the inspector needs — the reference routes those through dedicated
+/// view-model commits rather than this tool).
 pub fn set_clip_properties(state: &mut EditorState, args: &Value) -> ToolResult {
     let obj = args.as_object().expect("validated object");
     let clip_ids: Vec<String> = match obj.get("clipIds").and_then(Value::as_array) {
@@ -50,7 +54,9 @@ pub fn set_clip_properties(state: &mut EditorState, args: &Value) -> ToolResult 
     // At least one property must be present.
     let property_keys = [
         "durationFrames", "trimStartFrame", "trimEndFrame", "speed", "volume", "opacity",
-        "transform", "content", "fontName", "fontSize", "color", "alignment",
+        "transform", "rotation", "fadeInFrames", "fadeOutFrames",
+        "fadeInInterpolation", "fadeOutInterpolation",
+        "content", "fontName", "fontSize", "color", "alignment",
     ];
     if !property_keys.iter().any(|k| obj.contains_key(*k)) {
         return ToolResult::error("set_clip_properties needs at least one property to apply");
@@ -59,6 +65,32 @@ pub fn set_clip_properties(state: &mut EditorState, args: &Value) -> ToolResult 
         && df < 1
     {
         return ToolResult::error(format!("durationFrames must be >= 1 (got {df})"));
+    }
+    // Reject non-finite rotation up front (before mutating).
+    if let Some(r) = obj.get("rotation").and_then(Value::as_f64)
+        && !r.is_finite()
+    {
+        return ToolResult::error("rotation must be a finite number");
+    }
+    // Fade lengths are clamped to the clip duration on apply (negative → 0), but a
+    // present-yet-non-integer/garbage value should still parse as a number.
+    for key in ["fadeInFrames", "fadeOutFrames"] {
+        if let Some(v) = obj.get(key)
+            && !v.is_null()
+            && v.as_i64().is_none()
+        {
+            return ToolResult::error(format!("{key} must be an integer frame count"));
+        }
+    }
+    // Validate fade interpolation strings up front.
+    for key in ["fadeInInterpolation", "fadeOutInterpolation"] {
+        if let Some(s) = obj.get(key).and_then(Value::as_str)
+            && parse_interp(s).is_none()
+        {
+            return ToolResult::error(format!(
+                "{key} must be one of 'linear', 'hold', 'smooth' (got {s:?})"
+            ));
+        }
     }
     // Validate color up front (reject bad hex before mutating).
     if let Some(c) = obj.get("color").and_then(Value::as_str)
@@ -118,6 +150,17 @@ pub fn set_clip_properties(state: &mut EditorState, args: &Value) -> ToolResult 
     })
 }
 
+/// Map a lowercase interpolation name to the model enum (reference wire form:
+/// bare lowercase `linear`/`hold`/`smooth`). Returns `None` for anything else.
+fn parse_interp(s: &str) -> Option<Interpolation> {
+    match s {
+        "linear" => Some(Interpolation::Linear),
+        "hold" => Some(Interpolation::Hold),
+        "smooth" => Some(Interpolation::Smooth),
+        _ => None,
+    }
+}
+
 /// The owned property patch, parsed from the args object once before the swap.
 struct PropertyPatch {
     duration_frames: Option<i32>,
@@ -127,6 +170,13 @@ struct PropertyPatch {
     volume: Option<f64>,
     opacity: Option<f64>,
     transform: Option<TransformPatch>,
+    /// Static rotation in degrees (clockwise). Center-based — applies to
+    /// `transform.rotation`; the rotation keyframe track stays the animated path.
+    rotation: Option<f64>,
+    fade_in_frames: Option<i32>,
+    fade_out_frames: Option<i32>,
+    fade_in_interp: Option<Interpolation>,
+    fade_out_interp: Option<Interpolation>,
     content: Option<String>,
     font_name: Option<String>,
     font_size: Option<f64>,
@@ -161,6 +211,11 @@ impl PropertyPatch {
             volume: obj.get("volume").and_then(Value::as_f64),
             opacity: obj.get("opacity").and_then(Value::as_f64),
             transform,
+            rotation: obj.get("rotation").and_then(Value::as_f64).filter(|v| v.is_finite()),
+            fade_in_frames: obj.get("fadeInFrames").and_then(Value::as_i64).map(|v| v as i32),
+            fade_out_frames: obj.get("fadeOutFrames").and_then(Value::as_i64).map(|v| v as i32),
+            fade_in_interp: obj.get("fadeInInterpolation").and_then(Value::as_str).and_then(parse_interp),
+            fade_out_interp: obj.get("fadeOutInterpolation").and_then(Value::as_str).and_then(parse_interp),
             content: obj.get("content").and_then(Value::as_str).map(str::to_string),
             font_name: obj.get("fontName").and_then(Value::as_str).map(str::to_string),
             font_size: obj.get("fontSize").and_then(Value::as_f64),
@@ -221,6 +276,34 @@ fn apply_property_changes(timeline: &mut Timeline, clip_id: &str, p: &PropertyPa
         if let Some(fh) = t.flip_h { clip.transform.flip_horizontal = fh; }
         if let Some(fv) = t.flip_v { clip.transform.flip_vertical = fv; }
         changed.push("transform".to_string());
+    }
+    // Static rotation (degrees, center-based, ruling #7) — writes the transform's
+    // rotation scalar. The animated `rotationTrack` overrides this when active, so
+    // setting a static rotation also clears the track (mirrors the scalar↔keyframe
+    // rule used for volume/opacity above).
+    if let Some(deg) = p.rotation {
+        clip.transform.rotation = deg;
+        clip.rotation_track = None;
+        changed.push("rotation".to_string());
+    }
+    // Fade lengths (frames). `set_fade` clamps each edge to fit the duration
+    // (reference `setFade`); apply after any duration/speed change above so the
+    // clamp sees the final duration.
+    if let Some(f) = p.fade_in_frames {
+        clip.set_fade(palmier_model::FadeEdge::Left, f);
+        changed.push("fadeInFrames".to_string());
+    }
+    if let Some(f) = p.fade_out_frames {
+        clip.set_fade(palmier_model::FadeEdge::Right, f);
+        changed.push("fadeOutFrames".to_string());
+    }
+    if let Some(i) = p.fade_in_interp {
+        clip.fade_in_interpolation = i;
+        changed.push("fadeInInterpolation".to_string());
+    }
+    if let Some(i) = p.fade_out_interp {
+        clip.fade_out_interpolation = i;
+        changed.push("fadeOutInterpolation".to_string());
     }
     if is_text {
         if let Some(c) = &p.content {
