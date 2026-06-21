@@ -29,8 +29,10 @@ import { AgentPanel, AgentPanelController, createAgentPanelStore } from "../agen
 import {
   EditController,
   TimelineEditor,
+  Toolbar,
   createTimelineStore,
   useTimelineStore,
+  type ToolMode,
 } from "../editor";
 import { adaptTimeline } from "../editor/adapt";
 import { getMedia, getTimeline, onTimelineChanged, editorEdit, inTauri } from "../editor/bridge";
@@ -194,6 +196,10 @@ export default function Project({ projectId }: { projectId: string }) {
     preview.setActivePlayhead(playheadFrame);
   }, [preview, playheadFrame]);
 
+  // ── Tool mode — owned here so the Toolbar (E12-S9) and the TimelineEditor's V/C
+  //    keyboard shortcuts stay in sync (controlled `tool` prop). ────────────────
+  const [tool, setTool] = useState<ToolMode>("pointer");
+
   // ── media → timeline drop = add_clips at the playhead ───────────────────────
   const [dropActive, setDropActive] = useState(false);
   const onTimelineDrop = async (e: React.DragEvent) => {
@@ -258,23 +264,34 @@ export default function Project({ projectId }: { projectId: string }) {
               store={preview}
             />
           </div>
-          <div
-            className="h-[320px] flex-shrink-0 border-t border-white/10 relative"
-            style={{ outline: dropActive ? "2px solid #F29933" : "none" }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              if (!dropActive) setDropActive(true);
-            }}
-            onDragLeave={() => setDropActive(false)}
-            onDrop={(e) => {
-              void onTimelineDrop(e);
-            }}
-          >
-            <TimelineEditor
+          <div className="h-[358px] flex-shrink-0 border-t border-white/10 flex flex-col min-h-0">
+            {/* Editor toolbar (E12-S9) — above the timeline, drives tool/zoom/edits. */}
+            <Toolbar
               store={editor.store}
               controller={editor.controller}
-              onSeek={(frame) => editor.store.setPlayhead(frame)}
+              tool={tool}
+              onToolChange={setTool}
             />
+            <div
+              className="flex-1 min-h-0 relative"
+              style={{ outline: dropActive ? "2px solid #F29933" : "none" }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                if (!dropActive) setDropActive(true);
+              }}
+              onDragLeave={() => setDropActive(false)}
+              onDrop={(e) => {
+                void onTimelineDrop(e);
+              }}
+            >
+              <TimelineEditor
+                store={editor.store}
+                controller={editor.controller}
+                tool={tool}
+                onToolChange={setTool}
+                onSeek={(frame) => editor.store.setPlayhead(frame)}
+              />
+            </div>
           </div>
         </div>
 

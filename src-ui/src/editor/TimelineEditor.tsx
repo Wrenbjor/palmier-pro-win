@@ -65,6 +65,13 @@ export interface TimelineEditorProps {
   controller?: EditController;
   onSelectionChange?: (selectedIds: string[]) => void;
   onSeek?: (frame: number) => void;
+  /**
+   * Controlled tool mode. When provided, the editor uses this value instead of its
+   * internal state (so the Toolbar — E12-S9 — can drive Pointer/Razor and reflect the
+   * keyboard `V`/`C` shortcuts). Keyboard shortcuts still fire `onToolChange` so the
+   * controlling parent can update; leave undefined for uncontrolled (internal) state.
+   */
+  tool?: ToolMode;
   onToolChange?: (tool: ToolMode) => void;
   className?: string;
   style?: CSSProperties;
@@ -113,7 +120,15 @@ export function TimelineEditor(props: TimelineEditorProps): JSX.Element {
   const timeline = props.timeline ?? state.timeline ?? makeFixtureTimeline();
   const viewport = state.viewport;
 
-  const [tool, setTool] = useState<ToolMode>("pointer");
+  const [internalTool, setInternalTool] = useState<ToolMode>("pointer");
+  // Controlled when `props.tool` is provided (Toolbar drives it); else internal.
+  const tool = props.tool ?? internalTool;
+  const setTool = useCallback(
+    (next: ToolMode) => {
+      if (props.tool === undefined) setInternalTool(next);
+    },
+    [props.tool],
+  );
   const rootRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<HTMLCanvasElement | null>(null);
   const sizeRef = useRef({ w: 0, h: 0 });

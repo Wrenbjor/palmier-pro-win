@@ -12,6 +12,10 @@ export type { TimelineCanvasProps } from "./TimelineCanvas";
 export { TimelineEditor, default as default } from "./TimelineEditor";
 export type { TimelineEditorProps, ToolMode } from "./TimelineEditor";
 
+// E12-S9 — the editor Toolbar (undo/redo, tools, clip-edit, add-text, zoom).
+export { Toolbar } from "./Toolbar";
+export type { ToolbarProps } from "./Toolbar";
+
 export { createTimelineStore, useTimelineStore } from "./store";
 export type { TimelineStore, TimelineState } from "./store";
 
