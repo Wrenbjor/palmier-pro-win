@@ -220,6 +220,9 @@ export function tauriMockScript(label: SurfaceLabel): string {
       unregisterCallback(id: number) {
         callbacks.delete(id);
       },
+      // Tauri v2's event `unlisten` calls this on cleanup; the mock just needs it to
+      // exist (without it, React effect cleanup throws "unregisterListener is undefined").
+      unregisterListener(_event: string, _eventId: number) {},
       convertFileSrc(path: string) {
         return path;
       },
