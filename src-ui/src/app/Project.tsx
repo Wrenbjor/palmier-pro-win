@@ -52,6 +52,7 @@ import {
   type InspectorInput,
   type MediaAssetView as InspectorAssetView,
 } from "../editor/inspector";
+import { makeTabBodies, makeAssetBody } from "../editor/inspector/tabBodies";
 
 export default function Project({ projectId }: { projectId: string }) {
   // ── Shared stores + controllers (created once) ──────────────────────────────
@@ -282,6 +283,11 @@ export default function Project({ projectId }: { projectId: string }) {
           <InspectorPanel
             input={inspectorInput}
             controller={inspectorController}
+            tabBodies={makeTabBodies({
+              activeFrame: playheadFrame,
+              onSeek: (frame) => editor.store.setPlayhead(frame),
+            })}
+            assetBody={makeAssetBody()}
           />
         </div>
 
