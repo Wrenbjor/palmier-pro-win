@@ -65,3 +65,9 @@ orchestrator can open a project window non-interactively for screenshot verifica
 - 2026-06-21 — Autonomous mode engaged. Baseline `50fb409` (manifest + window-threading runtime
   fixes, editor read-bridge slice 1, harness). Launched wave-A: EDIT-BRIDGE+EDITOR-COMPOSE (one
   agent, coherent vertical) ∥ E2E-HARNESS (one agent). Self-paced continuation scheduled.
+- 2026-06-21 — Wren chose D (keep grinding). Wave running: E12-S9 toolbar ∥ configurable
+  agent base URL. Orchestrator stood up the **LiteLLM nemotron bridge** (scripts/litellm-nemotron.yaml,
+  proxy on :4000) — PROVEN: app's Anthropic /v1/messages → nemotron-super-49b → Anthropic-format 200.
+  Once the base-URL override lands, PALMIER_ANTHROPIC_BASE_URL=http://127.0.0.1:4000/v1/messages makes
+  the in-app agent use the local model (clears the "Anthropic key OR bridge" blocker). Bridge tool-use
+  (Anthropic tool_use ↔ OpenAI function-calling through LiteLLM) still to verify for full agentic chat.
