@@ -15,3 +15,8 @@ src-ui/dist
 
 # Tauri build-generated schemas/capabilities (regenerated each build by tauri-build)
 crates/*/gen/schemas/
+
+# agent scratch / regenerable
+.playwright-mcp/
+test-assets/
+*.log

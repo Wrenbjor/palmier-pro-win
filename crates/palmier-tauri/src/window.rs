@@ -74,6 +74,50 @@ impl WindowKind {
     }
 }
 
+/// Build a webview window **on a background thread**.
+///
+/// WHY: `WebviewWindowBuilder::build()` blocks the calling thread until the OS webview
+/// finishes initializing. Tauri commands and menu handlers run on the **main
+/// (event-loop) thread**; calling `build()` there deadlocks on Windows — the native
+/// window appears (chrome + menu) but WebView2 init needs the very main thread that
+/// `build()` is blocking, so the app hangs (blank-white content, can't open DevTools,
+/// closing freezes). Creating the window from a spawned thread with a cloned
+/// `AppHandle` (a supported Tauri pattern) frees the main loop to service the webview
+/// init. Build errors are logged rather than returned (the caller already left the
+/// command), which is acceptable for window opening.
+fn spawn_window_build<R: Runtime>(
+    app: &AppHandle<R>,
+    label: String,
+    url: WebviewUrl,
+    geometry: (f64, f64, f64, f64),
+    title: String,
+    decorations: bool,
+    what: &'static str,
+) {
+    let app = app.clone();
+    let (w, h, min_w, min_h) = geometry;
+    std::thread::spawn(move || {
+        let res = WebviewWindowBuilder::new(&app, &label, url)
+            .title(title)
+            .inner_size(w, h)
+            .min_inner_size(min_w, min_h)
+            .resizable(true)
+            .focused(true)
+            .decorations(decorations)
+            .build();
+        match res {
+            Ok(win) => {
+                let _ = win.show();
+                let _ = win.set_focus();
+                tracing::info!(target: "app", window = %label, "{what}");
+            }
+            Err(e) => {
+                tracing::error!(target: "app", window = %label, error = %e, "{what} failed");
+            }
+        }
+    });
+}
+
 /// Open (or focus, if already open) a singleton auxiliary window.
 ///
 /// Returns the existing window when present (reference: `*WindowController.shared` is a
@@ -92,24 +136,19 @@ pub fn open_or_focus<R: Runtime>(
         return Ok(());
     }
 
-    let (w, h, min_w, min_h) = kind.geometry();
     let url = WebviewUrl::App(format!("index.html#/{label}").into());
-    let mut builder = WebviewWindowBuilder::new(app, label, url)
-        .title(kind.title())
-        .inner_size(w, h)
-        .min_inner_size(min_w, min_h)
-        .resizable(true)
-        .focused(true);
-
-    // Settings is dark with a transparent titlebar + full-size content (reference).
-    if kind == WindowKind::Settings {
-        builder = builder.decorations(true);
-    }
-
-    let win = builder.build()?;
-    let _ = win.show();
-    let _ = win.set_focus();
-    tracing::info!(target: "app", window = label, "opened window");
+    // Build off the main thread to avoid the WebView2 creation deadlock (see
+    // `spawn_window_build`). Decorations stay on for every kind (Settings is dark with
+    // a transparent titlebar + full-size content; decorations default on regardless).
+    spawn_window_build(
+        app,
+        label.to_string(),
+        url,
+        kind.geometry(),
+        kind.title().to_string(),
+        true,
+        "opened window",
+    );
     Ok(())
 }
 
@@ -128,16 +167,15 @@ pub fn open_project_window<R: Runtime>(
     }
 
     let url = WebviewUrl::App(format!("index.html#/project/{project_id}").into());
-    let win = WebviewWindowBuilder::new(app, &label, url)
-        .title("Palmier Pro")
-        .inner_size(1600.0, 1000.0)
-        .min_inner_size(960.0, 600.0)
-        .resizable(true)
-        .focused(true)
-        .build()?;
-    let _ = win.show();
-    let _ = win.set_focus();
-    tracing::info!(target: "app", window = %label, "opened project window");
+    spawn_window_build(
+        app,
+        label,
+        url,
+        (1600.0, 1000.0, 960.0, 600.0),
+        "Palmier Pro".to_string(),
+        true,
+        "opened project window",
+    );
     Ok(())
 }
 
@@ -149,15 +187,17 @@ pub fn show_home<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
         let _ = home.set_focus();
         return Ok(());
     }
-    // Home is normally static in tauri.conf.json; recreate defensively.
-    let win = WebviewWindowBuilder::new(app, "home", WebviewUrl::App("index.html".into()))
-        .title("Palmier Pro")
-        .inner_size(1200.0, 1200.0)
-        .min_inner_size(760.0, 480.0)
-        .resizable(true)
-        .build()?;
-    let _ = win.show();
-    let _ = win.set_focus();
+    // Home is normally static in tauri.conf.json; recreate defensively — off the main
+    // thread to avoid the WebView2 creation deadlock (see `spawn_window_build`).
+    spawn_window_build(
+        app,
+        "home".to_string(),
+        WebviewUrl::App("index.html".into()),
+        (1200.0, 1200.0, 760.0, 480.0),
+        "Palmier Pro".to_string(),
+        true,
+        "recreated home window",
+    );
     Ok(())
 }
 

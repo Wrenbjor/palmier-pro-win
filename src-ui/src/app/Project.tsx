@@ -11,12 +11,15 @@
 // keyring/account state.
 import { useEffect, useMemo } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import UpdateBadge from "./UpdateBadge";
 import { AgentPanel } from "../agent-panel";
 import {
   AgentPanelController,
   createAgentPanelStore,
 } from "../agent-panel";
+import { TimelineEditor, createTimelineStore } from "../editor";
+import { adaptTimeline, type WireTimeline } from "../editor/adapt";
 
 export default function Project({ projectId }: { projectId: string }) {
   // Own the store + controller so we can seed the live backend status on mount. The
@@ -25,6 +28,31 @@ export default function Project({ projectId }: { projectId: string }) {
     const s = createAgentPanelStore();
     return { store: s, controller: new AgentPanelController(s) };
   }, []);
+
+  // The timeline store — fed from the live backend via `editor_get_timeline`. Both the
+  // agent (MCP) and the UI drive the same executor, so this reflects whatever the agent
+  // does. Slice 1 is read-only display; it polls so edits from ANY source appear (a
+  // `timeline://changed` event replaces the poll in a later slice).
+  const timelineStore = useMemo(() => createTimelineStore(), []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const wire = await invoke<WireTimeline>("editor_get_timeline");
+        if (!cancelled) timelineStore.setTimeline(adaptTimeline(wire));
+      } catch (err) {
+        // Outside a Tauri webview (plain `vite dev`) invoke is unavailable — ignore.
+        console.debug("[editor] get_timeline skipped:", err);
+      }
+    };
+    void load();
+    const id = window.setInterval(load, 750);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [timelineStore]);
 
   useEffect(() => {
     // Seed the live backend status (BYOK key present / tier / models). No-op outside a
@@ -54,12 +82,11 @@ export default function Project({ projectId }: { projectId: string }) {
         <UpdateBadge />
       </header>
       <div className="flex flex-1 min-h-0">
-        {/*
-          Editor mount point. The timeline canvas worker (src-ui/src/editor/) renders
-          here. Until that lands, the window is a valid, sized shell carrying the id.
-        */}
-        <main className="flex flex-1 items-center justify-center text-white/40">
-          <span data-project-id={projectId}>Editor loads here.</span>
+        {/* Editor mount point — the live timeline canvas (slice 1: read-only display,
+            fed from `editor_get_timeline`). Preview/media/inspector panels + click-edit
+            land in later slices. */}
+        <main className="flex flex-1 min-h-0 min-w-0" data-project-id={projectId}>
+          <TimelineEditor store={timelineStore} style={{ flex: 1, minWidth: 0 }} />
         </main>
         {/* The agent dock — right-side AI chat panel, wired to the live agent backend. */}
         <AgentPanel store={store} controller={controller} seedFixture={false} />

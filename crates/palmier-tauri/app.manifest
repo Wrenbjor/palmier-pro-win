@@ -12,6 +12,24 @@
     The compatibility + DPI blocks match Tauri's default app manifest so WebView2
     rendering and per-monitor DPI behave correctly.
   -->
+  <!--
+    Common-Controls v6 dependency. Tauri's default manifest includes this; our
+    custom manifest must re-declare it or the loader binds comctl32 v5 (System32
+    forwarder), which lacks TaskDialogIndirect — statically imported via
+    tauri-plugin-dialog (rfd). Without it the process fails at load with
+    STATUS_ENTRYPOINT_NOT_FOUND (0xC0000139).
+  -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*" />
+    </dependentAssembly>
+  </dependency>
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>

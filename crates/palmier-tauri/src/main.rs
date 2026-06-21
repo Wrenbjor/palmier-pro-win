@@ -85,6 +85,7 @@ fn main() {
             commands::save_anthropic_key,
             commands::delete_anthropic_key,
             commands::get_mcp_status,
+            commands::editor_get_timeline,
             commands::open_settings,
             commands::open_help,
             commands::open_feedback,

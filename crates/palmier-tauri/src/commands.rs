@@ -275,6 +275,33 @@ pub fn get_mcp_status(app: AppHandle) -> McpStatus {
     }
 }
 
+// ─── Editor bridge (UI ↔ backend) ────────────────────────────────────────────
+// The editor panels' read path. The MCP server and the in-app agent already drive
+// the one shared `Arc<ToolExecutor>`; these give the *UI* the same read access so the
+// Project window can render the live timeline. (Edit commands + a change event are the
+// next slice.) Both read the same executor, so the UI shows exactly what the agent sees.
+
+/// Read the active project's timeline for the editor UI. The wire shape matches the
+/// MCP `get_timeline` tool (positions + ids); the frontend adapter fills the richer
+/// `ClipView` fields with defaults until a full serializer lands.
+#[tauri::command]
+pub fn editor_get_timeline(
+    agent: State<'_, crate::agent::AgentState>,
+) -> Result<serde_json::Value, String> {
+    let result = agent
+        .executor
+        .with_state_ref(|s| palmier_tools::read::get_timeline(s, &serde_json::json!({})));
+    let text = result
+        .content
+        .into_iter()
+        .find_map(|b| match b {
+            palmier_tools::Block::Text(t) => Some(t),
+            _ => None,
+        })
+        .ok_or_else(|| "get_timeline returned no text block".to_string())?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
 // ─── window opens (E1-S4) — invoked by the menu router + Home/Settings UI ───────────
 
 /// Open (or focus) the Settings window.
