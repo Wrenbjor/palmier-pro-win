@@ -72,6 +72,13 @@ export interface InspectorInput {
    * no project. Drives the no-selection "Project" section (name = file stem).
    */
   projectPath: string | null;
+  /**
+   * The playhead frame (`editor.playheadFrame`) — OPTIONAL so the existing shell
+   * mount (which does not yet supply it) type-checks. The tab BODIES (E12-S5/S8)
+   * sample keyframe-driven fields and the keyframes panel at this frame; absent →
+   * bodies fall back to the clip's static scalar values.
+   */
+  activeFrame?: number;
 }
 
 /** Resolved header (title + icon), accounting for the marquee-active override. */
