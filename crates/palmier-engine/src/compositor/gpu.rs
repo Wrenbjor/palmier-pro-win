@@ -380,8 +380,16 @@ impl Compositor {
     /// [`CompositorError::NoAdapter`] cleanly when the box has no GPU so the caller
     /// can skip.
     pub fn new_headless(width: u32, height: u32) -> Result<Self, CompositorError> {
-        let (_instance, adapter, device, queue) =
-            Self::acquire_device(wgpu::Backends::all(), None)?;
+        // On Windows force DX12 (matching `new_for_surface`): `Backends::all()` lets the
+        // erroring Vulkan loader on some boxes push wgpu onto the WARP CPU adapter
+        // ("Microsoft Basic Render Driver"), which composites to a black frame. DX12 +
+        // HighPerformance selects the discrete GPU.
+        let backends = if cfg!(windows) {
+            wgpu::Backends::DX12
+        } else {
+            wgpu::Backends::all()
+        };
+        let (_instance, adapter, device, queue) = Self::acquire_device(backends, None)?;
 
         let format = HEADLESS_FORMAT;
         let (pipeline, bind_group_layout, sampler) = Self::build_pipeline(&device, format);
