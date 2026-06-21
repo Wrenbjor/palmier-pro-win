@@ -379,11 +379,16 @@ pub fn editor_get_timeline(
     agent: State<'_, AgentState>,
     args: Option<Value>,
 ) -> Result<Value, String> {
-    let args = args.unwrap_or_else(|| Value::Object(Default::default()));
-    let result = agent
+    // The UI needs the FULL clip model (real volume / trim / speed / opacity /
+    // fades / keyframes), not the defaults-stripped MCP `get_timeline` summary.
+    // `args` (the optional `{startFrame,endFrame}` window) is intentionally ignored:
+    // the editor renders the whole timeline and windows in the canvas. The compact
+    // MCP `get_timeline` tool the LLM uses is UNCHANGED (read::get_timeline).
+    let _ = args;
+    let value = agent
         .executor
-        .with_state_ref(|state| palmier_tools::read::get_timeline(state, &args));
-    tool_result_to_json(result)
+        .with_state_ref(palmier_tools::read::full_timeline_json);
+    Ok(value)
 }
 
 /// `editor_get_media` — the media-library JSON the Media panel renders (reference

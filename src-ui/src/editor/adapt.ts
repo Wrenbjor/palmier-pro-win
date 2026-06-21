@@ -1,24 +1,27 @@
-// adaptTimeline — map the `get_timeline` wire JSON → the canvas `TimelineView`.
+// adaptTimeline — map the `editor_get_timeline` wire JSON → the canvas `TimelineView`.
 //
 // The `editor_get_timeline` Tauri command (crates/palmier-tauri/src/commands.rs)
-// returns the reference-shaped timeline: a Codable `Timeline` with clip/track fields
-// equal to their DEFAULTS omitted, caption clips collapsed into per-track
-// `captionGroups`, and `totalFrames` / `canGenerate` injected (read.rs `get_timeline`).
-// This adapter is the single place that turns that serde payload into the fully
-// defaulted `TimelineView` the renderer needs — the seam the editor's `index.ts`/
-// `types.ts` always anticipated ("the adapter that turns the serde payload into a
-// TimelineView is the only thing that changes").
+// returns the FULL-FIDELITY timeline (palmier-tools `read::full_timeline_json`),
+// NOT the compact MCP `get_timeline` summary. That serializer emits every field the
+// view types need with their real values — nothing is stripped to defaults, caption
+// clips are ordinary clips in `clips` (no `captionGroups` collapse), and the six
+// keyframe tracks are full `{ keyframes: [{ frame, value, interpolationOut }] }`
+// objects (matching `KeyframeTrackView` / `KeyframeView`). Each track also carries
+// the injected `displayHeight` (the model marks it non-serialized).
 //
-// Default reconstruction MUST match read.rs's stripping (and palmier-model's serde
-// defaults): mediaType 'video', sourceClipType = mediaType, speed 1, volume 1,
-// opacity 1, trims/fades 0, fade interp 'smooth'; track muted/hidden false,
-// syncLocked true. Caption-group rows are expanded back into individual ClipViews so
-// the canvas draws them like any other clip.
+// This adapter is therefore a near-passthrough: it walks the wire shape and copies
+// fields across, applying TOLERANT defaults only so a partial / early-boot payload
+// (e.g. `{}`) still yields a valid, empty `TimelineView` instead of throwing. The
+// defaults it falls back to still match palmier-model's serde defaults (speed 1,
+// volume 1, opacity 1, fades 0, fade interp 'linear', track syncLocked true,
+// displayHeight 50) so a missing field reads the same as the model would have.
 
 import type {
   ClipType,
   ClipView,
   Interpolation,
+  KeyframeTrackView,
+  KeyframeView,
   TimelineView,
   TrackView,
 } from "./types";
@@ -59,20 +62,48 @@ function asInterp(v: unknown, fallback: Interpolation): Interpolation {
 /** Default lane height — matches palmier-model `default_display_height` (50). */
 const DEFAULT_DISPLAY_HEIGHT = 50;
 
-/** Map one wire clip object (defaults stripped) → a fully-defaulted ClipView. */
+/**
+ * Adapt one wire keyframe track (`{ keyframes: [{ frame, value, interpolationOut }] }`)
+ * into a `KeyframeTrackView`. Returns `null` when absent or empty (a track is only
+ * "active" when it holds keyframes — reference `!keyframes.isEmpty`). `value` is
+ * passed through verbatim: scalar tracks (volume/opacity) carry a number; the
+ * position/scale/crop tracks carry the model's `AnimPair`/`Crop` object, which the
+ * view types accept as the generic `V`.
+ */
+function adaptKeyframeTrack(raw: unknown): KeyframeTrackView | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const rows = (raw as Json).keyframes;
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  const keyframes: KeyframeView[] = [];
+  for (const r of rows) {
+    if (typeof r !== "object" || r === null) continue;
+    const kf = r as Json;
+    keyframes.push({
+      frame: asNumber(kf.frame, 0),
+      // `value` is generic; pass through (number for scalar, object for pair/crop).
+      value: kf.value as KeyframeView["value"],
+      interpolationOut: asInterp(kf.interpolationOut, "smooth"),
+    });
+  }
+  if (keyframes.length === 0) return null;
+  return { keyframes };
+}
+
+/** Map one wire clip object → a fully-populated ClipView (near-passthrough). */
 function adaptClip(raw: Json): ClipView {
   const mediaType = asClipType(raw.mediaType, "video");
   return {
     id: asString(raw.id, ""),
     // The wire carries no display name (it lives on the media asset); fall back to
-    // text content for text clips, else the mediaRef tail. The canvas shows this.
+    // text content for text clips, else the mediaRef. The canvas shows this.
     name:
       asString(raw.textContent, "") ||
       asString(raw.name, "") ||
       asString(raw.mediaRef, ""),
     mediaRef: asString(raw.mediaRef, ""),
     mediaType,
-    // sourceClipType defaults to mediaType when stripped (read.rs drops it on equal).
+    // sourceClipType is always serialized by the full serializer; default to
+    // mediaType only if somehow absent.
     sourceClipType: asClipType(raw.sourceClipType, mediaType),
     startFrame: asNumber(raw.startFrame, 0),
     durationFrames: asNumber(raw.durationFrames, 0),
@@ -83,72 +114,37 @@ function adaptClip(raw: Json): ClipView {
     opacity: asNumber(raw.opacity, 1),
     fadeInFrames: asNumber(raw.fadeInFrames, 0),
     fadeOutFrames: asNumber(raw.fadeOutFrames, 0),
-    fadeInInterpolation: asInterp(raw.fadeInInterpolation, "smooth"),
-    fadeOutInterpolation: asInterp(raw.fadeOutInterpolation, "smooth"),
-    linkGroupId:
-      typeof raw.linkGroupId === "string" ? raw.linkGroupId : null,
+    fadeInInterpolation: asInterp(raw.fadeInInterpolation, "linear"),
+    fadeOutInterpolation: asInterp(raw.fadeOutInterpolation, "linear"),
+    linkGroupId: typeof raw.linkGroupId === "string" ? raw.linkGroupId : null,
+    // Keyframe tracks — full passthrough; `null` when the track is absent/empty.
+    volumeTrack: adaptKeyframeTrack(raw.volumeTrack),
+    opacityTrack: adaptKeyframeTrack(raw.opacityTrack),
+    positionTrack: adaptKeyframeTrack(raw.positionTrack),
+    scaleTrack: adaptKeyframeTrack(raw.scaleTrack),
+    cropTrack: adaptKeyframeTrack(raw.cropTrack),
     // Generation status / missing media are media-library concerns; the timeline
     // wire doesn't carry them, so leave the optional flags unset.
   };
 }
 
-/**
- * Expand a track's `captionGroups` back into individual ClipViews. read.rs collapses
- * caption clips sharing a `captionGroupId` into a group with `shared` props + per-clip
- * `[clipId, startFrame, durationFrames, text]` rows; we rebuild each as a text clip so
- * the canvas renders it. The `clipFormat` array names the row columns (defensive read).
- */
-function expandCaptionGroups(track: Json): ClipView[] {
-  const groups = track.captionGroups;
-  if (!Array.isArray(groups)) return [];
-  const out: ClipView[] = [];
-  for (const g of groups) {
-    if (typeof g !== "object" || g === null) continue;
-    const group = g as Json;
-    const shared = (typeof group.shared === "object" && group.shared !== null
-      ? group.shared
-      : {}) as Json;
-    const rows = Array.isArray(group.clips) ? group.clips : [];
-    const gid = asString(group.captionGroupId, "");
-    for (const r of rows) {
-      if (!Array.isArray(r)) continue;
-      const [clipId, startFrame, durationFrames, text] = r as unknown[];
-      out.push(
-        adaptClip({
-          ...shared,
-          id: clipId,
-          startFrame,
-          durationFrames,
-          textContent: text,
-          captionGroupId: gid,
-          // Caption clips are text overlays.
-          mediaType: asClipType(shared.mediaType, "text"),
-        }),
-      );
-    }
-  }
-  return out;
-}
-
-/** Map one wire track (defaults stripped) → a fully-defaulted TrackView. */
+/** Map one wire track → a fully-populated TrackView. */
 function adaptTrack(raw: Json): TrackView {
   const type = asClipType(raw.type, "video");
-  const looseClips = Array.isArray(raw.clips)
+  const clips = Array.isArray(raw.clips)
     ? raw.clips
         .filter((c): c is Json => typeof c === "object" && c !== null)
         .map(adaptClip)
+        .sort((a, b) => a.startFrame - b.startFrame)
     : [];
-  const captionClips = expandCaptionGroups(raw);
-  const clips = [...looseClips, ...captionClips].sort(
-    (a, b) => a.startFrame - b.startFrame,
-  );
   return {
     id: asString(raw.id, ""),
     type,
     muted: asBool(raw.muted, false),
     hidden: asBool(raw.hidden, false),
     syncLocked: asBool(raw.syncLocked, true),
-    displayHeight: DEFAULT_DISPLAY_HEIGHT,
+    // The full serializer injects displayHeight; fall back to the model default.
+    displayHeight: asNumber(raw.displayHeight, DEFAULT_DISPLAY_HEIGHT),
     clips,
   };
 }

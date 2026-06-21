@@ -91,6 +91,75 @@ pub fn get_timeline(state: &EditorState, args: &Value) -> ToolResult {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// full_timeline_json — UI-only full-fidelity serializer (NOT an MCP tool)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Full-fidelity timeline JSON for the **editor UI** (`editor_get_timeline`),
+/// NOT the compact MCP `get_timeline` summary.
+///
+/// Unlike [`get_timeline`] — which strips default-valued fields, collapses caption
+/// clips into `captionGroups`, folds keyframe tracks into a terse `[frame, …vals]`
+/// table, and windows the result for an LLM — this emits **every** field the
+/// frontend `ClipView` / `TrackView` (`src-ui/src/editor/types.ts`) need, so the
+/// canvas renders accurate data (real volume / trim / speed / opacity / fades /
+/// keyframes) rather than reconstructing defaults.
+///
+/// The `Clip` / `Track` / `Timeline` serde encodings already carry the exact wire
+/// keys and shapes the view types expect:
+/// - clip: `id`, `mediaRef`, `mediaType`, `sourceClipType`, `startFrame`,
+///   `durationFrames`, `trimStartFrame`, `trimEndFrame`, `speed`, `volume`,
+///   `opacity`, `fadeInFrames` / `fadeOutFrames`, `fadeInInterpolation` /
+///   `fadeOutInterpolation`, `linkGroupId`, `textContent`, plus the six keyframe
+///   tracks (`volumeTrack` / `opacityTrack` / `positionTrack` / `scaleTrack` /
+///   `cropTrack` / `rotationTrack`) as `{ keyframes: [{ frame, value,
+///   interpolationOut }] }` — matching TS `KeyframeTrackView` / `KeyframeView`.
+/// - track: `id`, `type`, `muted`, `hidden`, `syncLocked`, `clips`.
+///
+/// Two fixups over the raw serde value:
+/// 1. **`displayHeight`** is injected per track — the model marks it `#[serde(skip)]`
+///    (display-only, reset to 50 on open), so the wire omits it; the UI needs it.
+/// 2. **`totalFrames`** / **`canGenerate`** are injected at the root (harmless
+///    extras the adapter ignores; kept for parity with the compact summary).
+///
+/// Keyframe values stay verbatim: scalars (`volume` / `opacity` / `rotation` in dB
+/// or degrees), `AnimPair` `{ a, b }` (position / scale), and `Crop`
+/// `{ left, top, right, bottom }` — the adapter passes them through.
+///
+/// Numbers are rounded to [`JSON_ROUND_PLACES`] like the other read projections.
+pub fn full_timeline_json(state: &EditorState) -> Value {
+    let timeline = state.timeline();
+
+    let Ok(Value::Object(mut dict)) = serde_json::to_value(timeline) else {
+        // Encoding a Timeline never fails in practice; degrade to an empty shape
+        // the adapter tolerates rather than panicking.
+        return json!({ "fps": timeline.fps, "width": timeline.width, "height": timeline.height, "tracks": [] });
+    };
+
+    // Rebuild `tracks` so each track carries its (skipped) displayHeight.
+    let tracks_out: Vec<Value> = timeline
+        .tracks
+        .iter()
+        .map(|track| {
+            let mut t = match serde_json::to_value(track) {
+                Ok(Value::Object(m)) => m,
+                _ => Map::new(),
+            };
+            // display_height is `#[serde(skip)]` on the model — inject it so the
+            // lane renders at the right height.
+            t.insert("displayHeight".to_string(), json!(track.display_height));
+            Value::Object(t)
+        })
+        .collect();
+    dict.insert("tracks".to_string(), Value::Array(tracks_out));
+
+    // Computed extras (parity with the compact summary; the adapter ignores them).
+    dict.insert("totalFrames".to_string(), json!(timeline.total_frames()));
+    dict.insert("canGenerate".to_string(), json!(state.can_generate));
+
+    round_json_numbers(Value::Object(dict), JSON_ROUND_PLACES)
+}
+
 /// Parse the `[startFrame, endFrame)` window. `None` when neither bound is set.
 /// Errors (matching the reference) if `start >= end`.
 fn parse_window(args: &Value) -> Result<Option<(i32, i32)>, String> {
@@ -783,5 +852,137 @@ pub fn get_transcript(state: &EditorState, args: &Value) -> ToolResult {
     match serde_json::to_string(&Value::Object(body)) {
         Ok(s) => ToolResult::ok(s),
         Err(_) => ToolResult::error("Failed to serialize transcript"),
+    }
+}
+
+#[cfg(test)]
+mod full_timeline_tests {
+    use super::*;
+    use palmier_model::{
+        AnimPair, Clip, ClipType, Interpolation, Keyframe, KeyframeTrack, MediaLibrary, Track,
+    };
+
+    /// Build an `EditorState` whose library wraps `timeline`.
+    fn state_with(timeline: Timeline) -> EditorState {
+        let mut lib = MediaLibrary::new();
+        lib.timeline = timeline;
+        EditorState::with_library(lib)
+    }
+
+    #[test]
+    fn full_timeline_empty_has_default_root() {
+        let st = state_with(Timeline::new());
+        let v = full_timeline_json(&st);
+        assert_eq!(v.get("fps").and_then(Value::as_i64), Some(30));
+        assert_eq!(v.get("width").and_then(Value::as_i64), Some(1920));
+        assert_eq!(v.get("height").and_then(Value::as_i64), Some(1080));
+        assert_eq!(v.get("tracks").and_then(Value::as_array).map(|a| a.len()), Some(0));
+        assert_eq!(v.get("totalFrames").and_then(Value::as_i64), Some(0));
+        assert_eq!(v.get("canGenerate").and_then(Value::as_bool), Some(false));
+    }
+
+    #[test]
+    fn full_timeline_preserves_non_default_clip_and_track_fields() {
+        // A clip carrying NON-default volume / trim / speed / opacity / fades.
+        let mut clip = Clip::new("asset-1", 10, 90);
+        clip.id = "clip-1".into();
+        clip.media_type = ClipType::Audio;
+        clip.source_clip_type = ClipType::Video;
+        clip.trim_start_frame = 7;
+        clip.trim_end_frame = 3;
+        clip.speed = 2.0;
+        clip.volume = 0.42;
+        clip.opacity = 0.6;
+        clip.fade_in_frames = 12;
+        clip.fade_out_frames = 8;
+        clip.fade_in_interpolation = Interpolation::Smooth;
+        clip.fade_out_interpolation = Interpolation::Linear;
+        clip.link_group_id = Some("grp-9".into());
+
+        let mut track = Track::new(ClipType::Audio);
+        track.id = "track-1".into();
+        track.muted = true;
+        track.hidden = false;
+        track.sync_locked = false; // non-default (default is true)
+        track.display_height = 80.0;
+        track.clips.push(clip);
+
+        let mut tl = Timeline::new();
+        tl.tracks.push(track);
+        let st = state_with(tl);
+
+        let v = full_timeline_json(&st);
+        let tracks = v.get("tracks").and_then(Value::as_array).expect("tracks array");
+        assert_eq!(tracks.len(), 1);
+        let t = &tracks[0];
+
+        // Track fields — including the otherwise-skipped displayHeight, and the
+        // non-default flags that the COMPACT summary would strip.
+        assert_eq!(t.get("id").and_then(Value::as_str), Some("track-1"));
+        assert_eq!(t.get("type").and_then(Value::as_str), Some("audio"));
+        assert_eq!(t.get("muted").and_then(Value::as_bool), Some(true));
+        assert_eq!(t.get("hidden").and_then(Value::as_bool), Some(false));
+        assert_eq!(t.get("syncLocked").and_then(Value::as_bool), Some(false));
+        assert_eq!(t.get("displayHeight").and_then(Value::as_f64), Some(80.0));
+
+        let clips = t.get("clips").and_then(Value::as_array).expect("clips array");
+        assert_eq!(clips.len(), 1);
+        let c = &clips[0];
+        assert_eq!(c.get("id").and_then(Value::as_str), Some("clip-1"));
+        assert_eq!(c.get("mediaRef").and_then(Value::as_str), Some("asset-1"));
+        assert_eq!(c.get("mediaType").and_then(Value::as_str), Some("audio"));
+        assert_eq!(c.get("sourceClipType").and_then(Value::as_str), Some("video"));
+        assert_eq!(c.get("startFrame").and_then(Value::as_i64), Some(10));
+        assert_eq!(c.get("durationFrames").and_then(Value::as_i64), Some(90));
+        assert_eq!(c.get("trimStartFrame").and_then(Value::as_i64), Some(7));
+        assert_eq!(c.get("trimEndFrame").and_then(Value::as_i64), Some(3));
+        assert_eq!(c.get("speed").and_then(Value::as_f64), Some(2.0));
+        assert_eq!(c.get("volume").and_then(Value::as_f64), Some(0.42));
+        assert_eq!(c.get("opacity").and_then(Value::as_f64), Some(0.6));
+        assert_eq!(c.get("fadeInFrames").and_then(Value::as_i64), Some(12));
+        assert_eq!(c.get("fadeOutFrames").and_then(Value::as_i64), Some(8));
+        assert_eq!(c.get("fadeInInterpolation").and_then(Value::as_str), Some("smooth"));
+        assert_eq!(c.get("fadeOutInterpolation").and_then(Value::as_str), Some("linear"));
+        assert_eq!(c.get("linkGroupId").and_then(Value::as_str), Some("grp-9"));
+    }
+
+    #[test]
+    fn full_timeline_emits_keyframe_tracks_verbatim() {
+        // A clip with a dB volume track and a position (AnimPair) track.
+        let mut clip = Clip::new("asset-2", 0, 100);
+        clip.id = "clip-kf".into();
+
+        let mut vol = KeyframeTrack::new();
+        vol.upsert(Keyframe::with_interpolation(0, -6.0, Interpolation::Linear));
+        vol.upsert(Keyframe::with_interpolation(50, 6.0, Interpolation::Smooth));
+        clip.volume_track = Some(vol);
+
+        let mut pos = KeyframeTrack::new();
+        pos.upsert(Keyframe::new(0, AnimPair::new(0.1, 0.2)));
+        clip.position_track = Some(pos);
+
+        let mut track = Track::new(ClipType::Video);
+        track.clips.push(clip);
+        let mut tl = Timeline::new();
+        tl.tracks.push(track);
+        let st = state_with(tl);
+
+        let v = full_timeline_json(&st);
+        let c = &v["tracks"][0]["clips"][0];
+
+        // volumeTrack survives as { keyframes: [{ frame, value, interpolationOut }] }.
+        let vkfs = c["volumeTrack"]["keyframes"].as_array().expect("volume keyframes");
+        assert_eq!(vkfs.len(), 2);
+        assert_eq!(vkfs[0].get("frame").and_then(Value::as_i64), Some(0));
+        assert_eq!(vkfs[0].get("value").and_then(Value::as_f64), Some(-6.0));
+        assert_eq!(vkfs[0].get("interpolationOut").and_then(Value::as_str), Some("linear"));
+        assert_eq!(vkfs[1].get("value").and_then(Value::as_f64), Some(6.0));
+        assert_eq!(vkfs[1].get("interpolationOut").and_then(Value::as_str), Some("smooth"));
+
+        // positionTrack keeps the AnimPair { a, b } value shape verbatim.
+        let pkfs = c["positionTrack"]["keyframes"].as_array().expect("position keyframes");
+        assert_eq!(pkfs.len(), 1);
+        assert_eq!(pkfs[0]["value"].get("a").and_then(Value::as_f64), Some(0.1));
+        assert_eq!(pkfs[0]["value"].get("b").and_then(Value::as_f64), Some(0.2));
     }
 }
