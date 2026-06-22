@@ -10,7 +10,7 @@
 // (sharedClipValue / scrub-field ranges). Govern: `docs/reference/inspector.md`
 // §ScrubbableNumberField / §Scrub-field-ranges / §Audio-tab.
 
-import type { ClipView, KeyframeTrackView } from "../types";
+import type { ClipView, Interpolation, KeyframeTrackView } from "../types";
 import { VolumeScale } from "../theme";
 
 // ── Scrub math (reference ScrubbableNumberField) ─────────────────────────────
@@ -216,6 +216,151 @@ export function nextKeyframeFrame(
     if (kf.frame > relFrame) return kf.frame;
   }
   return null;
+}
+
+// ── Keyframe-lane geometry + edit-row builders (E12-S8 follow-up) ─────────────
+//
+// The KEYFRAMES panel renders a per-property lane: a diamond per keyframe placed
+// at `frameToLaneX(relFrame)`, draggable horizontally to MOVE the keyframe's frame
+// (with a 4 px snap to the playhead + sibling keyframes), and right-clickable to
+// pick its interpolation. All of these are pure functions so they are tsc-gated by
+// `body.checks.ts` and the draw + hit-test share ONE frame↔x mapping (so a dragged
+// diamond lands where it is shown).
+
+/** The interpolation kinds the model / `set_keyframes` accept (reference wire form). */
+export const INTERPOLATION_KINDS: readonly Interpolation[] = ["linear", "hold", "smooth"];
+
+/** Display labels for the interpolation context menu. */
+export const INTERPOLATION_LABEL: Record<Interpolation, string> = {
+  linear: "Linear",
+  hold: "Hold",
+  smooth: "Smooth",
+};
+
+/**
+ * The horizontal pixel snap radius for the keyframe lane (spec / SnapEngine 4 px).
+ * Smaller than the timeline's 8 px base — the lane is denser and the reference
+ * keyframe drag uses a tight 4 px catch.
+ */
+export const KEYFRAME_SNAP_PX = 4;
+
+/** Map a clip-relative frame to a lane x (px). `pxPerFrame` is the lane's scale. */
+export function frameToLaneX(relFrame: number, pxPerFrame: number): number {
+  return relFrame * pxPerFrame;
+}
+
+/** Inverse of `frameToLaneX`: a lane x (px) → the nearest clip-relative frame. */
+export function laneXToFrame(x: number, pxPerFrame: number): number {
+  if (pxPerFrame <= 0) return 0;
+  return Math.round(x / pxPerFrame);
+}
+
+/**
+ * Snap a proposed clip-relative frame to the nearest snap target within
+ * `KEYFRAME_SNAP_PX`. Targets are the playhead (clip-relative) and the OTHER
+ * keyframes' frames on the same track (the dragged one excluded). Returns the
+ * snapped frame, or `proposed` when nothing is in range. Mirrors the SnapEngine's
+ * "closest target within a pixel threshold" rule, scoped to the lane.
+ */
+export function snapKeyframeFrame(
+  proposed: number,
+  pxPerFrame: number,
+  playheadRel: number | null,
+  otherFrames: readonly number[],
+): number {
+  if (pxPerFrame <= 0) return proposed;
+  const thresholdFrames = KEYFRAME_SNAP_PX / pxPerFrame;
+  const targets: number[] = [...otherFrames];
+  if (playheadRel !== null) targets.push(playheadRel);
+  let best = proposed;
+  let bestDist = Number.POSITIVE_INFINITY;
+  for (const t of targets) {
+    const d = Math.abs(proposed - t);
+    if (d <= thresholdFrames && d < bestDist) {
+      bestDist = d;
+      best = t;
+    }
+  }
+  return best;
+}
+
+/**
+ * Coerce a stored keyframe value (number | AnimPair `{a,b}`/`{x,y}` | crop) into an
+ * `arity`-length number list — the leading values of a `set_keyframes` row.
+ */
+export function keyframeValues(value: unknown, arity: number): number[] {
+  if (typeof value === "number") return arity === 1 ? [value] : new Array(arity).fill(value);
+  if (value && typeof value === "object") {
+    const rec = value as Record<string, number>;
+    if (arity === 2) return [rec.a ?? rec.x ?? 0, rec.b ?? rec.y ?? 0];
+    if (arity === 4) return [rec.top ?? 0, rec.right ?? 0, rec.bottom ?? 0, rec.left ?? 0];
+  }
+  return new Array(arity).fill(0);
+}
+
+/**
+ * Build ONE `set_keyframes` row `[frame, …values, interp]` for a keyframe. The
+ * trailing `interp` is always emitted so a moved/edited keyframe keeps its easing
+ * (the tool accepts the bare-values form too, but emitting interp is lossless).
+ */
+export function keyframeRow(
+  frame: number,
+  value: unknown,
+  arity: number,
+  interp: Interpolation,
+): (number | string)[] {
+  return [frame, ...keyframeValues(value, arity), interp];
+}
+
+/** Build the full, frame-sorted `set_keyframes` row list for a track. */
+export function keyframeRows(
+  track: KeyframeTrackView | null | undefined,
+  arity: number,
+): (number | string)[][] {
+  const kfs = track?.keyframes ?? [];
+  return [...kfs]
+    .sort((a, b) => a.frame - b.frame)
+    .map((k) => keyframeRow(k.frame, k.value, arity, k.interpolationOut));
+}
+
+/**
+ * Build the `set_keyframes` rows after MOVING the keyframe currently at `fromFrame`
+ * to `toFrame` (values + interp preserved), dropping any keyframe that already sits
+ * at the destination (a move onto a sibling collapses, mirroring upsert-by-frame),
+ * and re-sorting by frame. Returns rows ready for `set_keyframes`.
+ */
+export function moveKeyframeRows(
+  track: KeyframeTrackView | null | undefined,
+  arity: number,
+  fromFrame: number,
+  toFrame: number,
+): (number | string)[][] {
+  const kfs = track?.keyframes ?? [];
+  const moved = kfs.find((k) => k.frame === fromFrame);
+  if (!moved) return keyframeRows(track, arity);
+  const kept = kfs.filter((k) => k.frame !== fromFrame && k.frame !== toFrame);
+  const next = [...kept, { ...moved, frame: toFrame }];
+  next.sort((a, b) => a.frame - b.frame);
+  return next.map((k) => keyframeRow(k.frame, k.value, arity, k.interpolationOut));
+}
+
+/**
+ * Build the `set_keyframes` rows after changing the INTERPOLATION of the keyframe at
+ * `frame` to `interp` (everything else preserved, frame-sorted). Mirrors the
+ * reference per-keyframe interpolation menu.
+ */
+export function setKeyframeInterpRows(
+  track: KeyframeTrackView | null | undefined,
+  arity: number,
+  frame: number,
+  interp: Interpolation,
+): (number | string)[][] {
+  const kfs = track?.keyframes ?? [];
+  return [...kfs]
+    .sort((a, b) => a.frame - b.frame)
+    .map((k) =>
+      keyframeRow(k.frame, k.value, arity, k.frame === frame ? interp : k.interpolationOut),
+    );
 }
 
 // ── Volume / dB bridge (E12-S1 VolumeScale; reference Audio-tab) ──────────────

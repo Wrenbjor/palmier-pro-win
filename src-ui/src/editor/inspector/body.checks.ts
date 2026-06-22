@@ -6,6 +6,7 @@
 
 import type { ClipView } from "../types";
 import { VolumeScale } from "../theme";
+import { adaptTimeline } from "../adapt";
 import {
   clamp,
   clipPropertiesArgs,
@@ -16,8 +17,15 @@ import {
   formatBytes,
   formatScrub,
   formatVolumeDb,
+  frameToLaneX,
   hasKeyframeAt,
   hexToRgba,
+  INTERPOLATION_KINDS,
+  keyframeRow,
+  keyframeRows,
+  keyframeValues,
+  laneXToFrame,
+  moveKeyframeRows,
   nextKeyframeFrame,
   NEG_INF_DB,
   OPACITY_RANGE,
@@ -29,9 +37,11 @@ import {
   SCALE_RANGE,
   scrubModifierMultiplier,
   scrubNext,
+  setKeyframeInterpRows,
   sharedClipBool,
   sharedClipString,
   sharedClipValue,
+  snapKeyframeFrame,
   SPEED_RANGE,
   volumeDb,
   volumeLinearFromDb,
@@ -252,6 +262,152 @@ export function runInspectorBodyChecks(): string[] {
   eq("bytes.kb", formatBytes(2048), "2.0 KB", out);
   eq("bytes.mb", formatBytes(5 * 1024 * 1024), "5.0 MB", out);
   eq("bytes.neg", formatBytes(-1), "—", out);
+
+  // ── Rotation track flows into ClipView (adapter) ───────────────────────────
+  {
+    const wire = {
+      fps: 30,
+      width: 1920,
+      height: 1080,
+      tracks: [
+        {
+          id: "t1",
+          type: "video",
+          clips: [
+            {
+              id: "rot",
+              mediaRef: "asset-rot",
+              mediaType: "video",
+              startFrame: 0,
+              durationFrames: 100,
+              rotationTrack: {
+                keyframes: [
+                  { frame: 0, value: 0, interpolationOut: "linear" },
+                  { frame: 30, value: 45, interpolationOut: "hold" },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const tl = adaptTimeline(wire);
+    const adaptedClip = tl.tracks[0].clips[0];
+    eq("rot.adapt.present", adaptedClip.rotationTrack != null, true, out);
+    eq("rot.adapt.count", adaptedClip.rotationTrack?.keyframes.length ?? 0, 2, out);
+    eq("rot.adapt.value", adaptedClip.rotationTrack?.keyframes[1].value ?? -1, 45, out);
+    eq(
+      "rot.adapt.interp",
+      adaptedClip.rotationTrack?.keyframes[1].interpolationOut ?? "?",
+      "hold",
+      out,
+    );
+  }
+
+  // ── Keyframe-lane frame↔x mapping (shared by draw + hit-test) ──────────────
+  eq("lane.x", frameToLaneX(30, 2), 60, out);
+  eq("lane.frame", laneXToFrame(60, 2), 30, out);
+  // Round-trips: a frame → x → frame is identity at any integer scale.
+  eq("lane.roundtrip", laneXToFrame(frameToLaneX(17, 4), 4), 17, out);
+
+  // ── Snap (4 px) to playhead + sibling keyframes ────────────────────────────
+  {
+    // pxPerFrame=1 → 4 px = 4 frames of catch radius.
+    // Proposed 28, playhead at 30, sibling at 10 → snaps to 30 (within 4).
+    eq("snap.playhead", snapKeyframeFrame(28, 1, 30, [10]), 30, out);
+    // Proposed 12, sibling at 10 (dist 2), playhead null → snaps to 10.
+    eq("snap.sibling", snapKeyframeFrame(12, 1, null, [10, 60]), 10, out);
+    // Proposed 50, nothing within 4 → stays put.
+    eq("snap.none", snapKeyframeFrame(50, 1, 30, [10, 60]), 50, out);
+    // Tighter scale: pxPerFrame=2 → 4 px = 2 frames; proposed 33 with target 30
+    // is 3 frames away → NO snap.
+    eq("snap.scaled.miss", snapKeyframeFrame(33, 2, 30, []), 33, out);
+    eq("snap.scaled.hit", snapKeyframeFrame(31, 2, 30, []), 30, out);
+  }
+
+  // ── keyframeValues coercion (scalar / pair / crop) ─────────────────────────
+  eq("kfv.scalar", keyframeValues(45, 1), [45], out);
+  eq("kfv.pair.ab", keyframeValues({ a: 0.5, b: 0.25 }, 2), [0.5, 0.25], out);
+  eq("kfv.pair.xy", keyframeValues({ x: 0.1, y: 0.2 }, 2), [0.1, 0.2], out);
+  eq("kfv.crop", keyframeValues({ top: 1, right: 2, bottom: 3, left: 4 }, 4), [1, 2, 3, 4], out);
+
+  // ── keyframeRow / keyframeRows: [frame, …values, interp], frame-sorted ──────
+  eq("kfrow.scalar", keyframeRow(10, 45, 1, "smooth"), [10, 45, "smooth"], out);
+  {
+    const track = {
+      keyframes: [
+        { frame: 30, value: 20, interpolationOut: "hold" as const },
+        { frame: 0, value: 10, interpolationOut: "linear" as const },
+      ],
+    };
+    eq(
+      "kfrows.sorted",
+      keyframeRows(track, 1),
+      [
+        [0, 10, "linear"],
+        [30, 20, "hold"],
+      ],
+      out,
+    );
+  }
+
+  // ── Drag-to-move: produces a frame-moved + re-sorted row list ──────────────
+  {
+    const track = {
+      keyframes: [
+        { frame: 0, value: 0, interpolationOut: "linear" as const },
+        { frame: 60, value: 45, interpolationOut: "smooth" as const },
+      ],
+    };
+    // Move the kf at frame 60 → 20: value + interp preserved, list re-sorted.
+    eq(
+      "drag.move",
+      moveKeyframeRows(track, 1, 60, 20),
+      [
+        [0, 0, "linear"],
+        [20, 45, "smooth"],
+      ],
+      out,
+    );
+    // Moving onto an existing sibling frame collapses (no duplicate at 0).
+    eq(
+      "drag.collapse",
+      moveKeyframeRows(track, 1, 60, 0),
+      [[0, 45, "smooth"]],
+      out,
+    );
+    // Moving a non-existent source frame is a no-op (returns the sorted track).
+    eq(
+      "drag.noop",
+      moveKeyframeRows(track, 1, 99, 10),
+      [
+        [0, 0, "linear"],
+        [60, 45, "smooth"],
+      ],
+      out,
+    );
+  }
+
+  // ── Interpolation menu: change one keyframe's interp, rest preserved ────────
+  {
+    const track = {
+      keyframes: [
+        { frame: 0, value: 0, interpolationOut: "linear" as const },
+        { frame: 60, value: 45, interpolationOut: "smooth" as const },
+      ],
+    };
+    eq(
+      "interp.set",
+      setKeyframeInterpRows(track, 1, 60, "hold"),
+      [
+        [0, 0, "linear"],
+        [60, 45, "hold"],
+      ],
+      out,
+    );
+    // The menu only offers the model's supported kinds.
+    eq("interp.kinds", [...INTERPOLATION_KINDS], ["linear", "hold", "smooth"], out);
+  }
 
   return out;
 }

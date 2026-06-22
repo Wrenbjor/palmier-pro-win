@@ -122,6 +122,7 @@ function adaptClip(raw: Json): ClipView {
     opacityTrack: adaptKeyframeTrack(raw.opacityTrack),
     positionTrack: adaptKeyframeTrack(raw.positionTrack),
     scaleTrack: adaptKeyframeTrack(raw.scaleTrack),
+    rotationTrack: adaptKeyframeTrack(raw.rotationTrack),
     cropTrack: adaptKeyframeTrack(raw.cropTrack),
     // Per-source audio peaks (dB-normalised, 0 = loud … 1 = silent). The Tauri
     // `editor_get_timeline` command injects this onto audio clips from the cached

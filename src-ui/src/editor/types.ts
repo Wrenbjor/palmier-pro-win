@@ -76,6 +76,8 @@ export interface ClipView {
   opacityTrack?: KeyframeTrackView | null;
   positionTrack?: KeyframeTrackView | null;
   scaleTrack?: KeyframeTrackView | null;
+  /** Rotation keyframes (scalar degrees) — backend `rotationTrack` (`KeyframeTrack<f64>`). */
+  rotationTrack?: KeyframeTrackView | null;
   cropTrack?: KeyframeTrackView | null;
 
   /**
