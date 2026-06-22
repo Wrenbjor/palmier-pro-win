@@ -461,7 +461,7 @@ mod tests {
     use std::sync::Mutex;
 
     use palmier_gen::CatalogEntry;
-    use palmier_model::{MediaAsset, MediaLibrary, MediaSource};
+    use palmier_model::{MediaAsset, MediaSource};
 
     fn catalog() -> ModelCatalog {
         let entries: Vec<CatalogEntry> = serde_json::from_value(serde_json::json!([
