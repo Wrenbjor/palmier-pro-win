@@ -79,6 +79,27 @@ export interface CaptionRequest {
   placement: { centerX: number; centerY: number };
 }
 
+// Map the form's CaptionRequest → the `add_captions` tool inputSchema args
+// (crates/palmier-tools schema_add_captions). `source:"auto"` omits clipIds so the
+// tool auto-picks the primary spoken track; `language:"auto"` omits language so it
+// uses the system default. The track-pick + multi-clip selection threads in when
+// the tab shares the editor's clip selection — today auto-detect is the path.
+// Exported as a pure function so the parity checks can assert the exact wire shape
+// against the Rust `add_captions` arg names without rendering the component.
+export function toAddCaptionsArgs(r: CaptionRequest): Record<string, unknown> {
+  const args: Record<string, unknown> = {
+    fontName: r.style.font,
+    fontSize: r.style.size,
+    color: r.style.color,
+    centerX: r.placement.centerX,
+    centerY: r.placement.centerY,
+    textCase: r.style.case,
+    censorProfanity: r.style.censorProfanity,
+  };
+  if (r.language !== "auto") args.language = r.language;
+  return args;
+}
+
 export interface CaptionsTabProps {
   /**
    * The media-panel controller (Generate dispatches `add_captions` through it). When
@@ -128,25 +149,6 @@ export function CaptionsTab({ controller }: CaptionsTabProps = {}) {
     centerX <= CAPTION.maxPosition &&
     centerY >= CAPTION.minPosition &&
     centerY <= CAPTION.maxPosition;
-
-  // Map the form's CaptionRequest → the `add_captions` tool inputSchema args
-  // (crates/palmier-tools schema_add_captions). `source:"auto"` omits clipIds so the
-  // tool auto-picks the primary spoken track; `language:"auto"` omits language so it
-  // uses the system default. The track-pick + multi-clip selection threads in when
-  // the tab shares the editor's clip selection — today auto-detect is the path.
-  const toAddCaptionsArgs = (r: CaptionRequest): Record<string, unknown> => {
-    const args: Record<string, unknown> = {
-      fontName: r.style.font,
-      fontSize: r.style.size,
-      color: r.style.color,
-      centerX: r.placement.centerX,
-      centerY: r.placement.centerY,
-      textCase: r.style.case,
-      censorProfanity: r.style.censorProfanity,
-    };
-    if (r.language !== "auto") args.language = r.language;
-    return args;
-  };
 
   const connected = inTauri() && !!controller;
   const busy = genState.kind === "running";

@@ -36,6 +36,7 @@ import { fileMatches, formatTimecode, secondsToFrame } from "./search";
 import { Spacing } from "./theme";
 import { createMediaPanelStore } from "./store";
 import { MediaPanelController } from "./controller";
+import { toAddCaptionsArgs, type CaptionRequest } from "./CaptionsTab";
 import type {
   FilterableType,
   MediaAssetView,
@@ -397,5 +398,115 @@ export function runMediaParityChecks(): string[] {
     );
   }
 
+  // --- E10-S14: Captions Generate → add_captions arg shape -------------------
+  // The Captions tab's Generate button dispatches `controller.generateCaptions(
+  // toAddCaptionsArgs(request))` → `editorEdit("add_captions", args)`. This asserts
+  // the form→wire mapping matches the Rust `add_captions` inputSchema names exactly
+  // (crates/palmier-tools texts.rs add_captions): fontName/fontSize/color/centerX/
+  // centerY/textCase/censorProfanity, with clipIds OMITTED (auto-detect) and language
+  // OMITTED when "auto" (system default). A mismatch here = a silently-ignored arg.
+  {
+    const base: CaptionRequest = {
+      source: "auto",
+      language: "auto",
+      style: {
+        font: "Inter",
+        size: 48,
+        color: "#ffffff",
+        background: "#000000",
+        case: "upper",
+        censorProfanity: true,
+      },
+      placement: { centerX: 0.5, centerY: 0.9 },
+    };
+
+    const args = toAddCaptionsArgs(base);
+    // Exact wire-name set the Rust tool reads (auto path → no clipIds, no language).
+    check(
+      JSON.stringify(Object.keys(args).sort()) ===
+        JSON.stringify(
+          [
+            "censorProfanity",
+            "centerX",
+            "centerY",
+            "color",
+            "fontName",
+            "fontSize",
+            "textCase",
+          ].sort(),
+        ),
+      `add_captions args keys (auto): ${Object.keys(args).sort().join(",")}`,
+    );
+    check(args.fontName === "Inter", "fontName carries the chosen font");
+    check(args.fontSize === 48, "fontSize carries the chosen size");
+    check(args.color === "#ffffff", "color carries the chosen hex");
+    check(args.centerX === 0.5 && args.centerY === 0.9, "centerX/centerY carry placement");
+    check(args.textCase === "upper", "textCase carries the case mode (ruling #18 set)");
+    check(args.censorProfanity === true, "censorProfanity carries the toggle");
+    check(!("clipIds" in args), "source:auto OMITS clipIds (tool auto-detects speech track)");
+    check(!("language" in args), "language:auto OMITS language (tool uses system default)");
+
+    // Picking a concrete locale adds `language` (validated BCP-47 in the Rust tool).
+    const withLang = toAddCaptionsArgs({ ...base, language: "es" });
+    check(withLang.language === "es", "explicit language → language:'es' arg present");
+
+    // Defaults round-trip: auto case + no censor produce the documented tool defaults.
+    const defaults = toAddCaptionsArgs({
+      ...base,
+      language: "auto",
+      style: { ...base.style, case: "auto", censorProfanity: false },
+    });
+    check(defaults.textCase === "auto", "textCase default = auto");
+    check(defaults.censorProfanity === false, "censorProfanity default = false");
+  }
+
+  // --- E10-S14: Captions dispatch path is present on the controller ----------
+  // The Generate button calls `controller.generateCaptions(args)` →
+  // `editorEdit("add_captions", args)`. The async no-op-outside-Tauri behavior
+  // ({attempted:false}) is covered by `captionsDispatchOutsideTauri()` below (kept
+  // separate so `runMediaParityChecks` stays synchronous). Here we assert the seam
+  // exists so the button can never wire to a missing method.
+  {
+    const store = createMediaPanelStore({ snapshot: { assets: [], folders: [] } });
+    const ctrl = new MediaPanelController(store);
+    check(
+      typeof ctrl.generateCaptions === "function",
+      "controller.generateCaptions is the Captions tab's dispatch seam",
+    );
+  }
+
+  return fail;
+}
+
+/**
+ * The async half of the Captions dispatch contract: outside a Tauri webview
+ * `controller.generateCaptions(args)` (the Generate button's call) resolves to a
+ * graceful no-op `{ ok:false, attempted:false }` — the tab shows an honest "not
+ * connected" hint, never a throw, never a silent success. Inside Tauri the SAME call
+ * invokes `editor_edit('add_captions', …)` through the shared executor (in-app path).
+ * Kept out of the synchronous `runMediaParityChecks` so its `string[]` contract holds.
+ */
+export async function captionsDispatchOutsideTauri(): Promise<string[]> {
+  const fail: string[] = [];
+  const store = createMediaPanelStore({ snapshot: { assets: [], folders: [] } });
+  const ctrl = new MediaPanelController(store);
+  const res = await ctrl.generateCaptions(toAddCaptionsArgs({
+    source: "auto",
+    language: "auto",
+    style: {
+      font: "Inter",
+      size: 48,
+      color: "#ffffff",
+      background: "#000000",
+      case: "auto",
+      censorProfanity: false,
+    },
+    placement: { centerX: 0.5, centerY: 0.9 },
+  }));
+  if (res.attempted !== false || res.ok !== false) {
+    fail.push(
+      `generateCaptions outside Tauri → {attempted:false,ok:false}, got ${JSON.stringify(res)}`,
+    );
+  }
   return fail;
 }

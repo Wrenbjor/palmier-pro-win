@@ -1,5 +1,12 @@
-import { runMediaParityChecks } from "./parity.checks.ts";
-const failures = runMediaParityChecks();
+import {
+  captionsDispatchOutsideTauri,
+  runMediaParityChecks,
+} from "./parity.checks.ts";
+
+const failures = [
+  ...runMediaParityChecks(),
+  ...(await captionsDispatchOutsideTauri()),
+];
 if (failures.length === 0) {
   console.log("MEDIA PARITY OK: all checks passed");
 } else {

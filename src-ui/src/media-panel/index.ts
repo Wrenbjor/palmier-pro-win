@@ -146,4 +146,7 @@ export {
 } from "./types";
 
 // --- Parity checks (tsc-covered; runnable via _run-parity.mts) ---
-export { runMediaParityChecks } from "./parity.checks";
+export {
+  captionsDispatchOutsideTauri,
+  runMediaParityChecks,
+} from "./parity.checks";
