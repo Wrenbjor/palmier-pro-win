@@ -31,6 +31,13 @@ rubato = "0.16"
 version = "0.16"
 optional = true
 
+# Logging for the live audio output player (audio-device only) — device-availability +
+# stream-lifecycle warnings (no-device degradation, stream build/start failures). Same
+# `tracing` macro family the rest of the workspace uses; pulled only with `audio-device`.
+[dependencies.tracing]
+version = "0.1"
+optional = true
+
 # E5-S8 wgpu compositor (FOUNDATION §6.5 step 3, reconciliation #22/#23). Pinned to the
 # EXACT set the S-2 spike proved composites under a transparent WebView2 (see
 # spikes/s2-wry-integration/FINDINGS.md §3): wgpu 27.0.1 + raw-window-handle 0.6.2.
@@ -74,7 +81,7 @@ optional = true
 # Off by default so CI / headless agents build + test the pure DSP without an audio device.
 # Turn on for the live preview build (E5-S7 transport wires the device sink).
 default = []
-audio-device = ["dep:cpal"]
+audio-device = ["dep:cpal", "dep:tracing"]
 # E5-S8: the wgpu compositor (device + textured-quad pipeline + present). Off by default
 # so the descriptor-only stories keep building GPU-free; the live preview build
 # (palmier-tauri preview module) turns it on.

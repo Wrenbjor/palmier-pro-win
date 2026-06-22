@@ -24,12 +24,18 @@
 
 pub mod envelope;
 pub mod mixer;
+#[cfg(feature = "audio-device")]
+pub mod player;
 pub mod retime;
 pub mod volume_scale;
 
 pub use envelope::{
     build_volume_envelope, sample_envelope, AudioClip, VolumeKeyframe, VolumeRamp, SMOOTH_SEGMENTS,
 };
-pub use mixer::{mix_to_bus, AudioSink, AudioTrack, BufferSink, ClipAudio};
+pub use mixer::{
+    mix_to_bus, mix_to_stereo_bus, AudioSink, AudioTrack, BufferSink, ClipAudio, StereoClipAudio,
+};
+#[cfg(feature = "audio-device")]
+pub use player::{AudioPlayer, PlayerStatus};
 pub use retime::{plan, ResamplePlan, PROJECT_SAMPLE_RATE_HZ};
 pub use volume_scale::{db_from_linear, linear_from_db, CEILING_DB, FLOOR_DB};

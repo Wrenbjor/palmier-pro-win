@@ -94,7 +94,10 @@ palmier-agent = { path = "../palmier-agent" }
 # 0.6.2 — the EXACT S-2-proven set; raw-window-handle 0.6.2 is the SAME handle currency
 # Tauri 2.11 / tao 0.35 / wry 0.55 already speak, so one window backs both the wgpu
 # swapchain and the WebView2 child — see spikes/s2-wry-integration/FINDINGS.md plan A1).
-palmier-engine = { path = "../palmier-engine", features = ["wgpu-compositor"] }
+# `audio-device` activates the cpal output stream (WASAPI on Windows) so the in-app
+# audio transport (preview_audio.rs) plays the timeline's mixed audio to the default
+# device in real time. Off in the pure-DSP/headless builds; on for the live app.
+palmier-engine = { path = "../palmier-engine", features = ["wgpu-compositor", "audio-device"] }
 palmier-media = { path = "../palmier-media" }
 
 [dev-dependencies]

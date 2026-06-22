@@ -91,6 +91,59 @@ pub fn mix_to_bus(tracks: &[(AudioTrack, Vec<ClipAudio>)], fps: u32, output_len:
     bus
 }
 
+/// Mix a set of tracks into an **interleaved stereo** 48 kHz bus covering
+/// `[0, output_frames)` sample-frames. Each entry pairs a track with its clips' audio
+/// as `(left_channel, right_channel)` mono sample buffers (already 48 kHz, aligned to
+/// the clip start). The mono [`mix_to_bus`] is run **per channel** (reusing its tested
+/// envelope/sum/mute logic) and the two resulting buses are interleaved `[L, R, …]`.
+///
+/// `output_frames` is the number of sample-FRAMES (per-channel samples); the returned
+/// vec has `output_frames * 2` elements. This is the buffer the cpal output player
+/// streams from.
+pub fn mix_to_stereo_bus(
+    tracks: &[(AudioTrack, Vec<StereoClipAudio>)],
+    fps: u32,
+    output_frames: usize,
+) -> Vec<f32> {
+    // Split each track's stereo clips into two mono `ClipAudio` sets (L and R), reusing
+    // the tested mono mixer for each channel.
+    let mut left_tracks: Vec<(AudioTrack, Vec<ClipAudio>)> = Vec::with_capacity(tracks.len());
+    let mut right_tracks: Vec<(AudioTrack, Vec<ClipAudio>)> = Vec::with_capacity(tracks.len());
+    for (track, clips) in tracks {
+        let mut l = Vec::with_capacity(clips.len());
+        let mut r = Vec::with_capacity(clips.len());
+        for c in clips {
+            l.push(ClipAudio { clip: c.clip.clone(), samples: c.left.clone() });
+            r.push(ClipAudio { clip: c.clip.clone(), samples: c.right.clone() });
+        }
+        left_tracks.push((track.clone(), l));
+        right_tracks.push((track.clone(), r));
+    }
+    let left = mix_to_bus(&left_tracks, fps, output_frames);
+    let right = mix_to_bus(&right_tracks, fps, output_frames);
+
+    let mut out = vec![0.0f32; output_frames * 2];
+    for f in 0..output_frames {
+        out[f * 2] = left[f];
+        out[f * 2 + 1] = right[f];
+    }
+    out
+}
+
+/// A clip's pre-decoded **stereo** 48 kHz audio (the two channels as separate mono
+/// buffers, each aligned so index 0 == the clip's `start_frame`). The decode adapter
+/// (`palmier-media::decode_audio_pcm`) produces interleaved stereo; the transport
+/// splits it into `left`/`right` per channel for [`mix_to_stereo_bus`].
+#[derive(Debug, Clone)]
+pub struct StereoClipAudio {
+    /// The clip's timeline placement + volume/fade/speed (drives the envelope).
+    pub clip: AudioClip,
+    /// Left-channel 48 kHz mono samples for the clip's visible portion.
+    pub left: Vec<f32>,
+    /// Right-channel 48 kHz mono samples for the clip's visible portion.
+    pub right: Vec<f32>,
+}
+
 /// Sink that accepts mixed 48 kHz frames. Implemented by the cpal device (behind the
 /// `audio-device` feature) for live preview, and by a buffer for tests/offline export.
 pub trait AudioSink {
@@ -185,6 +238,36 @@ mod tests {
         let bus = mix_to_bus(&[(track, vec![ca])], 30, SPF * 2);
         assert!(bus[..SPF].iter().all(|&s| s == 0.0), "frame 0 silent");
         assert!(bus[SPF..].iter().all(|&s| (s - 1.0).abs() < 1e-6), "frame 1 full");
+    }
+
+    #[test]
+    fn stereo_bus_interleaves_and_preserves_channels() {
+        // One clip, distinct L/R levels, volume 1.0. L=0.5, R=-0.5 across one frame.
+        let track = AudioTrack { muted: false, clips: vec![clip(0, 1, 1.0)] };
+        let sca = StereoClipAudio {
+            clip: clip(0, 1, 1.0),
+            left: vec![0.5; SPF],
+            right: vec![-0.5; SPF],
+        };
+        let bus = mix_to_stereo_bus(&[(track, vec![sca])], 30, SPF);
+        assert_eq!(bus.len(), SPF * 2, "interleaved stereo is 2× frame count");
+        // Even indices = L (0.5), odd = R (-0.5).
+        for f in 0..SPF {
+            assert!((bus[f * 2] - 0.5).abs() < 1e-6, "L channel preserved");
+            assert!((bus[f * 2 + 1] + 0.5).abs() < 1e-6, "R channel preserved");
+        }
+    }
+
+    #[test]
+    fn stereo_bus_muted_track_is_silent() {
+        let track = AudioTrack { muted: true, clips: vec![clip(0, 1, 1.0)] };
+        let sca = StereoClipAudio {
+            clip: clip(0, 1, 1.0),
+            left: vec![1.0; SPF],
+            right: vec![1.0; SPF],
+        };
+        let bus = mix_to_stereo_bus(&[(track, vec![sca])], 30, SPF);
+        assert!(bus.iter().all(|&s| s == 0.0), "muted ⇒ silent stereo bus");
     }
 
     #[test]

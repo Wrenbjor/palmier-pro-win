@@ -115,6 +115,31 @@ export const previewRenderFrame = (frame: number, maxWidth?: number) =>
     maxWidth: maxWidth ?? null,
   });
 
+// ── real-time audio playback (decode → mix → cpal output device) ───────────────
+//
+// The timeline's audio half: these drive the cpal output player in the backend so the
+// user HEARS the timeline. The video preview (`previewRenderFrame`) stays the visual
+// half; both track the same playhead so they stay roughly in sync. All degrade to a
+// no-op outside Tauri (and the backend is itself a silent no-op with no audio device).
+
+/**
+ * Begin audio playback from `fromFrame`. The backend decodes the timeline's audio
+ * clips (cached per asset), mixes them, and streams the result to the default output
+ * device in real time. Call this on Play, passing the current playhead frame.
+ */
+export const previewAudioPlay = (fromFrame: number) =>
+  tryInvoke<void>("preview_audio_play", { fromFrame });
+
+/** Pause audio playback (keeps the cursor; resumes instantly on the next play). */
+export const previewAudioPause = () => tryInvoke<void>("preview_audio_pause");
+
+/** Reposition the audio cursor to `frame` (seek/scrub end). Cheap — no re-decode. */
+export const previewAudioSeek = (frame: number) =>
+  tryInvoke<void>("preview_audio_seek", { frame });
+
+/** Stop audio + release the device (timeline end / panel unmount). */
+export const previewAudioStop = () => tryInvoke<void>("preview_audio_stop");
+
 /** Commit a transform edit for a clip (flows into the edit engine). */
 export const previewApplyTransform = (clipId: string, transform: Transform) =>
   tryInvoke<void>("preview_apply_transform", { clipId, transform });

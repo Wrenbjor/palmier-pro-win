@@ -40,6 +40,10 @@ mod preview;
 // → a <canvas> in the webview. Replaces the fragile/unused on-window present (plan A1)
 // as the actual preview surface. Reuses the export crate's offscreen render+readback.
 mod preview_render;
+// Real-time AUDIO playback: decode the timeline's audio clips, mix them, and stream
+// the result to the default output device via cpal — synchronized to the same playhead
+// the video preview tracks. Makes the timeline AUDIBLE on Play.
+mod preview_audio;
 mod project;
 mod settings;
 mod update;
@@ -128,6 +132,12 @@ fn main() {
             // Robust preview: composite the active timeline offscreen + read it back as
             // base64 RGBA for the <canvas> (the actual preview path the viewport uses).
             preview_render::preview_render_frame,
+            // Real-time audio transport — play/pause/seek the timeline's mixed audio on
+            // the default output device (cpal), synced to the preview playhead.
+            preview_audio::preview_audio_play,
+            preview_audio::preview_audio_pause,
+            preview_audio::preview_audio_seek,
+            preview_audio::preview_audio_stop,
             // Project editor bridge — read the shared timeline / media library and
             // dispatch mutating tools through the ONE shared executor (the same owner
             // the MCP server + in-app agent drive). `editor_edit` emits
@@ -176,6 +186,10 @@ fn main() {
             // The cached headless compositor for the robust offscreen preview path
             // (None until the first `preview_render_frame`; rebuilt on a size change).
             app.manage(preview_render::PreviewRenderState::default());
+            // Real-time audio transport state: the cpal output player + the per-asset
+            // decoded-PCM cache. `AudioPlayer::new()` probes the default device but opens
+            // no stream until the first `preview_audio_play` (no device ⇒ silent no-op).
+            app.manage(preview_audio::PreviewAudioState::default());
 
             // M2 boot integration — the agent state owns the ONE shared
             // `Arc<ToolExecutor>` (single `EditorState`) that BOTH the loopback MCP
@@ -252,6 +266,10 @@ fn main() {
             // so its background serving task + bound port are released cleanly.
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 agent::stop_mcp(app_handle);
+                // Release the audio device cleanly on exit.
+                if let Some(audio) = app_handle.try_state::<preview_audio::PreviewAudioState>() {
+                    audio.player.stop();
+                }
             }
         });
 }

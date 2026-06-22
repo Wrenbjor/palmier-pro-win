@@ -38,6 +38,7 @@
 //! `prefetch` / `cache_stats`). `palmier-engine` consumes decoded **CPU-side**
 //! frames through that handle and never opens FFmpeg itself.
 
+pub mod audio_decode;
 pub mod cache;
 pub mod clip;
 pub mod decode;
@@ -46,6 +47,10 @@ pub mod metadata;
 pub mod thumbnail;
 pub mod waveform;
 
+pub use audio_decode::{
+    decode_audio_pcm, AudioDecodeError, AudioPcmCache, DecodedAudio, TARGET_CHANNELS,
+    TARGET_SAMPLE_RATE_HZ,
+};
 pub use clip::{
     classify_path, clip_type_for_extension, clip_type_for_path, is_lottie, is_lottie_bytes,
     ClipType,

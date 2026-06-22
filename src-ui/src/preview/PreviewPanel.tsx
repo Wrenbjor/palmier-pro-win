@@ -31,6 +31,10 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import {
   inTauri,
+  previewAudioPause,
+  previewAudioPlay,
+  previewAudioSeek,
+  previewAudioStop,
   previewRenderFrame,
   type PreviewFrameData,
 } from "./api";
@@ -284,6 +288,9 @@ export function PreviewPanel({
 
     // Render the starting frame immediately on play (at the smaller playback width).
     requestFrame(startFrame, PLAYBACK_MAX_WIDTH);
+    // Start AUDIO from the same frame — the cpal device clock is the smooth playback
+    // clock the video loop stays roughly in sync with (both start at startFrame).
+    void previewAudioPlay(startFrame);
 
     const tick = (ts: number) => {
       if (cancelled) return;
@@ -297,6 +304,8 @@ export function PreviewPanel({
         store.setActivePlayhead(target);
         onPlayheadChange?.(target);
         requestFrame(target, STILL_MAX_WIDTH);
+        // Stop audio at the timeline end (releases the device until next play).
+        void previewAudioStop();
         store.setPlaying(false);
         return;
       }
@@ -313,9 +322,19 @@ export function PreviewPanel({
     return () => {
       cancelled = true;
       cancelAnimationFrame(raf);
+      // Leaving the play state (pause toggle / unmount / dep change) → pause audio.
+      // (The play-to-end path above already stopped; pause here is idempotent.)
+      void previewAudioPause();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playing, composition.fps, durationFrames, store, requestFrame, onPlayheadChange]);
+
+  // ── Stop audio + release the device when the panel unmounts. ──────────────────
+  useEffect(() => {
+    return () => {
+      void previewAudioStop();
+    };
+  }, []);
 
   // ── Transport actions (local playhead + canvas render; no engine transport). ──
   const seek = useCallback(
@@ -325,6 +344,9 @@ export function PreviewPanel({
       store.setActivePlayhead(f);
       onPlayheadChange?.(f);
       void paintFrame(f);
+      // Keep audio aligned to the new playhead (cheap cursor move; no re-decode). This
+      // covers scrub-end, step (J/L, ←/→), and Home/End seeks.
+      void previewAudioSeek(f);
     },
     [store, durationFrames, paintFrame, onPlayheadChange],
   );
