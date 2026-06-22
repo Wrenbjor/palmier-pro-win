@@ -22,8 +22,8 @@ pub mod times;
 pub mod video;
 
 pub use image_thumb::{
-    apply_exif_orientation, make_image_thumbnail, ImageThumbnailCache, ImageThumbnailError,
-    IMAGE_THUMB_MAX_PIXEL,
+    apply_exif_orientation, make_image_thumbnail, make_image_thumbnail_sized, ImageThumbnailCache,
+    ImageThumbnailError, IMAGE_THUMB_MAX_PIXEL,
 };
 pub use sprite::{
     sprite_dimensions, sprite_grid, sprite_rows, tile_origin, ThumbnailSidecar, MAX_SPRITE_COLUMNS,
