@@ -215,6 +215,11 @@ fn main() {
             // and emit `timeline://changed` so the UI refetches). Cheap: one decode per
             // asset, promoted to memory + persisted as a `.waveform` blob.
             app.manage(waveform_cache::WaveformState::default());
+            // Decoded moment-thumbnail cache (media grid tiles + search panel). Keyed
+            // by (path, ~source_seconds, max_size); the `thumbnail` command decodes a
+            // frame on a blocking worker and memoizes the data-URL so the grid never
+            // redecodes on re-render. Empty at boot.
+            app.manage(media::ThumbnailState::default());
 
             // M2 boot integration — the agent state owns the ONE shared
             // `Arc<ToolExecutor>` (single `EditorState`) that BOTH the loopback MCP

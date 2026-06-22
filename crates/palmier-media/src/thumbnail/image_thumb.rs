@@ -86,13 +86,29 @@ pub fn apply_exif_orientation(img: DynamicImage, orientation: u16) -> DynamicIma
 /// point [`ImageThumbnailCache::generate`] runs it on a blocking pool under the
 /// 4-wide gate.
 pub fn make_image_thumbnail(path: &Path) -> Result<RgbaImage, ImageThumbnailError> {
+    make_image_thumbnail_sized(path, IMAGE_THUMB_MAX_PIXEL)
+}
+
+/// Generate an EXIF-corrected thumbnail for the image at `path`, scaled so its
+/// longest edge is ≤ `max_pixel` (aspect preserved, never upscaled), returned as
+/// RGBA pixels.
+///
+/// Identical to [`make_image_thumbnail`] except the box size is the caller's
+/// `max_pixel` rather than the fixed grid-tile [`IMAGE_THUMB_MAX_PIXEL`]. The
+/// moment-thumbnail Tauri command (`thumbnail(media_ref, source_seconds,
+/// max_size)`) drives this so a still asset honors the requested `max_size`
+/// (e.g. the search panel's 240 px) instead of the 120 px grid cap.
+pub fn make_image_thumbnail_sized(
+    path: &Path,
+    max_pixel: u32,
+) -> Result<RgbaImage, ImageThumbnailError> {
+    let max_pixel = max_pixel.max(1);
     let orientation = read_exif_orientation(path);
     let img =
         image::open(path).map_err(|e| ImageThumbnailError::Image(format!("decode: {e}")))?;
     let upright = apply_exif_orientation(img, orientation);
-    // `thumbnail` preserves aspect ratio, fitting within the box, and never
-    // upscales beyond the source — matching ImageIO's maxPixelSize semantics.
-    let thumb = upright.thumbnail(IMAGE_THUMB_MAX_PIXEL, IMAGE_THUMB_MAX_PIXEL);
+    // `thumbnail` preserves aspect ratio, fits within the box, never upscales.
+    let thumb = upright.thumbnail(max_pixel, max_pixel);
     Ok(thumb.to_rgba8())
 }
 
