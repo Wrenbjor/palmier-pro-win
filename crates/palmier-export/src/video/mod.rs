@@ -45,7 +45,7 @@ pub use encoder::{select_encoder, EncoderPlan, HwVendor, ENCODER_FALLBACK_H264, 
 pub use spec::{frame_count, render_size, ColorTags, ExportFormat, ExportResolution, BT709};
 
 #[cfg(feature = "gpu-export")]
-pub use render::{export_video, CancelFlag, VideoExportConfig, VideoExportOutcome};
+pub use render::{export_video, AudioInput, CancelFlag, VideoExportConfig, VideoExportOutcome};
 
 /// Errors the video export pipeline can surface.
 ///

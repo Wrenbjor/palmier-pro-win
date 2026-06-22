@@ -4341,6 +4341,7 @@ dependencies = [
  "palmier-agent",
  "palmier-auth",
  "palmier-engine",
+ "palmier-export",
  "palmier-mcp",
  "palmier-media",
  "palmier-model",

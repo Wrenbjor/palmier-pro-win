@@ -34,6 +34,12 @@ pub use video::{
     frame_count, render_size, select_encoder, EncoderPlan, ExportFormat, ExportResolution,
     HwVendor, VideoExportError,
 };
+// The real video-export render entry point + its config/outcome/cancel types — the
+// clean crate-root surface the Tauri `export_video` command calls (E6-S5). Behind
+// `gpu-export` because the render loop pulls ffmpeg-next + the wgpu compositor; the
+// pure spec/encoder-selection types above always compile.
+#[cfg(feature = "gpu-export")]
+pub use video::{export_video, AudioInput, CancelFlag, VideoExportConfig, VideoExportOutcome};
 pub use xmeml::{format_timecode, Builder};
 
 use palmier_model::Timeline;

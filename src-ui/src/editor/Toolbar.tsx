@@ -17,7 +17,7 @@
 // Tokens: `toolbarHeight = 38` (Layout), IconSize/Spacing from `design-tokens.md`,
 // accent `#F29933` for the active tool + slider tint.
 
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, JSX } from "react";
 
 import type { EditController } from "./controller";
@@ -27,6 +27,8 @@ import type { ToolMode } from "./TimelineEditor";
 import type { ClipView, TimelineView } from "./types";
 import { endFrame } from "./geometry";
 import { editorEdit } from "./bridge";
+import { exportVideo, onExportProgress } from "./export";
+import { revealInExplorer } from "../media-panel/media-actions";
 import { Theme } from "./theme";
 
 // ── Layout / token constants (design-tokens.md §Layout / §Scale) ─────────────
@@ -39,6 +41,13 @@ const ACCENT = "#F29933"; // active tool + zoom-slider tint
 // the same unit as `pixelsPerFrame`, so the slider drives `store.setZoom`.
 const ZOOM_MIN = 0.05; // Zoom.min — slider floor (min_zoom_scale)
 const ZOOM_MAX = 40.0; // Zoom.max — slider ceiling (max_zoom_scale)
+
+/** The editor Export button's UI state machine. */
+type ExportUiState =
+  | { kind: "idle" }
+  | { kind: "running"; frame: number; total: number }
+  | { kind: "done"; outputPath: string }
+  | { kind: "error"; message: string };
 
 export interface ToolbarProps {
   store: TimelineStore;
@@ -98,6 +107,27 @@ function buttonStyle(opts: {
     opacity: opts.disabled ? 0.5 : 1,
     fontSize: ICON_FONT,
     lineHeight: 1,
+  };
+}
+
+// The Export button (a labeled pill, accent-tinted; dimmed while running).
+function exportButtonStyle(running: boolean): CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    height: ICON_BUTTON,
+    padding: "0 10px",
+    border: "none",
+    borderRadius: 4, // Radius.xsSm
+    background: "rgba(242, 153, 51, 0.18)",
+    color: ACCENT,
+    cursor: running ? "default" : "pointer",
+    opacity: running ? 0.6 : 1,
+    fontSize: 12,
+    fontWeight: 600,
+    lineHeight: 1,
+    whiteSpace: "nowrap",
   };
 }
 
@@ -232,6 +262,67 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
     setZoomFromLog(Math.log(pixelsPerFrame) + ZOOM_STEP_LOG);
   }, [pixelsPerFrame, setZoomFromLog]);
 
+  // ── Export — render the active timeline to a video file. ───────────────────
+  // Drives the `export_video` command (opens a native Save dialog Rust-side), shows
+  // live progress (export://progress), and on completion offers reveal-in-explorer.
+  // The render itself runs on a backend blocking worker, so the UI stays responsive.
+  const [exportState, setExportState] = useState<ExportUiState>({ kind: "idle" });
+  // Track mount so an in-flight progress event after unmount doesn't setState.
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const runExport = useCallback(async () => {
+    if (exportState.kind === "running") return; // single in-flight export
+    setExportState({ kind: "running", frame: 0, total: 0 });
+    // Subscribe to per-frame progress for the duration of this export.
+    const unlisten = await onExportProgress((p) => {
+      if (!mounted.current) return;
+      setExportState((prev) =>
+        prev.kind === "running"
+          ? { kind: "running", frame: p.frame, total: p.total }
+          : prev,
+      );
+    });
+    try {
+      const result = await exportVideo(); // no path ⇒ backend opens Save dialog
+      if (!mounted.current) return;
+      if (result === null) {
+        // Cancelled (dialog dismissed) or outside Tauri — back to idle.
+        setExportState({ kind: "idle" });
+      } else {
+        setExportState({ kind: "done", outputPath: result.outputPath });
+      }
+    } catch (err) {
+      if (mounted.current) {
+        setExportState({ kind: "error", message: String(err) });
+      }
+      // eslint-disable-next-line no-console
+      console.error("[editor] export_video failed:", err);
+    } finally {
+      unlisten();
+    }
+  }, [exportState.kind]);
+
+  const revealExport = useCallback(() => {
+    if (exportState.kind === "done") {
+      void revealInExplorer(exportState.outputPath);
+    }
+  }, [exportState]);
+
+  const dismissExport = useCallback(() => setExportState({ kind: "idle" }), []);
+
+  const exportLabel =
+    exportState.kind === "running"
+      ? exportState.total > 0
+        ? `Exporting ${Math.round((exportState.frame / exportState.total) * 100)}%`
+        : "Exporting…"
+      : "Export";
+
   return (
     <div
       className={className}
@@ -340,8 +431,69 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
         </button>
       </div>
 
-      {/* Spacer pushes the zoom group to the right edge. */}
+      {/* Spacer pushes the export + zoom groups to the right edge. */}
       <div style={{ flex: 1 }} aria-hidden />
+
+      {/* Export — render the active timeline to a video file. */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        {exportState.kind === "done" ? (
+          <>
+            <span style={{ fontSize: 11, color: Theme.text.secondary }}>
+              Exported
+            </span>
+            <button
+              type="button"
+              style={exportButtonStyle(false)}
+              onClick={revealExport}
+              title="Reveal the exported file in Explorer"
+              aria-label="Reveal exported file"
+            >
+              Reveal
+            </button>
+            <button
+              type="button"
+              style={{ ...buttonStyle({}), width: ICON_BUTTON }}
+              onClick={dismissExport}
+              title="Dismiss"
+              aria-label="Dismiss export status"
+            >
+              <MinusGlyph />
+            </button>
+          </>
+        ) : exportState.kind === "error" ? (
+          <>
+            <span
+              style={{ fontSize: 11, color: "#E5534B", maxWidth: 180 }}
+              title={exportState.message}
+            >
+              Export failed
+            </span>
+            <button
+              type="button"
+              style={exportButtonStyle(false)}
+              onClick={() => void runExport()}
+              title="Retry export"
+              aria-label="Retry export"
+            >
+              Retry
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            style={exportButtonStyle(exportState.kind === "running")}
+            disabled={exportState.kind === "running"}
+            onClick={() => void runExport()}
+            title="Export video"
+            aria-label="Export video"
+          >
+            <ExportGlyph />
+            <span style={{ marginLeft: 6 }}>{exportLabel}</span>
+          </button>
+        )}
+      </div>
+
+      <div style={dividerStyle} aria-hidden />
 
       {/* Zoom — log-mapped slider between min/max zoom scale. */}
       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -446,6 +598,16 @@ function SplitGlyph(): JSX.Element {
       <rect x="3" y="6" width="7" height="12" rx="1" />
       <rect x="14" y="6" width="7" height="12" rx="1" />
       <line x1="12" y1="3" x2="12" y2="21" strokeDasharray="2 2" />
+    </svg>
+  );
+}
+
+function ExportGlyph(): JSX.Element {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={SVG} aria-hidden>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
     </svg>
   );
 }

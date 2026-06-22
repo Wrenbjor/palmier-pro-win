@@ -30,6 +30,10 @@
 mod agent;
 mod boot;
 mod commands;
+// Timeline → video file export. Wires the proven palmier-export render loop (E6-S5,
+// offscreen composite → FFmpeg HW encode → mux) to the `export_video` command + a Save
+// dialog. The render itself is GPU-gated; this module is the wiring only.
+mod export;
 mod media;
 mod menu;
 // E5-S8 — the wgpu preview present seam (plan A1: wgpu swapchain on the Tauri window
@@ -138,6 +142,10 @@ fn main() {
             preview_audio::preview_audio_pause,
             preview_audio::preview_audio_seek,
             preview_audio::preview_audio_stop,
+            // Timeline → video file export (E6-S5 render loop wired to the editor's
+            // Export button). Snapshots the active timeline + media map, renders on a
+            // blocking worker, streams `export://progress`, returns the outcome.
+            export::export_video,
             // Project editor bridge — read the shared timeline / media library and
             // dispatch mutating tools through the ONE shared executor (the same owner
             // the MCP server + in-app agent drive). `editor_edit` emits

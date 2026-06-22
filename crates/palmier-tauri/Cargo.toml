@@ -99,6 +99,14 @@ palmier-agent = { path = "../palmier-agent" }
 # device in real time. Off in the pure-DSP/headless builds; on for the live app.
 palmier-engine = { path = "../palmier-engine", features = ["wgpu-compositor", "audio-device"] }
 palmier-media = { path = "../palmier-media" }
+# Timeline → video export. The render loop (offscreen wgpu composite → FFmpeg HW
+# encode → AAC mux → finalize, E6-S5) lives behind palmier-export's `gpu-export`
+# feature (pulls ffmpeg-next + palmier-engine/wgpu-compositor — already enabled
+# above). The `export_video` Tauri command (src/export.rs) snapshots the shared
+# timeline + media map and drives this on a blocking worker. LGPL FFmpeg build →
+# H.264/H.265 use HW encoders (NVENC/QSV/AMF/MediaFoundation); ProRes 422 uses
+# prores_ks. The actual encode is GPU-gated (verified by the orchestrator on a GPU).
+palmier-export = { path = "../palmier-export", features = ["gpu-export"] }
 
 [dev-dependencies]
 # E8-S7: fixed timestamps for the session round-trip / sort-desc tests.
