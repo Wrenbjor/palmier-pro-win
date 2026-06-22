@@ -241,3 +241,14 @@ verified LIVE on the running app (SendInput + screenshots + MCP state):
 Trim + other gestures: unit-tested + same overlay/dispatch plumbing as the verified move (blind SendInput can't
 hit the 4px edge handle reliably). Known follow-up: playback ~24fps not 30 (per-frame base64 readback IPC — fine, optimizable).
 Refs: main @ HEAD; preview_render.rs, palmier-media decode fix (1be3a15), editor drag fix (5c6bf8f), DX12 (0e3c243).
+
+## 2026-06-21 · Video editor feature-complete pass: audio, export, persistence · #build #editor #core
+What: Continued autonomous build of the NLE baseline. Merged to main: real-time AUDIO playback
+(symphonia decode→mixer→cpal, synced to playhead); preview playback un-frozen (async off-main-thread +
+persisted decoder + JPEG/480px + single-flight wall-clock loop — was a 30-40s/click freeze); timeline→VIDEO
+EXPORT wired to a Toolbar button (proven E6 render; H.264/H.265/ProRes encode verified on-GPU here) + AUDIO
+muxed into exports (shared audio_build helper); PERSISTENCE fixed (save now rebuilds the bundle from the live
+shared executor EditorState; edits mark dirty; explicit Ctrl+S save_project + flush-on-exit + on-switch/Home —
+edits were previously LOST on reload); audio-clip WAVEFORMS (in flight). Editor verified live earlier:
+preview renders, playback ~real-time, drag-moves clips (0→60), trim plumbing. Refs: main @ 4b423ea+;
+[autonomous-finish](domains/build-orchestration/autonomous-finish.md).
