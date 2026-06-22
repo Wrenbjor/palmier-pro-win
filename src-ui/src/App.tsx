@@ -8,6 +8,7 @@
 // that consume editor-action events (Home/Project); the window-opening Help/Settings/
 // Feedback items are handled natively in Rust, so those surfaces don't need listeners.
 import { useEffect, useMemo } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { registerMenuHandlers } from "./app/menu-events";
 import { resolveSurface } from "./app/route";
 import Home from "./home/Home";
@@ -26,7 +27,15 @@ export default function App() {
   useEffect(() => {
     if (surface.kind !== "project") return;
     let unlisten: (() => void) | undefined;
-    registerMenuHandlers()
+    // File → Save (Ctrl+S): persist the live edits via the backend (flushes the
+    // shared executor state to the bundle). Save As is a follow-up (needs a path dialog).
+    registerMenuHandlers({
+      save: () => {
+        void invoke("save_project").catch((err) =>
+          console.debug("[menu] save_project failed:", err),
+        );
+      },
+    })
       .then((un) => {
         unlisten = un;
       })

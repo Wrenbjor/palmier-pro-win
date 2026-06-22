@@ -319,6 +319,35 @@ pub fn delete_project(state: State<'_, ProjectState>, project_id: String) -> Res
     Ok(())
 }
 
+// ─── Explicit Save (File → Save / Ctrl+S) + flush-on-exit ────────────────────
+
+/// Explicitly save the active project (File → Save / Ctrl+S). Flushes the **live
+/// executor state** to the `.palmier` bundle (`flush_active` now rebuilds the snapshot
+/// from the shared `EditorState` before writing). No-op when nothing is active or the
+/// document is clean.
+#[tauri::command]
+pub fn save_project<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, ProjectState>,
+) -> Result<(), String> {
+    flush_active(&app, &state)?;
+    tracing::info!(target: "project", "save_project: flushed active document");
+    Ok(())
+}
+
+/// Flush the active project on app exit, so edits made without switching project /
+/// returning Home (e.g. the user just closes the window) are not lost. Best-effort:
+/// logged, never panics. Called from the `RunEvent::ExitRequested` handler.
+pub fn flush_on_exit<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(state) = app.try_state::<ProjectState>() {
+        if let Err(e) = flush_active(app, &state) {
+            tracing::warn!(target: "project", error = %e, "flush on exit failed");
+        } else {
+            tracing::info!(target: "project", "flushed active document on exit");
+        }
+    }
+}
+
 // ─── Return Home / autosave-on-switch (E1-S7) ────────────────────────────────
 
 /// Return to Home, **force-flushing the active project first** (reference

@@ -108,6 +108,7 @@ fn main() {
             project::open_project,
             project::open_project_dialog,
             project::delete_project,
+            project::save_project,
             project::show_home,
             project::default_storage_dir,
             // E1-S8 — sample carousel (list / resolve+materialize+open).
@@ -273,6 +274,9 @@ fn main() {
             // M2 boot integration — stop the loopback MCP server gracefully on exit
             // so its background serving task + bound port are released cleanly.
             if let tauri::RunEvent::ExitRequested { .. } = event {
+                // Persist the active project's live edits before exit (the user may
+                // close the window without switching/returning Home).
+                project::flush_on_exit(app_handle);
                 agent::stop_mcp(app_handle);
                 // Release the audio device cleanly on exit.
                 if let Some(audio) = app_handle.try_state::<preview_audio::PreviewAudioState>() {
