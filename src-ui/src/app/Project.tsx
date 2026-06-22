@@ -22,7 +22,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 
+import { registerMenuHandlers } from "./menu-events";
 import UpdateBadge from "./UpdateBadge";
 import { AgentPanel, AgentPanelController, createAgentPanelStore } from "../agent-panel";
 
@@ -35,6 +37,8 @@ import {
   type ToolMode,
 } from "../editor";
 import { adaptTimeline } from "../editor/adapt";
+import { endFrame } from "../editor/geometry";
+import type { ClipView, TimelineView } from "../editor/types";
 import { getMedia, getTimeline, onTimelineChanged, editorEdit } from "../editor/bridge";
 
 import {
@@ -55,6 +59,15 @@ import {
   type MediaAssetView as InspectorAssetView,
 } from "../editor/inspector";
 import { makeTabBodies, makeAssetBody } from "../editor/inspector/tabBodies";
+
+/** Find a clip by id across all tracks (matches the Toolbar's `findClip` helper). */
+function findClipById(timeline: TimelineView, id: string): ClipView | null {
+  for (const track of timeline.tracks) {
+    const c = track.clips.find((cc) => cc.id === id);
+    if (c) return c;
+  }
+  return null;
+}
 
 export default function Project({ projectId }: { projectId: string }) {
   // ── Shared stores + controllers (created once) ──────────────────────────────
@@ -104,6 +117,126 @@ export default function Project({ projectId }: { projectId: string }) {
       unlisten?.();
     };
   }, [editor.store, media.store]);
+
+  // ── Main-menu (`menu://<id>`) → editor wiring (E1-S3 consolidation) ─────────
+  //
+  // The native menu bar (menu.rs) registers Ctrl-accelerators that emit `menu://<id>`
+  // events. On Windows the native accelerator can consume the keystroke before the
+  // timeline canvas's own `onKeyDown` sees it, so the Edit-menu commands must reach the
+  // `EditController` HERE — where the controller + live selection/playhead state live —
+  // not in App.tsx (which has no controller). This is the SOLE project-surface
+  // `registerMenuHandlers` call; App.tsx no longer registers for this surface, so the
+  // `menu://` family is subscribed exactly once.
+  //
+  // Each handler reads live state via `editor.store.getState()` (not a captured slice)
+  // so the menu acts on the CURRENT selection/playhead even though the effect runs once.
+  // Semantics mirror the Toolbar / TimelineEditor 1:1 so menu + toolbar + keyboard agree:
+  //   - split: split each SELECTED clip the playhead bisects (Toolbar `splitAtPlayhead`).
+  //   - trim-start/end: trim the dragged edge to the playhead on each bisected selected
+  //     clip (Toolbar `trimStartToPlayhead` / `trimEndToPlayhead`, propagateToLinked).
+  //   - delete: non-ripple `deleteClips` of the selection (TimelineEditor Delete key).
+  //   - select-all: select every clip id across all tracks.
+  //   - undo/redo: route to the controller (same path the Toolbar buttons use).
+  //   - save: persist via the backend (flushes the shared executor state to the bundle).
+  // cut/copy/paste stay logged no-ops: the editor has no clip-clipboard feature yet, so
+  // there is nothing to wire (a clipboard is a separate story, not invented here).
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+
+    const bisectedSelected = (): {
+      timeline: TimelineView;
+      at: number;
+      clipIds: string[];
+    } | null => {
+      const st = editor.store.getState();
+      const tl = st.timeline;
+      if (!tl) return null;
+      const at = st.viewport.playheadFrame;
+      const ids: string[] = [];
+      for (const id of st.viewport.selectedClipIds) {
+        for (const track of tl.tracks) {
+          const clip = track.clips.find((c) => c.id === id);
+          if (clip && at > clip.startFrame && at < endFrame(clip)) ids.push(id);
+        }
+      }
+      return { timeline: tl, at, clipIds: ids };
+    };
+
+    registerMenuHandlers({
+      undo: () => {
+        editor.controller.undo("user");
+      },
+      redo: () => {
+        editor.controller.redo("user");
+      },
+      split: () => {
+        const b = bisectedSelected();
+        if (!b) return;
+        for (const id of b.clipIds) {
+          editor.controller.dispatch({ kind: "split", clipId: id, atFrame: b.at });
+        }
+      },
+      "trim-start": () => {
+        const b = bisectedSelected();
+        if (!b) return;
+        for (const id of b.clipIds) {
+          const clip = findClipById(b.timeline, id);
+          if (!clip) continue;
+          editor.controller.dispatch({
+            kind: "trim",
+            clipId: id,
+            edge: "left",
+            deltaFrames: b.at - clip.startFrame,
+            propagateToLinked: true,
+          });
+        }
+      },
+      "trim-end": () => {
+        const b = bisectedSelected();
+        if (!b) return;
+        for (const id of b.clipIds) {
+          const clip = findClipById(b.timeline, id);
+          if (!clip) continue;
+          editor.controller.dispatch({
+            kind: "trim",
+            clipId: id,
+            edge: "right",
+            deltaFrames: b.at - endFrame(clip),
+            propagateToLinked: true,
+          });
+        }
+      },
+      delete: () => {
+        const st = editor.store.getState();
+        const sel = [...st.viewport.selectedClipIds];
+        if (sel.length === 0) return;
+        editor.controller.dispatch({ kind: "deleteClips", clipIds: sel, ripple: false });
+        editor.store.setSelection([]);
+      },
+      "select-all": () => {
+        const tl = editor.store.getState().timeline;
+        if (!tl) return;
+        const all: string[] = [];
+        for (const track of tl.tracks) for (const c of track.clips) all.push(c.id);
+        editor.store.setSelection(all);
+      },
+      // File → Save (Ctrl+S). Save As is a follow-up (needs a path dialog).
+      save: () => {
+        void invoke("save_project").catch((err) =>
+          console.debug("[menu] save_project failed:", err),
+        );
+      },
+    })
+      .then((un) => {
+        unlisten = un;
+      })
+      .catch((err) => {
+        // Outside a Tauri webview (plain `vite dev`) the event API is unavailable.
+        console.debug("[menu] handler registration skipped:", err);
+      });
+
+    return () => unlisten?.();
+  }, [editor.store, editor.controller]);
 
   // ── Agent backend status seed (preserved from the prior shell) ──────────────
   useEffect(() => {
