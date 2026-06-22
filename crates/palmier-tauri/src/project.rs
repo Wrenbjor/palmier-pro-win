@@ -335,6 +335,77 @@ pub fn save_project<R: Runtime>(
     Ok(())
 }
 
+/// Save the active project to a **new** `.palmier` path (File → Save As / Ctrl+Shift+S).
+///
+/// Opens the **Save-As dialog** (the same native picker [`create_project`] uses), then
+/// writes the **live executor state** to the chosen path — NOT the stale open-time
+/// snapshot. The chosen bundle is registered in the recents registry and becomes the
+/// **active** document, so subsequent saves (Ctrl+S) target the new file. The previously
+/// active document is flushed-on-switch first (via [`set_active`], the same as
+/// create/open).
+///
+/// Returns the new entry id (like [`create_project`]), or `None` when the user
+/// **cancels** the dialog (the menu treats `None` as a no-op, not an error). No-op when
+/// nothing is active.
+#[tauri::command]
+pub fn save_project_as<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, ProjectState>,
+) -> Result<Option<String>, String> {
+    // Save-As dialog (reference NSSavePanel): default dir + `.palmier` filter.
+    let Some(path) = prompt_save_bundle(&app) else {
+        return Ok(None); // user cancelled
+    };
+    save_project_as_to_path(&app, &state, &path.to_string_lossy())
+}
+
+/// Core of [`save_project_as`] with the chosen path supplied — the dialog is factored
+/// out so tests can drive the save without a native picker (mirrors how the other
+/// commands are structured).
+///
+/// Snapshots the LIVE executor state (the same `refresh_snapshot_from_executor` the
+/// `save`/`flush` path uses) into the active project's snapshot, writes it to the new
+/// `.palmier` path via [`write_bundle`], registers it, and makes it active via
+/// [`set_active`] (which flushes the previous active doc first). No-op (`Ok(None)`) when
+/// nothing is active.
+fn save_project_as_to_path<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &State<'_, ProjectState>,
+    raw_path: &str,
+) -> Result<Option<String>, String> {
+    let path = normalize_bundle_path(raw_path);
+
+    // Snapshot the LIVE state of the active project (timeline + media from the shared
+    // executor, plus chat) — the same refresh the explicit Save uses — then write it to
+    // the NEW path. No active project ⇒ nothing to save (no-op).
+    let snapshot = {
+        let mut active = state.active.lock().expect("active mutex");
+        let Some(ap) = active.as_mut() else {
+            return Ok(None); // nothing active ⇒ no-op
+        };
+        if let Some(agent) = app.try_state::<crate::agent::AgentState>() {
+            refresh_snapshot_from_executor(&mut ap.snapshot, &agent);
+            ap.snapshot.chat_files = agent.capture_chat_snapshot();
+        }
+        ap.snapshot.clone()
+    };
+
+    palmier_project::write_bundle(&path, &snapshot).map_err(|e| e.to_string())?;
+
+    // Register the new bundle (new entry, created+lastOpened = now), then read its id.
+    let id = {
+        let mut reg = state.registry.lock().expect("registry mutex");
+        reg.register(&path).map_err(|e| e.to_string())?;
+        entry_id_for_path(&reg, &path).ok_or("registered project not found")?
+    };
+
+    // Point the active document at the NEW path (flushing the previous active first, the
+    // same as create/open) so subsequent Ctrl+S saves target the new file.
+    set_active(app, state, &id, path.clone(), snapshot)?;
+    tracing::info!(target: "project", id = %id, path = %path.display(), "saved project as (new bundle is now active)");
+    Ok(Some(id))
+}
+
 /// Flush the active project on app exit, so edits made without switching project /
 /// returning Home (e.g. the user just closes the window) are not lost. Best-effort:
 /// logged, never panics. Called from the `RunEvent::ExitRequested` handler.
@@ -770,6 +841,71 @@ mod tests {
         assert!(
             persisted_clip_count(&bundle) >= 1,
             "the added clip itself must survive save→reload — got 0 clips (stale snapshot)"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn save_as_writes_live_state_to_new_path_and_registers_it() {
+        // Save-As must write the LIVE executor state (not the stale open-time snapshot)
+        // to a NEW path, register that bundle, and leave the active document pointing at
+        // the new path. The dialog is bypassed here (the command factors its core into
+        // `save_project_as_to_path`, which this mirrors piece-for-piece without a Tauri
+        // `State`/`AppHandle` — see `list_samples_empty_without_service` for why those
+        // can't be built in a unit test).
+        let dir = scratch();
+        let original = dir.join("Original.palmier");
+        let saved_as = dir.join("SavedAs.palmier");
+
+        // 1. An open project on disk: empty timeline (the open-time state) seeded into the
+        //    active document's snapshot, exactly as `set_active` does.
+        let open_snapshot = BundleSnapshot::new(Timeline::new());
+        palmier_project::write_bundle(&original, &open_snapshot).unwrap();
+        let mut active_snapshot = open_snapshot;
+
+        // 2. Edit the SHARED executor AFTER open (the same path `editor_edit` / the agent
+        //    dispatch use): add a clip → auto-creates a track.
+        let agent = crate::agent::AgentState::new();
+        seed_asset(&agent);
+        let edit = agent.executor.execute(
+            "add_clips",
+            serde_json::json!({
+                "entries": [{ "mediaRef": "asset-1", "startFrame": 0, "durationFrames": 30 }]
+            }),
+            &crate::agent::adapter_context(),
+        );
+        assert!(!edit.is_error, "add_clips should succeed: {:?}", edit.content);
+
+        // 3. Save-As core: refresh the active snapshot from the LIVE executor, then write
+        //    it to the NEW path (`save_project_as_to_path` does exactly this before
+        //    register + set_active).
+        refresh_snapshot_from_executor(&mut active_snapshot, &agent);
+        palmier_project::write_bundle(&saved_as, &active_snapshot).unwrap();
+
+        // 4. Register the new bundle (what Save-As does), and prove it is tracked.
+        let mut reg = ProjectRegistry::with_path(dir.join("project-registry.json"));
+        reg.register(&saved_as).unwrap();
+        let new_id = entry_id_for_path(&reg, &saved_as).expect("Save-As bundle must be registered");
+        assert_eq!(
+            path_for_entry_id(&reg, &new_id).map(|p| palmier_project::normalize_path(&p)),
+            Some(palmier_project::normalize_path(&saved_as)),
+            "the registered entry must resolve back to the new path"
+        );
+
+        // 5. The NEW bundle carries the LIVE edit (the added clip's auto-created track),
+        //    proving Save-As wrote live state, not the stale open-time empty snapshot.
+        assert!(
+            persisted_track_count(&saved_as) > 0 && persisted_clip_count(&saved_as) >= 1,
+            "Save-As must persist the live edit to the new path"
+        );
+
+        // 6. The ORIGINAL bundle is untouched by Save-As (still the empty open-time state):
+        //    Save-As writes a copy, it does not mutate the source.
+        assert_eq!(
+            persisted_track_count(&original),
+            0,
+            "Save-As must not mutate the original bundle"
         );
 
         std::fs::remove_dir_all(&dir).unwrap();

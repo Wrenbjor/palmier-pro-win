@@ -114,6 +114,7 @@ fn main() {
             project::open_project_dialog,
             project::delete_project,
             project::save_project,
+            project::save_project_as,
             project::show_home,
             project::default_storage_dir,
             // E1-S8 — sample carousel (list / resolve+materialize+open).

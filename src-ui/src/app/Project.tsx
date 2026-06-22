@@ -220,10 +220,18 @@ export default function Project({ projectId }: { projectId: string }) {
         for (const track of tl.tracks) for (const c of track.clips) all.push(c.id);
         editor.store.setSelection(all);
       },
-      // File → Save (Ctrl+S). Save As is a follow-up (needs a path dialog).
+      // File → Save (Ctrl+S). Flushes the shared executor state to the bundle.
       save: () => {
         void invoke("save_project").catch((err) =>
           console.debug("[menu] save_project failed:", err),
+        );
+      },
+      // File → Save As (Ctrl+Shift+S). Prompts a native Save dialog for a new
+      // `.palmier` path, writes the LIVE state there, registers it, and makes it the
+      // active project (subsequent saves target the new file). Cancel is a no-op.
+      "save-as": () => {
+        void invoke("save_project_as").catch((err) =>
+          console.debug("[menu] save_project_as failed:", err),
         );
       },
     })
