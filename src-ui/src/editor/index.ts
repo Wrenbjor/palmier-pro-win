@@ -16,6 +16,21 @@ export type { TimelineEditorProps, ToolMode } from "./TimelineEditor";
 export { Toolbar } from "./Toolbar";
 export type { ToolbarProps } from "./Toolbar";
 
+// Shared export trigger/state (Toolbar Export button + File → Export menu).
+export { useExport } from "./useExport";
+export type { ExportController, ExportUiState } from "./useExport";
+
+// In-memory clip clipboard (Edit → Cut / Copy / Paste).
+export {
+  writeClipboard,
+  readClipboard,
+  clearClipboard,
+  clipboardHasContent,
+  pasteClipboard,
+  PASTE_LIMITATIONS,
+} from "./clipboard";
+export type { ClipboardClip, ClipboardPayload } from "./clipboard";
+
 export { createTimelineStore, useTimelineStore } from "./store";
 export type { TimelineStore, TimelineState } from "./store";
 

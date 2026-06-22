@@ -17,7 +17,7 @@
 // Tokens: `toolbarHeight = 38` (Layout), IconSize/Spacing from `design-tokens.md`,
 // accent `#F29933` for the active tool + slider tint.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo } from "react";
 import type { CSSProperties, JSX } from "react";
 
 import type { EditController } from "./controller";
@@ -27,8 +27,7 @@ import type { ToolMode } from "./TimelineEditor";
 import type { ClipView, TimelineView } from "./types";
 import { endFrame } from "./geometry";
 import { editorEdit } from "./bridge";
-import { exportVideo, onExportProgress } from "./export";
-import { revealInExplorer } from "../media-panel/media-actions";
+import type { ExportController } from "./useExport";
 import { Theme } from "./theme";
 
 // ── Layout / token constants (design-tokens.md §Layout / §Scale) ─────────────
@@ -42,19 +41,17 @@ const ACCENT = "#F29933"; // active tool + zoom-slider tint
 const ZOOM_MIN = 0.05; // Zoom.min — slider floor (min_zoom_scale)
 const ZOOM_MAX = 40.0; // Zoom.max — slider ceiling (max_zoom_scale)
 
-/** The editor Export button's UI state machine. */
-type ExportUiState =
-  | { kind: "idle" }
-  | { kind: "running"; frame: number; total: number }
-  | { kind: "done"; outputPath: string }
-  | { kind: "error"; message: string };
-
 export interface ToolbarProps {
   store: TimelineStore;
   controller: EditController;
   /** Controlled tool mode (owned by the parent, shared with TimelineEditor). */
   tool: ToolMode;
   onToolChange: (tool: ToolMode) => void;
+  /**
+   * Shared export controller (owned by the Project surface via `useExport`) so the
+   * Export button and the File → Export menu run the SAME flow / share one state.
+   */
+  exportController: ExportController;
   className?: string;
   style?: CSSProperties;
 }
@@ -132,7 +129,8 @@ function exportButtonStyle(running: boolean): CSSProperties {
 }
 
 export function Toolbar(props: ToolbarProps): JSX.Element {
-  const { store, controller, tool, onToolChange, className, style } = props;
+  const { store, controller, tool, onToolChange, exportController, className, style } =
+    props;
 
   // Reactive viewport slices (selection / playhead / zoom) drive enable-state + zoom.
   const playheadFrame = useTimelineStore(store, (s) => s.viewport.playheadFrame);
@@ -265,56 +263,10 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
   // ── Export — render the active timeline to a video file. ───────────────────
   // Drives the `export_video` command (opens a native Save dialog Rust-side), shows
   // live progress (export://progress), and on completion offers reveal-in-explorer.
-  // The render itself runs on a backend blocking worker, so the UI stays responsive.
-  const [exportState, setExportState] = useState<ExportUiState>({ kind: "idle" });
-  // Track mount so an in-flight progress event after unmount doesn't setState.
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
-  const runExport = useCallback(async () => {
-    if (exportState.kind === "running") return; // single in-flight export
-    setExportState({ kind: "running", frame: 0, total: 0 });
-    // Subscribe to per-frame progress for the duration of this export.
-    const unlisten = await onExportProgress((p) => {
-      if (!mounted.current) return;
-      setExportState((prev) =>
-        prev.kind === "running"
-          ? { kind: "running", frame: p.frame, total: p.total }
-          : prev,
-      );
-    });
-    try {
-      const result = await exportVideo(); // no path ⇒ backend opens Save dialog
-      if (!mounted.current) return;
-      if (result === null) {
-        // Cancelled (dialog dismissed) or outside Tauri — back to idle.
-        setExportState({ kind: "idle" });
-      } else {
-        setExportState({ kind: "done", outputPath: result.outputPath });
-      }
-    } catch (err) {
-      if (mounted.current) {
-        setExportState({ kind: "error", message: String(err) });
-      }
-      // eslint-disable-next-line no-console
-      console.error("[editor] export_video failed:", err);
-    } finally {
-      unlisten();
-    }
-  }, [exportState.kind]);
-
-  const revealExport = useCallback(() => {
-    if (exportState.kind === "done") {
-      void revealInExplorer(exportState.outputPath);
-    }
-  }, [exportState]);
-
-  const dismissExport = useCallback(() => setExportState({ kind: "idle" }), []);
+  // The state machine + trigger are OWNED by the Project surface (`useExport`) and
+  // passed in, so the File → Export menu item runs the exact same flow / shares state.
+  const { state: exportState, runExport, revealExport, dismissExport } =
+    exportController;
 
   const exportLabel =
     exportState.kind === "running"
