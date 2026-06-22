@@ -1,14 +1,23 @@
-// Index-status pill (E4-S10 stub) — renders the CLIP/index model state machine:
-// notInstalled→download / downloading% / preparing / indexing N/M / ready / failed.
-// Driven by a stubbed status (store.indexStatus); real progress arrives from Epic
-// 11's `SearchIndexCoordinator` via a Tauri event. (media-panel.md §"Search".)
+// Index-status pill — renders the CLIP/index model state machine:
+// notInstalled→set up / downloading% / preparing / indexing N/M / ready / failed.
+// The status comes from the live `search_media` visual.status (search.ts
+// `indexStatusFromWire`); there is NO dedicated `download_search_model` command yet,
+// so the "Set up" CTA probes the search backend (controller.setUpSearchModel), which
+// nudges Epic 11's `SearchIndexCoordinator` to load/download the model on demand and
+// drives the pill from the reported status — an honest action, not a no-op.
+// (media-panel.md §"Search".)
 
 import { Spacing, Theme } from "./theme";
 import type { IndexStatus } from "./types";
 
 export interface IndexStatusPillProps {
   status: IndexStatus;
-  /** TODO(E11): kicks `invoke('download_search_model')`; no-op stub today. */
+  /**
+   * Set up the visual-search model (the `notInstalled` CTA). Wired to
+   * `controller.setUpSearchModel`, which probes `search_media` to trigger the
+   * coordinator's model load and reflects the returned status here. When unset the
+   * CTA is hidden (the pill is then a pure status read-out).
+   */
   onDownload?: () => void;
 }
 
@@ -19,7 +28,7 @@ export function IndexStatusPill({ status, onDownload }: IndexStatusPillProps) {
 
   switch (status.kind) {
     case "notInstalled":
-      label = "Search model not installed";
+      label = "Visual search not set up";
       action = onDownload;
       break;
     case "downloading":
@@ -77,7 +86,7 @@ export function IndexStatusPill({ status, onDownload }: IndexStatusPillProps) {
             border: "none",
           }}
         >
-          Download
+          Set up
         </button>
       )}
     </div>

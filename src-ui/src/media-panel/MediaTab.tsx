@@ -115,7 +115,10 @@ export function MediaTab({ store, controller, fps = 30 }: MediaTabProps) {
         />
       )}
 
-      <IndexStatusPill status={indexStatus} />
+      <IndexStatusPill
+        status={indexStatus}
+        onDownload={() => void controller.setUpSearchModel()}
+      />
       <GenerationPanel
         jobs={jobs}
         onCancel={(id) => controller.cancelJob(id)}

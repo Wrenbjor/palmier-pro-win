@@ -1,6 +1,10 @@
 // Captions tab — the full caption-generation form (E4-S14). The form is real and
-// validating; the GENERATION backend (`generate_captions` + `CaptionBuilder`) lands
-// in Epic 10, so Generate stays disabled with "backend not available".
+// validating; Generate is WIRED to the real `add_captions` tool through the editor
+// bridge (controller.generateCaptions) — on-device transcription then styled caption
+// clips on a new track. When transcription isn't possible (no speech / model missing
+// / unsupported language) the tool returns a reason, surfaced inline (no silent
+// no-op). Outside Tauri (design preview) Generate is inert with a "not connected"
+// hint.
 //
 // Form parity (docs/reference/media-panel.md §"Captions tab", CaptionTab.swift):
 //   Source     — auto (selected clips else all captionable audio) | pick a track
@@ -14,6 +18,8 @@
 
 import { useMemo, useState } from "react";
 import { Spacing, Theme } from "./theme";
+import type { MediaPanelController } from "./controller";
+import { inTauri } from "./media-actions";
 
 /** A locale option for the language picker. */
 interface Locale {
@@ -73,7 +79,23 @@ export interface CaptionRequest {
   placement: { centerX: number; centerY: number };
 }
 
-export function CaptionsTab() {
+export interface CaptionsTabProps {
+  /**
+   * The media-panel controller (Generate dispatches `add_captions` through it). When
+   * absent (standalone preview) the form renders but Generate stays a "not connected"
+   * gated state.
+   */
+  controller?: MediaPanelController;
+}
+
+/** The Generate button's live state — drives label + styling + disabled. */
+type GenerateState =
+  | { kind: "idle" }
+  | { kind: "running" }
+  | { kind: "done" }
+  | { kind: "gated"; reason: string };
+
+export function CaptionsTab({ controller }: CaptionsTabProps = {}) {
   const [source, setSource] = useState<"auto" | "track">("auto");
   const [language, setLanguage] = useState("auto");
   const [font, setFont] = useState(FONTS[0]);
@@ -85,6 +107,7 @@ export function CaptionsTab() {
   const [censor, setCensor] = useState(false);
   const [centerX, setCenterX] = useState<number>(CAPTION.defaultCenter.x);
   const [centerY, setCenterY] = useState<number>(CAPTION.defaultCenter.y);
+  const [genState, setGenState] = useState<GenerateState>({ kind: "idle" });
 
   const request: CaptionRequest = useMemo(
     () => ({
@@ -106,17 +129,57 @@ export function CaptionsTab() {
     centerY >= CAPTION.minPosition &&
     centerY <= CAPTION.maxPosition;
 
-  const onGenerate = () => {
-    // TODO(E10): await invoke('generate_captions', { request }); real CaptionBuilder.
-    void request;
+  // Map the form's CaptionRequest → the `add_captions` tool inputSchema args
+  // (crates/palmier-tools schema_add_captions). `source:"auto"` omits clipIds so the
+  // tool auto-picks the primary spoken track; `language:"auto"` omits language so it
+  // uses the system default. The track-pick + multi-clip selection threads in when
+  // the tab shares the editor's clip selection — today auto-detect is the path.
+  const toAddCaptionsArgs = (r: CaptionRequest): Record<string, unknown> => {
+    const args: Record<string, unknown> = {
+      fontName: r.style.font,
+      fontSize: r.style.size,
+      color: r.style.color,
+      centerX: r.placement.centerX,
+      centerY: r.placement.centerY,
+      textCase: r.style.case,
+      censorProfanity: r.style.censorProfanity,
+    };
+    if (r.language !== "auto") args.language = r.language;
+    return args;
+  };
+
+  const connected = inTauri() && !!controller;
+  const busy = genState.kind === "running";
+
+  const onGenerate = async () => {
+    if (!controller || busy) return;
+    setGenState({ kind: "running" });
+    const res = await controller.generateCaptions(toAddCaptionsArgs(request));
+    if (!res.attempted) {
+      // Outside Tauri — design preview. Honest "not connected" hint, not an error.
+      setGenState({
+        kind: "gated",
+        reason: "Not connected to the editor — open a project to caption.",
+      });
+      return;
+    }
+    if (res.ok) {
+      setGenState({ kind: "done" });
+      return;
+    }
+    setGenState({
+      kind: "gated",
+      reason:
+        res.error ??
+        "Couldn't transcribe: no speech found, or the on-device model isn't available.",
+    });
   };
 
   return (
     <div style={formStyle}>
       <h2 style={headingStyle}>Captions</h2>
       <p style={noteStyle}>
-        Transcribe and place captions. Generation lands in Epic 10; the form below is
-        live.
+        Transcribe on-device and place styled caption clips on a new track.
       </p>
 
       <Field label="Source">
@@ -242,13 +305,39 @@ export function CaptionsTab() {
       </Field>
 
       <button
-        disabled
-        onClick={onGenerate}
-        title="Caption generation lands in Epic 10"
-        style={{ ...generateDisabledStyle, opacity: valid ? 1 : 0.6 }}
+        disabled={!valid || busy || !connected}
+        onClick={() => void onGenerate()}
+        title={
+          !connected
+            ? "Open a project to generate captions"
+            : !valid
+              ? "Adjust size / placement to a valid range"
+              : "Transcribe and add caption clips"
+        }
+        style={{
+          ...(connected && valid && !busy
+            ? generateEnabledStyle
+            : generateDisabledStyle),
+          opacity: valid ? 1 : 0.6,
+        }}
       >
-        Generate (backend not available)
+        {busy
+          ? "Generating captions…"
+          : !connected
+            ? "Generate (open a project)"
+            : "Generate captions"}
       </button>
+
+      {genState.kind === "done" && (
+        <p style={{ ...statusNoteStyle, color: Theme.accent }}>
+          Captions added to a new track.
+        </p>
+      )}
+      {genState.kind === "gated" && (
+        <p style={{ ...statusNoteStyle, color: Theme.status.error }}>
+          {genState.reason}
+        </p>
+      )}
 
       <p style={agentHintStyle}>
         Tip: agent-mode can refine captions (remove fillers, fix names, translate) —
@@ -341,4 +430,19 @@ const generateDisabledStyle = {
   background: Theme.background.raised,
   border: `1px solid ${Theme.border.subtle}`,
   cursor: "not-allowed",
+} as const;
+const generateEnabledStyle = {
+  fontSize: 12,
+  padding: "7px 10px",
+  borderRadius: 6,
+  marginTop: Spacing.sm,
+  fontWeight: 600,
+  color: "#000",
+  background: Theme.accent,
+  border: "none",
+  cursor: "pointer",
+} as const;
+const statusNoteStyle = {
+  fontSize: 11,
+  margin: 0,
 } as const;

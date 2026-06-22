@@ -15,6 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Spacing, Theme, typeColor } from "./theme";
 import { tileHeight } from "./logic";
+import { useAssetThumbnail } from "./thumbnails";
 import type { MediaAssetView, MediaFolderView } from "./types";
 
 function durationLabel(seconds: number | null): string | null {
@@ -55,6 +56,9 @@ export function AssetTile({
   const [draft, setDraft] = useState(asset.name);
   const inputRef = useRef<HTMLInputElement>(null);
   const h = tileHeight(width);
+  // Lazily decode + cache this asset's frame via the real `thumbnail` command.
+  // Falls back to the type glyph for audio/none/decode-failure/while-loading.
+  const thumbnailUrl = useAssetThumbnail(asset);
 
   useEffect(() => {
     if (editing) inputRef.current?.select();
@@ -99,15 +103,15 @@ export function AssetTile({
         style={{
           width: "100%",
           height: h,
-          background: asset.thumbnailUrl
-            ? `center / cover no-repeat url(${asset.thumbnailUrl})`
+          background: thumbnailUrl
+            ? `center / cover no-repeat url(${thumbnailUrl})`
             : typeColor(asset.type, 0.28),
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
         }}
       >
-        {!asset.thumbnailUrl && (
+        {!thumbnailUrl && (
           <span style={{ color: Theme.text.tertiary, fontSize: 11 }}>
             {asset.type}
           </span>
