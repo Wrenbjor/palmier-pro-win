@@ -123,9 +123,27 @@ function adaptClip(raw: Json): ClipView {
     positionTrack: adaptKeyframeTrack(raw.positionTrack),
     scaleTrack: adaptKeyframeTrack(raw.scaleTrack),
     cropTrack: adaptKeyframeTrack(raw.cropTrack),
+    // Per-source audio peaks (dB-normalised, 0 = loud … 1 = silent). The Tauri
+    // `editor_get_timeline` command injects this onto audio clips from the cached
+    // waveform pipeline; absent (e.g. peaks not yet computed) → placeholder bars.
+    // The renderer slices this full-source array to the clip's trimmed window.
+    waveform: adaptWaveform(raw.waveform),
     // Generation status / missing media are media-library concerns; the timeline
     // wire doesn't carry them, so leave the optional flags unset.
   };
+}
+
+/**
+ * Adapt the wire `waveform` (a `number[]` of dB-normalised peaks) → `ClipView.waveform`.
+ * Returns `null` when absent/empty/non-array so the renderer draws placeholder bars.
+ * Filters to finite numbers (a malformed entry never throws the canvas).
+ */
+function adaptWaveform(raw: unknown): number[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const peaks = raw.filter(
+    (v): v is number => typeof v === "number" && Number.isFinite(v),
+  );
+  return peaks.length > 0 ? peaks : null;
 }
 
 /** Map one wire track → a fully-populated TrackView. */
