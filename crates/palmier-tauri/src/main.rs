@@ -28,6 +28,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod agent;
+// Shared timeline → audio mixer-input builder used by BOTH preview playback
+// (preview_audio.rs) and video export (export.rs): decode/slice/retime/envelope each
+// audio-bearing clip once, projected to stereo (preview) or mono (export AAC mux).
+mod audio_build;
 mod boot;
 mod commands;
 // Timeline → video file export. Wires the proven palmier-export render loop (E6-S5,

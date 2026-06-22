@@ -20,11 +20,16 @@
 //! 4. emit per-frame progress as a Tauri event (`export://progress` → `{frame,total}`);
 //! 5. return the `VideoExportOutcome` (or an error string the panel surfaces).
 //!
-//! ## Audio (v1)
-//! This wiring exports a **video-only** file (the render's `AudioInput` is the empty
-//! slice — the render path explicitly supports that, producing a file with no AAC
-//! track). Wiring the pre-decoded/resampled audio mix (`preview_audio.rs` owns the
-//! decode/resample/stretch stage) is a follow-up; the render side already accepts it.
+//! ## Audio
+//! The export muxes the timeline's AUDIO. It builds the render's `AudioInput`
+//! (`Vec<(AudioTrack, Vec<ClipAudio>)>`) from the SAME shared timeline→mixer-input helper
+//! the real-time preview uses (`crate::audio_build`): decode each audio-bearing clip's
+//! PCM (48 kHz, via `palmier_media::audio_decode`, reusing the preview's
+//! `AudioPcmCache`), slice/retime to the clip's visible window, carry the volume / fade /
+//! speed / dB-keyframe / mute envelope, then downmix L/R → the mono buffers the render's
+//! AAC muxer mixes (`mix_to_bus`, duplicated to both channels). An empty input (no
+//! audio-bearing clips) still produces a clean video-only file — the render supports
+//! that. The actual muxed-audio file is GPU-gated (orchestrator-verified).
 //!
 //! ## Save path
 //! The frontend may pass `out_path`; when it is `None` the command opens the native
@@ -46,12 +51,15 @@ use palmier_engine::SourceInfo;
 // module's `export_video` Tauri command (which wraps it).
 use palmier_export::video::export_video as run_video_export;
 use palmier_export::video::{
-    CancelFlag, ExportFormat, ExportResolution, VideoExportConfig, VideoExportOutcome,
+    AudioInput, CancelFlag, ExportFormat, ExportResolution, VideoExportConfig,
+    VideoExportOutcome,
 };
-use palmier_media::FrameSource;
+use palmier_media::{AudioPcmCache, FrameSource};
 use palmier_model::{MediaSource, Timeline};
 
 use crate::agent::AgentState;
+use crate::audio_build::{build_mono, AudioBuildInput};
+use crate::preview_audio::PreviewAudioState;
 
 /// The Tauri event the export streams per-frame progress over (the editor's export
 /// flow subscribes to this to drive a progress bar).
@@ -83,7 +91,8 @@ pub struct ExportResult {
     pub frames: u64,
     /// The FFmpeg encoder used (diagnostic, e.g. `h264_nvenc` / `prores_ks`).
     pub encoder: String,
-    /// Whether an audio track was muxed (v1: always false — video-only wiring).
+    /// Whether an AAC audio track was muxed (true when the timeline had audio-bearing
+    /// clips that decoded to samples).
     pub has_audio: bool,
 }
 
@@ -192,6 +201,7 @@ fn prompt_export_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
 pub async fn export_video<R: Runtime>(
     app: AppHandle<R>,
     agent: State<'_, AgentState>,
+    audio: State<'_, PreviewAudioState>,
     out_path: Option<String>,
 ) -> Result<Option<ExportResult>, String> {
     // Resolve the destination — either the explicit path or a Save dialog. The dialog
@@ -213,6 +223,9 @@ pub async fn export_video<R: Runtime>(
 
     // Snapshot the live edit state on the async thread (cheap clone under the lock).
     let snap = snapshot(&agent);
+    // Reuse the preview's decoded-PCM cache for the audio build (so a clip already
+    // decoded for playback isn't re-decoded for export; cheap Arc clone).
+    let audio_cache = audio.cache.clone();
 
     // Build the export config. The codec comes from the extension; resolution defaults
     // to the proven 1080p short-side preset; output fps `0` ⇒ use the project fps.
@@ -227,9 +240,11 @@ pub async fn export_video<R: Runtime>(
     let app_for_render = app.clone();
     let cancel = CancelFlag::new();
 
-    // Offload the heavy composite + encode + mux to a blocking worker.
+    // Offload the heavy composite + encode + mux to a blocking worker. The audio decode
+    // (build_mono) is part of this worker — slower-but-complete full-clip decode is fine
+    // off the UI thread.
     let outcome = tauri::async_runtime::spawn_blocking(move || {
-        run_export(&snap, &config, &app_for_render, &cancel)
+        run_export(&snap, &audio_cache, &config, &app_for_render, &cancel)
     })
     .await
     .map_err(|e| format!("export task failed: {e}"))?;
@@ -242,6 +257,7 @@ pub async fn export_video<R: Runtime>(
 /// progress. Returns the outcome or an error string.
 fn run_export<R: Runtime>(
     snap: &ExportSnapshot,
+    audio_cache: &AudioPcmCache,
     config: &VideoExportConfig,
     app: &AppHandle<R>,
     cancel: &CancelFlag,
@@ -268,17 +284,30 @@ fn run_export<R: Runtime>(
     // The total frame count for the progress event (the render reports a fraction).
     let total = snap.timeline.total_frames().max(0) as u64;
 
+    // Build the render's AudioInput from the SAME shared timeline→mixer-input helper the
+    // preview uses (decode → slice/retime → envelope → downmix L/R to the mono buffers
+    // the AAC muxer mixes). Empty (no audio-bearing clips) ⇒ the render writes a clean
+    // video-only file. Reuses the preview's decoded-PCM cache.
+    let audio_input: AudioInput = {
+        let build_input = AudioBuildInput {
+            timeline: snap.timeline.clone(),
+            urls: snap.urls.clone(),
+        };
+        let (tracks, _output_frames) = build_mono(&build_input, audio_cache);
+        tracks
+    };
+
     // Emit an initial 0/total so the UI can show the bar immediately.
     emit_progress(app, 0, total);
 
     // Run the proven render loop. The progress callback turns the 0..=1 fraction back
-    // into (frame,total) for the event. Audio is empty (video-only wiring, v1).
+    // into (frame,total) for the event.
     let app_for_cb = app.clone();
     let outcome = run_video_export(
         &snap.timeline,
         &geometry,
         &frames,
-        &Vec::new(), // no audio (v1: video-only)
+        &audio_input,
         config,
         |fraction| {
             let frame = (fraction * total as f64).round() as u64;
