@@ -11,7 +11,9 @@ export type { MediaPanelProps } from "./MediaPanel";
 export { MediaTab } from "./MediaTab";
 export type { MediaTabProps } from "./MediaTab";
 export { CaptionsTab } from "./CaptionsTab";
+export type { CaptionsTabProps } from "./CaptionsTab";
 export { MusicTab } from "./MusicTab";
+export type { MusicTabProps } from "./MusicTab";
 
 // --- Sub-components (exported for reuse / tests) ---
 export { MediaGrid } from "./MediaGrid";
@@ -33,6 +35,7 @@ export type { MediaPanelStore, MediaPanelState } from "./store";
 
 // --- Command seam (Tauri commands replace the local apply at E7/E9/E11) ---
 export { MediaPanelController, localId } from "./controller";
+export type { ToolDispatchResult } from "./controller";
 
 // --- OS actions (E4-S12 Tauri command seam: reveal / copy-path / relink / paste) ---
 export {
@@ -42,6 +45,15 @@ export {
   readClipboardImportablePaths,
   momentThumbnail,
 } from "./media-actions";
+
+// --- Lazy tile thumbnails (real `thumbnail` command via momentThumbnail) ---
+export {
+  useAssetThumbnail,
+  loadAssetThumbnail,
+  clearThumbnailCache,
+  TILE_THUMBNAIL_MAX,
+  TILE_THUMBNAIL_SECONDS,
+} from "./thumbnails";
 
 // --- Reveal events (backend→UI Tauri events) ---
 export {

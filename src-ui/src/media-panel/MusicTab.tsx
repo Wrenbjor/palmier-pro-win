@@ -1,7 +1,10 @@
 // Music tab — a video/text → MUSIC GENERATION form (ruling #14), NOT a `/v1/music`
-// sample library. The form is real and validating; the SUBMIT + credit gate land in
-// Epic 9, so Generate stays disabled with "backend not available". There is
-// deliberately NO browse/audition/drag library UI anywhere (FOUNDATION §6.2 void).
+// sample library. The form is real and validating; Generate is WIRED to the real
+// `generate_audio` tool through the editor bridge (controller.generate). When the
+// backend is unconfigured / signed-out the tool returns the reference "Sign in to
+// Palmier… AI generation is not available" string, which is surfaced inline as a
+// gated reason (never a silent no-op). There is deliberately NO browse/audition/drag
+// library UI anywhere (FOUNDATION §6.2 void).
 //
 // Form parity (docs/reference/media-panel.md §"Music tab", MusicTab.swift):
 //   Mode    — video-to-music (scores the selected timeline span / whole timeline)
@@ -13,6 +16,8 @@
 
 import { useMemo, useState } from "react";
 import { Spacing, Theme } from "./theme";
+import type { MediaPanelController } from "./controller";
+import { inTauri } from "./media-actions";
 
 type Mode = "video" | "text";
 
@@ -43,10 +48,27 @@ function estimateCredits(model: AudioModelConfig | undefined, seconds: number): 
   return Math.ceil(model.creditsPerSecond * Math.max(0, seconds));
 }
 
-export function MusicTab() {
+export interface MusicTabProps {
+  /**
+   * The media-panel controller (Generate dispatches `generate_audio` through it).
+   * When absent (standalone preview) the form renders but Generate stays a "not
+   * connected" gated state.
+   */
+  controller?: MediaPanelController;
+}
+
+/** The Generate button's live state — drives label + styling + disabled. */
+type GenerateState =
+  | { kind: "idle" }
+  | { kind: "running" }
+  | { kind: "submitted" }
+  | { kind: "gated"; reason: string };
+
+export function MusicTab({ controller }: MusicTabProps = {}) {
   const [mode, setMode] = useState<Mode>("video");
   const [prompt, setPrompt] = useState("");
   const [duration, setDuration] = useState(30);
+  const [genState, setGenState] = useState<GenerateState>({ kind: "idle" });
 
   // Models filtered to category==music AND the input the current mode needs
   // (video-to-music needs video input; text-to-music needs text input).
@@ -74,8 +96,46 @@ export function MusicTab() {
     mode === "text" ? prompt.trim().length > 0 && durationValid : true;
   const valid = !!selectedModel && textValid;
 
-  const onGenerate = () => {
-    // TODO(E9): credit/sign-in gate + await invoke('generate_music', { ... }).
+  const connected = inTauri() && !!controller;
+  const busy = genState.kind === "running";
+
+  // Map the form → the `generate_audio` tool inputSchema args (music category).
+  // text-to-music passes the prompt + duration; video-to-music omits the prompt
+  // (the model scores the timeline span — the backend resolves the span). `model`
+  // is left to the backend's default music model (the stub catalog ids here aren't
+  // the live `/v1/models` ids; the executor defaults to the first available model).
+  const toGenerateAudioArgs = (): Record<string, unknown> => {
+    const args: Record<string, unknown> = {};
+    if (mode === "text") {
+      args.prompt = prompt.trim();
+      args.duration = duration;
+    } else {
+      // video-to-music: style the score from the prompt if provided; otherwise the
+      // model scores the span. styleInstructions is the music-style channel.
+      if (prompt.trim().length > 0) args.styleInstructions = prompt.trim();
+    }
+    return args;
+  };
+
+  const onGenerate = async () => {
+    if (!controller || busy || !valid) return;
+    setGenState({ kind: "running" });
+    const res = await controller.generate("generate_audio", toGenerateAudioArgs());
+    if (!res.attempted) {
+      setGenState({
+        kind: "gated",
+        reason: "Not connected to the editor — open a project to generate.",
+      });
+      return;
+    }
+    if (res.ok) {
+      setGenState({ kind: "submitted" });
+      return;
+    }
+    setGenState({
+      kind: "gated",
+      reason: res.error ?? "AI generation is not available.",
+    });
   };
 
   return (
@@ -172,21 +232,44 @@ export function MusicTab() {
         </span>
       </div>
       <p style={agentHintStyle}>
-        Requires sign-in and sufficient credits — enforced when the backend lands
-        (Epic 9).
+        Requires sign-in to a plan with credits. If you are signed out, Generate
+        explains how to enable it.
       </p>
 
       <button
-        disabled
-        onClick={onGenerate}
-        title="Music generation lands in Epic 9"
+        disabled={!valid || busy || !connected}
+        onClick={() => void onGenerate()}
+        title={
+          !connected
+            ? "Open a project to generate music"
+            : !valid
+              ? "Enter a prompt / valid duration"
+              : "Generate a score"
+        }
         style={{
-          ...generateDisabledStyle,
+          ...(connected && valid && !busy
+            ? generateEnabledStyle
+            : generateDisabledStyle),
           opacity: valid ? 1 : 0.6,
         }}
       >
-        Generate (backend not available)
+        {busy
+          ? "Submitting…"
+          : !connected
+            ? "Generate (open a project)"
+            : "Generate music"}
       </button>
+
+      {genState.kind === "submitted" && (
+        <p style={{ ...statusNoteStyle, color: Theme.accent }}>
+          Generating — the new score appears in your library when ready.
+        </p>
+      )}
+      {genState.kind === "gated" && (
+        <p style={{ ...statusNoteStyle, color: Theme.status.error }}>
+          {genState.reason}
+        </p>
+      )}
     </div>
   );
 }
@@ -248,4 +331,19 @@ const generateDisabledStyle = {
   background: Theme.background.raised,
   border: `1px solid ${Theme.border.subtle}`,
   cursor: "not-allowed",
+} as const;
+const generateEnabledStyle = {
+  fontSize: 12,
+  padding: "7px 10px",
+  borderRadius: 6,
+  marginTop: Spacing.sm,
+  fontWeight: 600,
+  color: "#000",
+  background: Theme.accent,
+  border: "none",
+  cursor: "pointer",
+} as const;
+const statusNoteStyle = {
+  fontSize: 11,
+  margin: 0,
 } as const;

@@ -15,6 +15,7 @@ import {
   fileMatches,
   indexStatusFromWire,
   momentSearchCandidates,
+  runVisualSearch,
   scheduleMomentSearch,
 } from "./search";
 import type { MediaPanelStore } from "./store";
@@ -35,6 +36,19 @@ import type {
 } from "./types";
 import { editorEdit, getMedia, importMedia, inTauri } from "../editor/bridge";
 import { adaptMedia } from "./adapt";
+
+/** The outcome of a panel-driven tool dispatch (captions / generation). */
+export interface ToolDispatchResult {
+  /** True when the tool ran and mutated state (or queued a generation). */
+  ok: boolean;
+  /**
+   * `false` only when the call was a no-op because we are outside Tauri (design
+   * preview / `vite dev`) — the panel shows a "not connected" hint, not an error.
+   */
+  attempted: boolean;
+  /** The tool's error string on failure (e.g. the "sign in / backend" gate). */
+  error?: string;
+}
 
 /** Generate a local UUID-ish id (replaced by backend ids when commands land). */
 export function localId(prefix = "id"): string {
@@ -290,6 +304,36 @@ export class MediaPanelController {
   }
 
   /**
+   * Set up the visual-search (CLIP) model when the index pill shows "not installed".
+   *
+   * There is NO dedicated `download_search_model` command yet — the visual-search
+   * model lifecycle (download → prepare → index) is owned by Epic 11's
+   * `SearchIndexCoordinator`, which the `search_media` command drives on demand. So
+   * this is an HONEST action, not a silent no-op: it flips the pill to "preparing"
+   * and kicks a `search_media` call (the path that triggers the coordinator's model
+   * load); the live `visual.status` it returns (`downloading_model`/`indexing`/
+   * `ready`/`failed`) then drives the pill. If the command isn't wired (outside
+   * Tauri / pre-E11) the pill returns to "not installed" with the search disabled —
+   * a truthful state, never a dead button.
+   */
+  async setUpSearchModel(): Promise<void> {
+    if (!inTauri()) {
+      // Design preview: be honest that search isn't available here.
+      this.store.setIndexStatus({
+        kind: "failed",
+        message: "Visual search runs in the desktop app.",
+      });
+      return;
+    }
+    this.store.setIndexStatus({ kind: "preparing" });
+    // A probe query nudges the coordinator to load/download the model; we only need
+    // its status, not hits. Reuse the live search seam so there is one code path.
+    const outcome = await runVisualSearch("setup");
+    this.store.setIndexStatus(indexStatusFromWire(outcome.status));
+  }
+
+
+  /**
    * `previewMoment` → `selectMediaAsset(asset, atSourceFrame:)`
    * (MediaTab+Search.swift): tapping a moment / spoken hit selects the underlying
    * asset and focuses it. `atSourceFrame` is the hit's source time converted to an
@@ -337,9 +381,12 @@ export class MediaPanelController {
   }
 
   /**
-   * Cancel a running/queued job.
-   * TODO(E9): `await invoke('cancel_generation', { id })`; the cancelled status
-   * then arrives via a Tauri event instead of this optimistic local update.
+   * Cancel a running/queued job. There is NO backend `cancel_generation` command
+   * yet (the generation lifecycle in `palmier-gen` is host-driven and exposes no
+   * cancel seam to the tool layer), so this marks the job cancelled locally — a real
+   * state change the user sees, not a no-op. When a cancel command + Tauri event
+   * land, the cancelled status will arrive over the event instead and this becomes
+   * the optimistic half.
    */
   cancelJob(id: string): void {
     this.store.cancelJob(id);
@@ -348,5 +395,59 @@ export class MediaPanelController {
   /** Dismiss a terminal (failed/cancelled/succeeded) job card. */
   dismissJob(id: string): void {
     this.store.dismissJob(id);
+  }
+
+  // --- Captions (E10 add_captions) -------------------------------------------
+
+  /**
+   * Generate captions for the current selection / timeline (Captions tab Generate).
+   * Real flow: `add_captions` transcribes on-device (whisper) then places styled
+   * caption clips on a new track — the same pipeline the agent's `add_captions`
+   * tool drives (crates/palmier-tools `add_captions`). On success the backend emits
+   * `timeline://changed`, so we refetch the media library here too.
+   *
+   * `args` are the `add_captions` inputSchema fields (clipIds/language/fontName/
+   * fontSize/color/centerX/centerY/textCase/censorProfanity). The tool returns an
+   * error string when transcription isn't possible (no speech / model missing /
+   * unsupported language) — we surface that verbatim so the tab shows the reason
+   * instead of a silent no-op. Outside Tauri it is a graceful no-op (`attempted:
+   * false`) so the design-preview form stays inert without an error.
+   */
+  async generateCaptions(
+    args: Record<string, unknown>,
+  ): Promise<ToolDispatchResult> {
+    if (!inTauri()) return { ok: false, attempted: false };
+    const res = await editorEdit("add_captions", args);
+    if (res.ok) {
+      await this.refreshMedia();
+      return { ok: true, attempted: true };
+    }
+    return { ok: false, attempted: true, error: res.error };
+  }
+
+  // --- AI generation (E9 generate_audio/video/image) -------------------------
+
+  /**
+   * Start an AI generation (Music tab / Generation panel). `tool` is the wire tool
+   * name (`generate_audio` | `generate_video` | `generate_image`); `args` its
+   * inputSchema fields. The shared executor runs the SAME generate tool the agent/
+   * MCP use; when the backend is unconfigured / signed-out it returns the reference
+   * "Sign in to Palmier… AI generation is not available" string, which we surface
+   * verbatim (a real gated reason, never a silent no-op). On a successful submit the
+   * backend creates a placeholder asset + emits `timeline://changed`; we refetch so
+   * the new generating asset (and any job card the backend feeds) appears.
+   * Outside Tauri it is a graceful no-op (`attempted: false`).
+   */
+  async generate(
+    tool: "generate_audio" | "generate_video" | "generate_image",
+    args: Record<string, unknown>,
+  ): Promise<ToolDispatchResult> {
+    if (!inTauri()) return { ok: false, attempted: false };
+    const res = await editorEdit(tool, args);
+    if (res.ok) {
+      await this.refreshMedia();
+      return { ok: true, attempted: true };
+    }
+    return { ok: false, attempted: true, error: res.error };
   }
 }

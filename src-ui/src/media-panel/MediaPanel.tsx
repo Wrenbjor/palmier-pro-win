@@ -169,8 +169,8 @@ export function MediaPanel({
         {tab === "media" && (
           <MediaTab store={theStore} controller={theController} fps={fps} />
         )}
-        {tab === "captions" && <CaptionsTab />}
-        {tab === "music" && <MusicTab />}
+        {tab === "captions" && <CaptionsTab controller={theController} />}
+        {tab === "music" && <MusicTab controller={theController} />}
       </div>
     </div>
   );
