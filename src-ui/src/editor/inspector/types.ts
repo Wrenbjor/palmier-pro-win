@@ -30,23 +30,51 @@ export type InspectorIcon = "slider.horizontal.3" | "info.circle";
 
 /**
  * A selected media asset (the media-panel "Source" selection). The Inspector
- * needs only enough to (a) know one is selected and (b) resolve `aiEditEligible`
- * for a clip whose `mediaRef` points at a visual asset. Mirrors the
- * render-relevant subset of `palmier-model::MediaAsset`.
+ * needs enough to (a) know one is selected, (b) resolve `aiEditEligible` for a clip
+ * whose `mediaRef` points at a visual asset, and (c) render the Details (Source) tab
+ * with REAL metadata (type / dimensions / duration / size / path + generated info).
+ * Mirrors the render-relevant subset of `palmier-model::MediaAsset` — fed from the
+ * enriched `editor_get_media` payload via the media-panel `MediaAssetView`.
  */
 export interface MediaAssetView {
   id: string;
   /** Whether the asset's media is visual (video/image) vs audio-only. */
   isVisual: boolean;
+  /** Display name. */
+  name?: string;
+  /** `"video" | "image" | "audio" | "text" | "lottie"`. */
+  type?: string;
+  /** Source pixel width / height (video/image). */
+  width?: number;
+  height?: number;
+  /** Duration in seconds (null/undefined for stills). */
+  durationSeconds?: number | null;
+  /** On-disk file size in bytes. */
+  sizeBytes?: number;
+  /** Absolute source path on disk. */
+  path?: string;
+  /** Whether the asset was AI-generated (carries a generationInput). */
+  isGenerated?: boolean;
+  /** AI-generation metadata (present when `isGenerated`). */
+  generatedModel?: string;
+  generatedAspect?: string;
+  generatedResolution?: string;
+  prompt?: string;
 }
 
 /**
  * The account/AI state the tab-gating reads (reference `AccountService`).
  * Sourced from the app shell's `AccountSnapshot` (`app/api.ts`) via the seam in
- * `controller.ts`. `isMisconfigured` hides the AI Edit tab entirely.
+ * `controller.ts`. `isMisconfigured` hides the AI Edit tab entirely; `isSignedIn` +
+ * `aiAllowed` drive whether the AI-Edit actions are RUNNABLE vs a gated sign-in
+ * notice (the AI-Edit tab must be a real gated state, not a dead button).
  */
 export interface AccountState {
   isMisconfigured: boolean;
+  /** Whether a user is signed in (gates AI editing availability). */
+  isSignedIn?: boolean;
+  /** Whether the account may run AI generation/upscale (signed-in + has credits). */
+  aiAllowed?: boolean;
 }
 
 /**

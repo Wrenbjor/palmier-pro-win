@@ -464,9 +464,25 @@ export default function Project({ projectId }: { projectId: string }) {
 
   // The inspector resolves over the live timeline + both selections + media library.
   const inspectorInput: Omit<InspectorInput, "account"> = useMemo(() => {
+    // Thread the REAL per-asset fields from the enriched `editor_get_media` payload
+    // (carried on the media-panel `MediaAssetView`) into the inspector view, so the
+    // Details (Source) tab shows actual Type / Dimensions / Duration / Size / Path
+    // (+ the Generated section for AI assets) rather than placeholders.
     const mediaAssets: InspectorAssetView[] = mediaSnapshot.assets.map((a) => ({
       id: a.id,
       isVisual: a.type === "video" || a.type === "image",
+      name: a.name,
+      type: a.type,
+      width: a.width,
+      height: a.height,
+      durationSeconds: a.durationSeconds,
+      sizeBytes: a.sizeBytes,
+      path: a.path || undefined,
+      isGenerated: a.isGenerated,
+      generatedModel: a.generatedModel,
+      generatedAspect: a.generatedAspect,
+      generatedResolution: a.generatedResolution,
+      prompt: a.prompt,
     }));
     return {
       timeline,

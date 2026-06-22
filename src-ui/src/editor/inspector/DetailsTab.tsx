@@ -8,13 +8,13 @@
 // AIEditTab — the AI-Edit controls, gated on account (`isMisconfigured`) and on the
 // selection being a single AI-eligible visual clip OR a visual media asset.
 //
-// CAVEAT (documented): `MediaAssetView` in this view-model carries only
-// `{ id, isVisual }` — it does NOT yet carry name / type / dimensions / duration /
-// size / path / generation metadata. So DetailsTab renders the fields it CAN derive
-// and shows placeholders for the rest; full population awaits the media view-model
-// (Epic 7/8 adapter work). AI-Edit actions route through `palmier-gen` / the
-// generate/upscale tools (Epic 9) which are not reachable from this story's
-// frontend-only scope — the controls render with their availability/disabled state.
+// The inspector `MediaAssetView` now carries the REAL asset fields (name / type /
+// dimensions / duration / size / path / generation metadata), fed from the enriched
+// `editor_get_media` payload (commands.rs `editor_get_media`) → media-panel adapter →
+// `Project.tsx` `inspectorInput.mediaAssets` → `makeAssetBody`. DetailsTab renders
+// those directly (no placeholders for assets that carry them). AI-Edit actions route
+// through `editorEdit('generate_*' | 'upscale_media', …)` and are GATED on a
+// configured, signed-in, AI-allowed account (a real sign-in notice, not a dead button).
 
 import type { JSX } from "react";
 import { middleTruncate } from "./logic";
@@ -118,6 +118,15 @@ export interface AIAction {
 export interface AIEditTabProps {
   /** Account misconfigured → AI Edit hidden/disabled with the reason text. */
   isMisconfigured: boolean;
+  /**
+   * Whether AI editing is actually RUNNABLE (signed in to a plan with credits). When
+   * false, the tab renders a real GATED notice (`gateNotice`) instead of dead buttons —
+   * the generate/upscale actions need the Convex/account backend. Defaults (when
+   * omitted) to `!isMisconfigured` for backward compatibility.
+   */
+  aiAvailable?: boolean;
+  /** The gate notice shown when `aiAvailable` is false (defaults to a sign-in prompt). */
+  gateNotice?: string;
   /** Whether the context is a clip (vs a media asset) — drives the scope toggles. */
   hasClipContext: boolean;
   /** Whether "Use trimmed portion only" applies (trimStart>0 || trimEnd>0). */
@@ -127,10 +136,15 @@ export interface AIEditTabProps {
 }
 
 export function AIEditTab(props: AIEditTabProps): JSX.Element {
-  if (props.isMisconfigured) {
+  // AI editing is runnable only with a configured, signed-in, AI-allowed account.
+  // Backward-compatible: when `aiAvailable` is omitted, fall back to the old
+  // misconfigured-only gate.
+  const available =
+    props.aiAvailable ?? !props.isMisconfigured;
+  if (!available) {
     return (
       <div style={disabledNoticeStyle}>
-        AI editing is unavailable — sign in to Palmier and configure your account.
+        {props.gateNotice ?? "Sign in to a plan to use AI editing."}
       </div>
     );
   }

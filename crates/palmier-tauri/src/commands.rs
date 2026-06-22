@@ -356,6 +356,11 @@ pub fn send_feedback(
 /// bodies (`get_timeline` / `get_media`) return exactly one `Block::Text` carrying a
 /// JSON string; this parses it back to a `serde_json::Value` for the frontend. An
 /// error result (or a non-text / unparseable block) surfaces as an `Err(String)`.
+///
+/// Now used only by the unit tests: `editor_get_media` builds its enriched payload
+/// directly (no tool-result text block) and `editor_get_timeline` serializes the full
+/// timeline JSON itself. Kept as the shared parse helper the executor-flow tests use.
+#[cfg(test)]
 fn tool_result_to_json(result: palmier_tools::ToolResult) -> Result<Value, String> {
     let text = result
         .content
@@ -428,15 +433,124 @@ pub fn editor_get_timeline<R: Runtime>(
     Ok(value)
 }
 
-/// `editor_get_media` — the media-library JSON the Media panel renders (reference
-/// `get_media`). Reads the shared `EditorState` through the executor and returns the
-/// parsed `{ assets: [...] }` object (`media-panel/adapt.ts` maps it to a snapshot).
+/// `editor_get_media` — the **enriched** media-library JSON the Media panel + the
+/// Inspector Details tab render. This is intentionally RICHER than the compact MCP
+/// `get_media` tool the LLM uses (`palmier_tools::read::get_media`, UNCHANGED): the UI
+/// needs the on-disk path (for thumbnails), real dimensions / duration / file size,
+/// and the AI-generation metadata. We read the shared `EditorState.library` assets
+/// directly (one borrow) and project each to a stable JSON shape `adapt.ts` maps.
+///
+/// Per asset:
+/// - `id`, `name`, `type` (lowercase ClipType), `folderId?`
+/// - `path` — the **absolute** source path (External as-is; Project-relative resolved
+///   against the active project bundle root when one is open, else the raw relative
+///   path so the value is never silently dropped)
+/// - `duration` (seconds), `width` / `height` (from `source_width/height`)
+/// - `sizeBytes` — `fs::metadata(path).len()` when the file is readable, else omitted
+/// - `hasAudio`, `generationStatus`
+/// - `isGenerated` (true when the asset carries a `generationInput`) + the generated
+///   `model` / `aspectRatio` / `resolution` / `prompt` when present.
 #[tauri::command]
-pub fn editor_get_media(agent: State<'_, AgentState>) -> Result<Value, String> {
-    let result = agent
-        .executor
-        .with_state_ref(palmier_tools::read::get_media);
-    tool_result_to_json(result)
+pub fn editor_get_media<R: Runtime>(
+    app: AppHandle<R>,
+    agent: State<'_, AgentState>,
+) -> Result<Value, String> {
+    let root = crate::project::active_project_root(&app);
+    let assets: Vec<Value> = agent.executor.with_state_ref(|state| {
+        state
+            .library
+            .assets
+            .iter()
+            .map(|asset| enriched_asset_json(asset, root.as_deref()))
+            .collect()
+    });
+    Ok(json!({ "assets": assets }))
+}
+
+/// Resolve an asset's source to an **absolute** on-disk path string for the UI.
+/// External paths are already absolute. Project-relative paths (which include the
+/// `media/` segment) are joined onto the active project bundle root when one is open;
+/// with no open project we fall back to the raw relative path rather than dropping it.
+fn resolve_asset_path(
+    source: &palmier_model::MediaSource,
+    project_root: Option<&std::path::Path>,
+) -> Option<String> {
+    match source {
+        palmier_model::MediaSource::External { absolute_path } => {
+            if absolute_path.is_empty() {
+                None
+            } else {
+                Some(absolute_path.clone())
+            }
+        }
+        palmier_model::MediaSource::Project { relative_path } => {
+            if relative_path.is_empty() {
+                None
+            } else if let Some(root) = project_root {
+                Some(root.join(relative_path).to_string_lossy().to_string())
+            } else {
+                Some(relative_path.clone())
+            }
+        }
+    }
+}
+
+/// Project one `MediaAsset` to the enriched UI JSON (see [`editor_get_media`]).
+fn enriched_asset_json(
+    asset: &palmier_model::MediaAsset,
+    project_root: Option<&std::path::Path>,
+) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("id".to_string(), json!(asset.id));
+    obj.insert("name".to_string(), json!(asset.name));
+    obj.insert(
+        "type".to_string(),
+        serde_json::to_value(asset.asset_type).unwrap_or_else(|_| json!("video")),
+    );
+    obj.insert("duration".to_string(), json!(asset.duration_seconds));
+    obj.insert("hasAudio".to_string(), json!(asset.has_audio));
+    obj.insert(
+        "generationStatus".to_string(),
+        json!(match &asset.generation_status {
+            palmier_model::GenerationStatus::None => "none",
+            palmier_model::GenerationStatus::Generating => "generating",
+            palmier_model::GenerationStatus::Downloading => "downloading",
+            palmier_model::GenerationStatus::Rendering => "rendering",
+            palmier_model::GenerationStatus::Failed(_) => "failed",
+        }),
+    );
+    if let Some(folder) = &asset.folder_id {
+        obj.insert("folderId".to_string(), json!(folder));
+    }
+    if let Some(w) = asset.source_width {
+        obj.insert("width".to_string(), json!(w));
+    }
+    if let Some(h) = asset.source_height {
+        obj.insert("height".to_string(), json!(h));
+    }
+
+    // Absolute on-disk path + file size (best-effort — a missing/unreadable file
+    // simply omits sizeBytes; the path is still surfaced so Reveal/thumbnail can try).
+    if let Some(path) = resolve_asset_path(&asset.source, project_root) {
+        if let Ok(meta) = std::fs::metadata(&path) {
+            obj.insert("sizeBytes".to_string(), json!(meta.len()));
+        }
+        obj.insert("path".to_string(), json!(path));
+    }
+
+    // AI-generation metadata — `isGenerated` is the persistent flag (carries a
+    // `generationInput`), independent of the transient `generationStatus`.
+    obj.insert("isGenerated".to_string(), json!(asset.is_generated()));
+    if let Some(input) = &asset.generation_input {
+        obj.insert("generatedModel".to_string(), json!(input.model));
+        obj.insert("generatedAspect".to_string(), json!(input.aspect_ratio));
+        if let Some(res) = &input.resolution {
+            obj.insert("generatedResolution".to_string(), json!(res));
+        }
+        obj.insert("prompt".to_string(), json!(input.prompt));
+    }
+
+    Value::Object(obj)
 }
 
 /// `editor_edit` — dispatch any mutating tool (`add_clips`, `move_clips`,
@@ -748,6 +862,93 @@ mod tests {
         assert_eq!(none, 0, "nonexistent path imports nothing");
 
         fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The enriched `editor_get_media` projection (`enriched_asset_json`, what the
+    /// command runs per asset over the SHARED library) carries the REAL per-asset data
+    /// the tiles + Inspector Details need: an absolute on-disk path, source dimensions,
+    /// file size, and the type — NOT the compact MCP-tool projection. Imports a real PNG
+    /// through the SAME shared executor, then asserts the projection over that asset.
+    #[test]
+    fn editor_get_media_projection_carries_path_and_dimensions() {
+        use std::fs;
+
+        let executor = Arc::new(ToolExecutor::new());
+
+        // Import a real PNG so a genuine External asset (absolute path, probed
+        // dimensions) lands in the shared library — the importer probes width/height.
+        let dir =
+            std::env::temp_dir().join(format!("palmier-getmedia-cmd-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("frame.png");
+        fs::write(&path, tiny_png()).unwrap();
+        let abs = path.to_string_lossy().to_string();
+        let (imported, _) = import_media_paths(&executor, &[abs.clone()], None);
+        assert_eq!(imported, 1);
+
+        // Project the asset exactly as the command does (no active project ⇒ root None;
+        // an External asset is absolute regardless).
+        let value = executor.with_state_ref(|state| {
+            let asset = &state.library.assets[0];
+            enriched_asset_json(asset, None)
+        });
+
+        // Absolute path is present and points at the real file we imported.
+        let got_path = value.get("path").and_then(Value::as_str).expect("path present");
+        assert_eq!(got_path, abs, "enriched projection carries the absolute path");
+
+        // Type is the real lowercase ClipType.
+        assert_eq!(value.get("type").and_then(Value::as_str), Some("image"));
+
+        // The importer probes a 1x1 PNG → real source dimensions flow through.
+        assert_eq!(value.get("width").and_then(Value::as_i64), Some(1));
+        assert_eq!(value.get("height").and_then(Value::as_i64), Some(1));
+
+        // File size is the real on-disk byte count (>0).
+        let size = value.get("sizeBytes").and_then(Value::as_u64).expect("sizeBytes present");
+        assert!(size > 0, "real file size reported");
+
+        // A freshly-imported (non-AI) asset is not generated.
+        assert_eq!(value.get("isGenerated").and_then(Value::as_bool), Some(false));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// `resolve_asset_path` joins a Project-relative source onto the active bundle root
+    /// (so the UI gets an absolute path), passes External through, and falls back to the
+    /// raw relative path when no project is open (never silently dropping it).
+    #[test]
+    fn resolve_asset_path_resolves_project_relative_and_external() {
+        use std::path::Path;
+
+        let ext = palmier_model::MediaSource::External {
+            absolute_path: "/abs/clip.mov".to_string(),
+        };
+        assert_eq!(
+            resolve_asset_path(&ext, None).as_deref(),
+            Some("/abs/clip.mov")
+        );
+
+        let proj = palmier_model::MediaSource::Project {
+            relative_path: "media/clip.mov".to_string(),
+        };
+        let root = Path::new("/projects/My.palmier");
+        let resolved = resolve_asset_path(&proj, Some(root)).expect("resolved");
+        assert!(
+            resolved.ends_with("clip.mov") && resolved.contains("My.palmier"),
+            "project-relative joined onto root: {resolved}"
+        );
+        // No open project ⇒ raw relative path (not dropped).
+        assert_eq!(
+            resolve_asset_path(&proj, None).as_deref(),
+            Some("media/clip.mov")
+        );
+
+        // Empty paths resolve to None.
+        let empty = palmier_model::MediaSource::External {
+            absolute_path: String::new(),
+        };
+        assert_eq!(resolve_asset_path(&empty, None), None);
     }
 
     #[test]

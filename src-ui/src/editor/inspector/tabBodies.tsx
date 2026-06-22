@@ -18,11 +18,11 @@ import {
   selectedAudioClips,
   selectedVisualClips,
 } from "./logic";
-import type { ClipTab, InspectorInput } from "./types";
+import type { AccountState, ClipTab, InspectorInput, MediaAssetView } from "./types";
 import { AudioTab } from "./AudioTab";
 import { VideoTab, type EditDispatch } from "./VideoTab";
 import { TextTab } from "./TextTab";
-import { DetailsTab, AIEditTab, type AssetDetail } from "./DetailsTab";
+import { DetailsTab, AIEditTab, type AIAction, type AssetDetail } from "./DetailsTab";
 
 export interface TabBodiesOptions {
   /** Playhead frame for keyframe-aware seeding. */
@@ -34,11 +34,62 @@ export interface TabBodiesOptions {
   onSeek?: (absoluteFrame: number) => void;
   /** Override the mutating dispatch (defaults to `editorEdit`). */
   edit?: EditDispatch;
-  /** Richer asset details for the Details tab (until the media view-model carries them). */
+  /**
+   * Override the per-asset Details with a richer source (rare — the inspector
+   * `MediaAssetView` now carries the real fields, so the default derives the detail
+   * straight from the selected asset). Kept as an escape hatch.
+   */
   assetDetail?: (assetId: string) => AssetDetail | undefined;
 }
 
 const defaultEdit: EditDispatch = (name, args) => editorEdit(name, args);
+
+/**
+ * Whether AI editing is RUNNABLE for this account: it must be configured (Convex /
+ * Clerk wired), signed in, and AI-allowed (has credits). When any is false the AI-Edit
+ * tab renders its gated sign-in notice rather than dead buttons.
+ */
+function aiAvailable(account: AccountState): boolean {
+  if (account.isMisconfigured) return false;
+  // `aiAllowed`/`isSignedIn` are optional on the view-model; when present they gate.
+  if (account.aiAllowed === false) return false;
+  if (account.isSignedIn === false) return false;
+  return true;
+}
+
+/** The gate notice for the AI-Edit tab when AI editing is not available. */
+function aiGateNotice(account: AccountState): string {
+  if (account.isMisconfigured) {
+    return "AI editing is unavailable — sign in to Palmier and configure your account.";
+  }
+  return "Sign in to a plan to use AI editing.";
+}
+
+/** Build the inspector `AssetDetail` straight from the selected media-asset view. */
+function assetDetailFromView(
+  view: MediaAssetView | undefined,
+  id: string,
+): AssetDetail {
+  if (!view) return { id, isVisual: false };
+  return {
+    id: view.id,
+    isVisual: view.isVisual,
+    name: view.name,
+    type: view.type,
+    width: view.width,
+    height: view.height,
+    durationSeconds:
+      view.durationSeconds == null ? undefined : view.durationSeconds,
+    sizeBytes: view.sizeBytes,
+    path: view.path,
+    isGenerated: view.isGenerated,
+    generatedModel: view.generatedModel,
+    generatedAspect: view.generatedAspect,
+    generatedResolution: view.generatedResolution,
+    prompt: view.prompt,
+  };
+}
+
 
 /** Build the `TabBodyRenderer` to pass to `InspectorPanel.tabBodies`. */
 export function makeTabBodies(opts: TabBodiesOptions = {}): TabBodyRenderer {
@@ -100,12 +151,26 @@ function renderTabBody(
       );
     }
     case "ai": {
-      // AI-Edit tab for an AI-eligible visual clip.
+      // AI-Edit tab for an AI-eligible visual clip. GATED: when AI editing is not
+      // available (account misconfigured / not signed in / no credits) the tab shows
+      // the sign-in notice instead of dead buttons. When available, the actions route
+      // through `editorEdit('upscale_media' | 'generate_*', …)`.
+      const available = aiAvailable(input.account);
+      const clips = selectedVisualClips(input);
+      const actions: AIAction[] = available
+        ? clips.map((c) => ({
+            id: `upscale-${c.id}`,
+            label: "Upscale clip source",
+            onRun: () => void edit("upscale_media", { mediaRef: c.mediaRef }),
+          }))
+        : [];
       return (
         <AIEditTab
           isMisconfigured={input.account.isMisconfigured}
-          hasClipContext={selectedVisualClips(input).length > 0}
-          actions={[]}
+          aiAvailable={available}
+          gateNotice={aiGateNotice(input.account)}
+          hasClipContext={clips.length > 0}
+          actions={actions}
         />
       );
     }
@@ -115,12 +180,12 @@ function renderTabBody(
 /** Build the `AssetBodyRenderer` (the media-asset "Source" inspector). */
 export function makeAssetBody(opts: TabBodiesOptions = {}): AssetBodyRenderer {
   return ({ input }): JSX.Element => {
-    const id = [...input.selectedMediaAssetIds][0];
-    const base = input.mediaAssets.find((a) => a.id === id);
-    const detail: AssetDetail = opts.assetDetail?.(id ?? "") ?? {
-      id: id ?? "",
-      isVisual: base?.isVisual ?? false,
-    };
+    const id = [...input.selectedMediaAssetIds][0] ?? "";
+    const view = input.mediaAssets.find((a) => a.id === id);
+    // Prefer an explicit override (escape hatch); else derive the full detail straight
+    // from the enriched media-asset view (real type / dimensions / duration / size /
+    // path + generated metadata flow through `Project.tsx` → `inspectorInput`).
+    const detail = opts.assetDetail?.(id) ?? assetDetailFromView(view, id);
     return <DetailsTab asset={detail} />;
   };
 }

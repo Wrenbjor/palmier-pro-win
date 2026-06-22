@@ -42,8 +42,24 @@ export interface MediaAssetView {
   folderId: string | null;
   /** Seconds; null for images/text. Drives `duration` sort + tile duration badge. */
   durationSeconds: number | null;
+  /** Source pixel width (video/image); undefined when unknown. */
+  width?: number;
+  /** Source pixel height (video/image); undefined when unknown. */
+  height?: number;
+  /** On-disk file size in bytes; undefined when the file is missing/unreadable. */
+  sizeBytes?: number;
+  /** Whether the source carries an audio track (`palmier-model` `hasAudio`). */
+  hasAudio?: boolean;
   /** AI-generated (Palmier gen) flag — drives the AI filter + badge. */
   isGenerated: boolean;
+  /** AI-generation model id (when `isGenerated`). */
+  generatedModel?: string;
+  /** AI-generation aspect ratio (when `isGenerated`). */
+  generatedAspect?: string;
+  /** AI-generation resolution (when `isGenerated`). */
+  generatedResolution?: string;
+  /** AI-generation prompt (when `isGenerated`). */
+  prompt?: string;
   /** True once the source file is missing (drives the Relink affordance). */
   missing?: boolean;
   /**

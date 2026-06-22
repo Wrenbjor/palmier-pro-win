@@ -1,12 +1,15 @@
 // adaptMedia — map the `get_media` wire JSON → the panel `MediaSnapshot`.
 //
 // The `editor_get_media` Tauri command (crates/palmier-tauri/src/commands.rs) returns
-// the reference asset catalog from read.rs `get_media`:
-//   { assets: [{ id, name, type, duration, generationStatus, folderId? }] }
-// (`duration` is seconds, null for stills; `generationStatus` ∈
-//  none | generating | downloading | failed). Folders come from `list_folders`
-// (a separate tool); `editor_get_media` returns assets only, so folders default to []
-// here until a folder read is threaded in (the panel renders a flat Library then).
+// an ENRICHED asset payload (richer than the compact MCP `get_media` tool the LLM uses):
+//   { assets: [{ id, name, type, duration, hasAudio, generationStatus, folderId?,
+//                path?, width?, height?, sizeBytes?, isGenerated,
+//                generatedModel?, generatedAspect?, generatedResolution?, prompt? }] }
+// (`duration` is seconds, null for stills; `path` is the ABSOLUTE on-disk path that
+//  drives tile thumbnails via `useAssetThumbnail`; `width`/`height` are source pixels;
+//  `sizeBytes` is the real file size; `isGenerated` is the persistent AI-generated flag).
+// Folders come from `list_folders` (a separate tool); `editor_get_media` returns assets
+// only, so folders default to [] here until a folder read is threaded in.
 //
 // This is the single seam that turns the serde payload into the `MediaSnapshot` the
 // panel stores — the boundary `media-panel/types.ts` always anticipated ("the adapter
@@ -25,6 +28,16 @@ function asString(v: unknown, fallback: string): string {
   return typeof v === "string" ? v : fallback;
 }
 
+/** A finite number, or undefined (drops nulls / non-numbers / NaN). */
+function asFiniteNumber(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? v : undefined;
+}
+
+/** An optional string field (dropped when absent / non-string). */
+function asOptString(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
 const MEDIA_TYPES: readonly MediaType[] = [
   "video",
   "image",
@@ -41,23 +54,32 @@ function asMediaType(v: unknown): MediaType {
 /** Map one wire asset object → a MediaAssetView (defaults filled). */
 function adaptAsset(raw: Json): MediaAssetView {
   const generationStatus = asString(raw.generationStatus, "none");
+  // The enriched payload carries a persistent `isGenerated` boolean (true when the
+  // asset has a generationInput). Fall back to the status heuristic only if the wire
+  // omitted it (older payloads / partial reads).
+  const isGenerated =
+    typeof raw.isGenerated === "boolean"
+      ? raw.isGenerated
+      : generationStatus !== "none" && generationStatus !== "";
   return {
     id: asString(raw.id, ""),
     name: asString(raw.name, ""),
-    // The catalog projection carries no on-disk path (it lives on the manifest entry);
-    // Reveal/Copy-Path degrade gracefully when empty. Threaded in when a path-bearing
-    // read lands.
+    // Absolute on-disk path (enriched `editor_get_media`). Drives the tile thumbnail
+    // (`useAssetThumbnail` decodes a frame from this path) + Reveal/Copy-Path. Empty
+    // when the asset has no resolvable source (the tile falls back to its type glyph).
     path: asString(raw.path, ""),
     type: asMediaType(raw.type),
     folderId: typeof raw.folderId === "string" ? raw.folderId : null,
-    durationSeconds:
-      typeof raw.duration === "number" && Number.isFinite(raw.duration)
-        ? raw.duration
-        : null,
-    // A generated asset is one whose status is not the steady "none" — the AI badge /
-    // filter reads this. (A fully-rendered generated asset reverts to "none"; the wire
-    // has no persistent generated flag, so this reflects in-flight generation only.)
-    isGenerated: generationStatus !== "none" && generationStatus !== "",
+    durationSeconds: asFiniteNumber(raw.duration) ?? null,
+    width: asFiniteNumber(raw.width),
+    height: asFiniteNumber(raw.height),
+    sizeBytes: asFiniteNumber(raw.sizeBytes),
+    hasAudio: typeof raw.hasAudio === "boolean" ? raw.hasAudio : undefined,
+    isGenerated,
+    generatedModel: asOptString(raw.generatedModel),
+    generatedAspect: asOptString(raw.generatedAspect),
+    generatedResolution: asOptString(raw.generatedResolution),
+    prompt: asOptString(raw.prompt),
     missing: generationStatus === "failed" || undefined,
   };
 }

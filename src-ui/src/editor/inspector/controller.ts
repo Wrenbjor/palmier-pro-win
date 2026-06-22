@@ -30,15 +30,24 @@ const ACCOUNT_EVENT = "account://snapshot";
  * The default MOCK account used when no live `get_account` is available
  * (browser dev, or before Epic 1's account command is reachable from here).
  * `isMisconfigured: false` so the AI Edit tab is exercisable in design preview;
- * flip via `mockAccount` for the misconfigured path.
+ * `aiAllowed: false` so the actions render in their (correct) gated state until a
+ * real signed-in account flows in. Flip via `mockAccount` for other paths.
  */
-export const MOCK_ACCOUNT: AccountState = { isMisconfigured: false };
+export const MOCK_ACCOUNT: AccountState = {
+  isMisconfigured: false,
+  isSignedIn: false,
+  aiAllowed: false,
+};
 
 /** Narrow a full `AccountSnapshot` down to the slice the Inspector gates on. */
 export function accountStateFromSnapshot(
   snap: AccountSnapshot,
 ): AccountState {
-  return { isMisconfigured: snap.isMisconfigured };
+  return {
+    isMisconfigured: snap.isMisconfigured,
+    isSignedIn: snap.isSignedIn,
+    aiAllowed: snap.aiAllowed,
+  };
 }
 
 export class InspectorController {
