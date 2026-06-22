@@ -55,6 +55,7 @@ mod preview_audio;
 mod project;
 mod settings;
 mod update;
+mod waveform_cache;
 mod window;
 
 use std::sync::Mutex;
@@ -203,6 +204,11 @@ fn main() {
             // decoded-PCM cache. `AudioPlayer::new()` probes the default device but opens
             // no stream until the first `preview_audio_play` (no device ⇒ silent no-op).
             app.manage(preview_audio::PreviewAudioState::default());
+            // Per-asset audio-waveform cache for the timeline canvas. `editor_get_timeline`
+            // injects each audio clip's cached peaks (cold misses decode in the background
+            // and emit `timeline://changed` so the UI refetches). Cheap: one decode per
+            // asset, promoted to memory + persisted as a `.waveform` blob.
+            app.manage(waveform_cache::WaveformState::default());
 
             // M2 boot integration — the agent state owns the ONE shared
             // `Arc<ToolExecutor>` (single `EditorState`) that BOTH the loopback MCP

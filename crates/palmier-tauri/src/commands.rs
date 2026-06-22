@@ -374,20 +374,56 @@ fn tool_result_to_json(result: palmier_tools::ToolResult) -> Result<Value, Strin
 /// (reference `get_timeline`). Reads the shared `EditorState` through the executor;
 /// `args` carries the optional `{ startFrame?, endFrame? }` window (default: whole
 /// timeline). Returns the parsed JSON object (`adapt.ts` maps it to a `TimelineView`).
+///
+/// After serializing the full-fidelity timeline, this injects each AUDIO clip's
+/// per-source `waveform` peak array (cached per asset; cold misses generate in the
+/// background and emit `timeline://changed` so the UI refetches — see
+/// [`crate::waveform_cache`]). The renderer slices the full-source peaks to each
+/// clip's trimmed window. The compact MCP `get_timeline` tool the LLM uses is
+/// UNCHANGED and carries NO waveform (`read::get_timeline`).
 #[tauri::command]
-pub fn editor_get_timeline(
+pub fn editor_get_timeline<R: Runtime>(
+    app: AppHandle<R>,
     agent: State<'_, AgentState>,
+    waveforms: State<'_, crate::waveform_cache::WaveformState>,
     args: Option<Value>,
 ) -> Result<Value, String> {
+    use std::collections::HashMap;
     // The UI needs the FULL clip model (real volume / trim / speed / opacity /
     // fades / keyframes), not the defaults-stripped MCP `get_timeline` summary.
     // `args` (the optional `{startFrame,endFrame}` window) is intentionally ignored:
-    // the editor renders the whole timeline and windows in the canvas. The compact
-    // MCP `get_timeline` tool the LLM uses is UNCHANGED (read::get_timeline).
+    // the editor renders the whole timeline and windows in the canvas.
     let _ = args;
-    let value = agent
-        .executor
-        .with_state_ref(palmier_tools::read::full_timeline_json);
+
+    // Serialize the timeline + resolve the audio-bearing assets' paths/durations in
+    // ONE state borrow, so the lock-free waveform lookup/inject runs after.
+    let (value, assets) = agent.executor.with_state_ref(|state| {
+        let value = palmier_tools::read::full_timeline_json(state);
+        let mut assets: HashMap<String, crate::waveform_cache::AudioAsset> = HashMap::new();
+        for asset in &state.library.assets {
+            // Only AUDIO assets get a waveform (the renderer draws waveforms for
+            // audio clips only; video clips show a thumbnail).
+            if asset.asset_type != palmier_model::ClipType::Audio {
+                continue;
+            }
+            if let Some(path) = crate::audio_build::asset_path(&asset.source) {
+                assets.insert(
+                    asset.id.clone(),
+                    crate::waveform_cache::AudioAsset {
+                        path,
+                        duration: asset.duration_seconds,
+                    },
+                );
+            }
+        }
+        (value, assets)
+    });
+
+    // Inject cached peaks; cold misses spawn one background decode per asset (deduped),
+    // which emits `timeline://changed` on completion so the UI refetches.
+    let value = crate::waveform_cache::inject_waveforms(&waveforms, &assets, value, |_, asset| {
+        waveforms.spawn_generate(&app, asset.path.clone(), asset.duration);
+    });
     Ok(value)
 }
 

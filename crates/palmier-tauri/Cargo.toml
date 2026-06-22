@@ -111,3 +111,6 @@ palmier-export = { path = "../palmier-export", features = ["gpu-export"] }
 [dev-dependencies]
 # E8-S7: fixed timestamps for the session round-trip / sort-desc tests.
 time = { workspace = true }
+# Waveform end-to-end test: a tempdir for the ffmpeg-generated tone fixture (the test
+# self-skips when ffmpeg isn't on PATH). Same `tempfile` 3 the media crate tests use.
+tempfile = "3"
