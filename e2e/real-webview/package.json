@@ -2,8 +2,7 @@
   "name": "palmier-pro-e2e-real-webview",
   "private": true,
   "version": "0.1.0",
-  "type": "module",
-  "description": "OPTIONAL Layer B: real-webview e2e via tauri-driver + WebdriverIO. Deferred from the gate; see README.md. Requires tauri-driver + msedgedriver installed.",
+  "description": "Layer B: real-webview e2e via tauri-driver + WebdriverIO. Drives the real WebView2 window + real Rust invoke bridge. Requires tauri-driver + a matching msedgedriver (vendored in .driver/).",
   "scripts": {
     "test": "wdio run ./wdio.conf.ts"
   },

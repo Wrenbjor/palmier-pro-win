@@ -3,3 +3,6 @@ artifacts/
 playwright-report/
 test-results/
 real-webview/node_modules/
+# Vendored msedgedriver (41MB, version-pinned to the box's Edge) — re-download per
+# e2e/real-webview/README.md; do not commit the binary.
+real-webview/.driver/

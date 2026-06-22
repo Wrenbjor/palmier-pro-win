@@ -77,6 +77,7 @@ $Milestones = @{
 $HarnessSections = [ordered]@{
   'mcp-smoke' = 'mcp-smoke.ps1'
   'ui-smoke'  = 'ui-smoke'   # handled specially below (pnpm + playwright in e2e/)
+  'webview'   = 'e2e-webview.ps1'  # real WebView2 + real invoke bridge via tauri-driver
 }
 
 if ($List) {
@@ -87,6 +88,7 @@ if ($List) {
   Write-Host "`nHarness (automated whole-app validation; select explicitly):" -ForegroundColor Cyan
   "{0,-12} {1}" -f 'mcp-smoke', 'backend oracle: launch app + drive live MCP server, assert editor state'
   "{0,-12} {1}" -f 'ui-smoke',  'Playwright UI smoke: render Home/Project/Settings (mocked Tauri bridge)'
+  "{0,-12} {1}" -f 'webview',   'real WebView2 + real invoke bridge (tauri-driver + WebdriverIO); needs tauri-driver + msedgedriver'
   Write-Host "`nTiers: unit (default) | live | all`n" -ForegroundColor Cyan
   exit 0
 }
@@ -151,6 +153,15 @@ foreach ($sec in $run) {
       $e2e = Join-Path $repo 'e2e'
       Write-Host "`n=== [$sec] (cd e2e) pnpm install + npx playwright test ui-smoke ===" -ForegroundColor Yellow
       cmd /c "cd /d `"$e2e`" && (if not exist node_modules pnpm install) && npx playwright test ui-smoke --reporter=list"
+      $code = $LASTEXITCODE
+    }
+    elseif ($sec -eq 'webview') {
+      # Real WebView2 + real invoke bridge via tauri-driver + WebdriverIO. Launches the
+      # frozen `tauri build --debug` binary under WebDriver and asserts the real bridge.
+      # Requires tauri-driver + a matching msedgedriver (see e2e/real-webview/README.md).
+      $script = Join-Path $PSScriptRoot 'e2e-webview.ps1'
+      Write-Host "`n=== [$sec] pwsh -File scripts/e2e-webview.ps1 ===" -ForegroundColor Yellow
+      & pwsh -NoProfile -File $script
       $code = $LASTEXITCODE
     }
     $sw.Stop()

@@ -1,0 +1,16 @@
+{
+  "build": {
+    "beforeBuildCommand": ""
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "home",
+        "title": "Palmier Pro",
+        "width": 1200,
+        "height": 1200,
+        "visible": true
+      }
+    ]
+  }
+}
