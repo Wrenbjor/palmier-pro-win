@@ -447,18 +447,34 @@ fn set_active<R: Runtime>(
 
 /// Force-flush the active document if dirty (no-op when clean / none active).
 ///
-/// E8-S7: before flushing, refresh the active snapshot's `chat_files` from the
-/// agent's tab sessions ([`AgentState::capture_chat_snapshot`]) so the chat is
-/// persisted into the bundle's `chat/` dir on this save (ruling #4 — chat writes
-/// on document save). `app` is the handle used to reach the `AgentState`.
+/// **The persistence fix (timeline-persistence):** before flushing, the active
+/// snapshot's live document state is rebuilt from the ONE shared executor's
+/// [`EditorState`] (the same `Arc<ToolExecutor>` every in-app/MCP/UI edit mutates):
+/// - `timeline` ← `executor` `EditorState.library.timeline`
+/// - `manifest` ← `executor` `EditorState.library.manifest`
+///
+/// This is the reverse of how [`set_active`] / [`open_project`] seed the snapshot
+/// from a loaded bundle (`BundleSnapshot::new(loaded.timeline)` +
+/// `snapshot.manifest = loaded.manifest`). Without this, `flush_active` wrote the
+/// stale OPEN-time snapshot and every timeline/media edit was silently lost on
+/// save→reopen. The `generation_log` / `thumbnail` carry over from the prior
+/// snapshot (the executor's `EditorState` does not own them).
+///
+/// E8-S7: also refresh the snapshot's `chat_files` from the agent's tab sessions
+/// ([`AgentState::capture_chat_snapshot`]) so the chat persists into the bundle's
+/// `chat/` dir on this save (ruling #4 — chat writes on document save). `app` is the
+/// handle used to reach the `AgentState`.
 fn flush_active<R: Runtime>(
     app: &AppHandle<R>,
     state: &State<'_, ProjectState>,
 ) -> Result<(), String> {
     let mut active = state.active.lock().expect("active mutex");
     if let Some(ap) = active.as_mut() {
-        // Pull the latest chat snapshot into the bundle snapshot before saving.
+        // Rebuild the live timeline + media from the shared executor (the fix), and
+        // refresh chat_files — so the save reflects the CURRENT edited state, not the
+        // stale open-time snapshot.
         if let Some(agent) = app.try_state::<crate::agent::AgentState>() {
+            refresh_snapshot_from_executor(&mut ap.snapshot, &agent);
             ap.snapshot.chat_files = agent.capture_chat_snapshot();
         }
         let flushed = ap
@@ -466,10 +482,28 @@ fn flush_active<R: Runtime>(
             .flush_if_dirty(&ap.snapshot)
             .map_err(|e| e.to_string())?;
         if flushed {
-            tracing::info!(target: "project", id = %ap.id, "autosaved active project before switch");
+            tracing::info!(target: "project", id = %ap.id, "autosaved active project before switch (live executor state)");
         }
     }
     Ok(())
+}
+
+/// Rebuild a [`BundleSnapshot`]'s live document state (timeline + media manifest)
+/// from the shared executor's current [`EditorState`], preserving everything else
+/// already on the snapshot (`generation_log`, `thumbnail`, `chat_files`).
+///
+/// This is the inverse of the open-side seed in [`set_active`] / [`open_project`]:
+/// there, `snapshot.timeline = loaded.timeline` and `snapshot.manifest =
+/// loaded.manifest`; here we read them back off the live `EditorState.library`
+/// (`palmier_tools::EditorState` → `palmier_model::MediaLibrary`). The manifest is
+/// always `Some(...)` after a rebuild (the library always carries one), so a saved
+/// bundle round-trips the edited media library, not just the timeline.
+fn refresh_snapshot_from_executor(snapshot: &mut BundleSnapshot, agent: &crate::agent::AgentState) {
+    let (timeline, manifest) = agent.executor.with_state_ref(|state| {
+        (state.library.timeline.clone(), state.library.manifest.clone())
+    });
+    snapshot.timeline = timeline;
+    snapshot.manifest = Some(manifest);
 }
 
 /// The active project's bundle root (`.palmier` dir), if a project is open. The
@@ -492,6 +526,25 @@ pub fn mark_chat_dirty<R: Runtime>(app: &AppHandle<R>) {
     let mut active = state.active.lock().expect("active mutex");
     if let Some(ap) = active.as_mut() {
         ap.document.mark_chat_changed();
+    }
+}
+
+/// Mark the active document dirty because a **timeline / media edit** mutated the
+/// shared executor's [`EditorState`] (timeline-persistence fix). The reference's
+/// `EditorViewModel` mutations call `updateChangeCount(.changeDone)`; the port's
+/// edits all land on the shared `Arc<ToolExecutor>`, so this is called wherever a
+/// successful mutating dispatch emits `timeline://changed` (the `editor_edit`
+/// command + the agent/MCP tool-dispatch path).
+///
+/// Without this, autosave/flush never fired for an edit (only chat marked dirty),
+/// so edits were silently dropped on save→reopen. A no-op when no project is active.
+pub fn mark_timeline_dirty<R: Runtime>(app: &AppHandle<R>) {
+    let Some(state) = app.try_state::<ProjectState>() else {
+        return;
+    };
+    let mut active = state.active.lock().expect("active mutex");
+    if let Some(ap) = active.as_mut() {
+        ap.document.mark_dirty();
     }
 }
 
@@ -574,6 +627,7 @@ pub fn default_storage_dir() -> Option<String> {
 mod tests {
     use super::*;
     use palmier_project::FixtureSampleBackend;
+    use palmier_tools::ToolDispatch; // brings `execute` into scope for the executor.
     use std::sync::atomic::{AtomicU64, Ordering};
 
     /// A unique scratch dir under the OS temp dir (no `uuid` dep in this crate; a
@@ -593,6 +647,144 @@ mod tests {
     fn state_with_registry(dir: &Path) -> ProjectState {
         let reg = ProjectRegistry::with_path(dir.join("project-registry.json"));
         ProjectState::new(reg, None)
+    }
+
+    // ─── timeline-persistence: the edit-survives-save fix ────────────────────
+    //
+    // These exercise the real save path the `flush_active` orchestration uses:
+    // `refresh_snapshot_from_executor` (rebuild the bundle snapshot from the SHARED
+    // executor's live `EditorState`) → `ProjectDocument::flush_if_dirty` →
+    // `write_bundle`, then `read_bundle` back. They prove an edit applied to the
+    // executor AFTER open is persisted (the bug: only the stale open-time snapshot
+    // was written), and that a clean open→save round-trips unchanged.
+
+    /// Count the tracks in a bundle's persisted timeline (proxy for "the edit landed").
+    fn persisted_track_count(bundle: &Path) -> usize {
+        palmier_project::read_bundle(bundle)
+            .expect("bundle reads")
+            .timeline
+            .tracks
+            .len()
+    }
+
+    /// Count the total clips across all tracks in a bundle's persisted timeline.
+    fn persisted_clip_count(bundle: &Path) -> usize {
+        palmier_project::read_bundle(bundle)
+            .expect("bundle reads")
+            .timeline
+            .tracks
+            .iter()
+            .map(|t| t.clips.len())
+            .sum()
+    }
+
+    /// Seed a media asset on the executor's library so `add_clips` has something to
+    /// place (mirrors a loaded project's media library).
+    fn seed_asset(agent: &crate::agent::AgentState) {
+        agent.executor.with_state_mut(|state| {
+            state.library.assets.push(palmier_model::MediaAsset::new(
+                "asset-1",
+                "clip.mp4",
+                palmier_model::ClipType::Video,
+                palmier_model::MediaSource::External {
+                    absolute_path: "/clip.mp4".to_string(),
+                },
+                1.0,
+            ));
+        });
+    }
+
+    #[test]
+    fn edit_to_shared_executor_survives_save_and_reload() {
+        let dir = scratch();
+        let bundle = dir.join("Edited.palmier");
+
+        // 1. A fresh project on disk: empty timeline (zero tracks) — the open-time state.
+        let open_snapshot = BundleSnapshot::new(Timeline::new());
+        palmier_project::write_bundle(&bundle, &open_snapshot).unwrap();
+        assert_eq!(persisted_track_count(&bundle), 0, "fresh project has no tracks");
+
+        // The active document is seeded with the OPEN-time snapshot (as set_active does).
+        let mut document = ProjectDocument::new(Some(bundle.clone()));
+        let mut snapshot = open_snapshot;
+
+        // 2. Edit the SHARED executor AFTER open: add a clip (auto-creates a track) — the
+        //    same `execute("add_clips", ...)` path `editor_edit` / the agent dispatch use.
+        let agent = crate::agent::AgentState::new();
+        seed_asset(&agent);
+        let edit = agent.executor.execute(
+            "add_clips",
+            serde_json::json!({
+                "entries": [{ "mediaRef": "asset-1", "startFrame": 0, "durationFrames": 30 }]
+            }),
+            &crate::agent::adapter_context(),
+        );
+        assert!(!edit.is_error, "add_clips should succeed: {:?}", edit.content);
+        // The edit marks the document dirty (what `mark_timeline_dirty` does on the live path).
+        document.mark_dirty();
+
+        // 3. The fix: rebuild the snapshot from the LIVE executor, then flush. This is
+        //    exactly what `flush_active` now does before writing.
+        refresh_snapshot_from_executor(&mut snapshot, &agent);
+        let flushed = document.flush_if_dirty(&snapshot).unwrap();
+        assert!(flushed, "a dirty document must flush");
+
+        // 4. Reopen the bundle: the added CLIP MUST be present (NOT the pre-edit empty
+        //    state). The persisted timeline now carries the added clip + its auto-created
+        //    track(s); the bug wrote the stale open-time snapshot ⇒ zero clips/tracks.
+        assert!(
+            persisted_track_count(&bundle) > 0,
+            "the edit's track must survive save→reload (regression: edits were silently lost)"
+        );
+        // `add_clips` for an asset with audio creates a video clip + its linked audio
+        // clip, so ≥1 clip is persisted; the bug (stale snapshot) would persist 0.
+        assert!(
+            persisted_clip_count(&bundle) >= 1,
+            "the added clip itself must survive save→reload — got 0 clips (stale snapshot)"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn clean_open_then_save_round_trips_unchanged() {
+        let dir = scratch();
+        let bundle = dir.join("Clean.palmier");
+
+        // A project with one pre-existing track on disk.
+        let mut timeline = Timeline::new();
+        timeline.tracks.push(palmier_model::Track::new(palmier_model::ClipType::Video));
+        palmier_project::write_bundle(&bundle, &BundleSnapshot::new(timeline.clone())).unwrap();
+        assert_eq!(persisted_track_count(&bundle), 1);
+
+        // Open: load into the executor, seed the snapshot (mirrors set_active), make NO edit.
+        let loaded = palmier_project::read_bundle(&bundle).unwrap();
+        let agent = crate::agent::AgentState::with_executor(std::sync::Arc::new(
+            palmier_tools::ToolExecutor::with_state(palmier_tools::EditorState::with_library(
+                palmier_model::MediaLibrary {
+                    timeline: loaded.timeline.clone(),
+                    manifest: loaded.manifest.clone().unwrap_or_default(),
+                    assets: Vec::new(),
+                },
+            )),
+        ));
+        let mut document = ProjectDocument::new(Some(bundle.clone()));
+        let mut snapshot = BundleSnapshot::new(loaded.timeline);
+        snapshot.manifest = loaded.manifest;
+
+        // A clean flush is a no-op (nothing dirtied); even a forced rebuild+save preserves
+        // the timeline exactly — the round-trip must not lose or invent tracks.
+        refresh_snapshot_from_executor(&mut snapshot, &agent);
+        document.mark_dirty();
+        document.flush_if_dirty(&snapshot).unwrap();
+
+        assert_eq!(
+            persisted_track_count(&bundle),
+            1,
+            "a clean open→save must round-trip the timeline unchanged"
+        );
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

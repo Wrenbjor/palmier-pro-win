@@ -450,8 +450,11 @@ pub fn editor_edit<R: Runtime>(
         }
     };
 
-    // A successful mutation changed the shared EditorState → notify every window so the
-    // panels refetch. Logged-but-non-fatal on emit failure (the edit already landed).
+    // A successful mutation changed the shared EditorState → mark the active document
+    // dirty so autosave/flush persists the LIVE executor state (timeline-persistence
+    // fix; without this, edits were dropped on save→reopen) and notify every window so
+    // the panels refetch. Logged-but-non-fatal on emit failure (the edit already landed).
+    crate::project::mark_timeline_dirty(&app);
     if let Err(err) = app.emit(TIMELINE_CHANGED_EVENT, ()) {
         tracing::warn!(target: "app", error = %err, "failed to emit timeline://changed");
     }

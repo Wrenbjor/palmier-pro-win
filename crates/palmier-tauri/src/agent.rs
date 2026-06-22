@@ -553,6 +553,10 @@ pub fn start_mcp<R: Runtime>(app: &AppHandle<R>, mcp_enabled: bool) -> bool {
     // knows about a plain `Fn`; this closure captures the `AppHandle` (Tauri-side).
     let app_for_hook = app.clone();
     let on_mutation: palmier_mcp::MutationCallback = Arc::new(move || {
+        // An external MCP client edited the SHARED EditorState — mark the active
+        // document dirty so autosave/flush persists the live state (timeline-persistence
+        // fix), then notify every window so the Project panels refetch.
+        crate::project::mark_timeline_dirty(&app_for_hook);
         if let Err(err) = app_for_hook.emit(crate::commands::TIMELINE_CHANGED_EVENT, ()) {
             tracing::warn!(
                 target: "mcp",
@@ -1097,11 +1101,14 @@ impl<R: Runtime> ToolDispatcher for StreamingDispatcher<R> {
                 text,
             },
         );
-        // The agent edits the SHARED EditorState — notify every window so the Project
-        // surface's panels refetch (the same `timeline://changed` the UI's `editor_edit`
-        // emits, so AGENT edits update the UI too). Only non-error dispatches can have
-        // mutated state; a read/echo refetch is cheap and idempotent. Logged-non-fatal.
+        // The agent edits the SHARED EditorState — mark the active document dirty so
+        // autosave/flush persists the LIVE executor state (timeline-persistence fix) and
+        // notify every window so the Project surface's panels refetch (the same
+        // `timeline://changed` the UI's `editor_edit` emits, so AGENT edits update the UI
+        // too). Only non-error dispatches can have mutated state; a read/echo refetch is
+        // cheap and idempotent. Logged-non-fatal.
         if !result.is_error {
+            crate::project::mark_timeline_dirty(&self.app);
             if let Err(err) = self.app.emit(crate::commands::TIMELINE_CHANGED_EVENT, ()) {
                 tracing::warn!(target: "agent", error = %err, "failed to emit timeline://changed");
             }
