@@ -78,3 +78,15 @@ orchestrator can open a project window non-interactively for screenshot verifica
   editing backend (rotation/fades in set_clip_properties); then the tauri-driver real-webview harness
   to verify human-click editing + the agent panel end-to-end. Remaining gated: signing key, Convex/Clerk,
   packaging .sig, deeper polish.
+
+## Baseline NLE complete (2026-06-21, main @ c28c978)
+Full regression sweep GREEN (all 10 sections, ~1,400 tests). The video editor baseline is functional + merged:
+- Editing: drag-move / trim / split / delete via mouse, keyboard, AND the Edit menu (single consolidated
+  menu registration in Project.tsx → EditController; cut/copy/paste left no-op — no clipboard feature yet).
+- Preview renders the composited video frame (offscreen wgpu → readback → JPEG → canvas; DX12 forced; decode
+  bug fixed). Playback is responsive (async off-main-thread + persisted decoder + single-flight wall-clock loop).
+- Audio playback (cpal) synced to playhead. Video+audio EXPORT (E6 render, on-GPU verified H.264/H.265/ProRes;
+  AAC mux). Persistence (save/exit/switch source the live executor state). Audio-clip waveforms.
+- Verified live earlier (preview renders, playback, drag 0→60); the rest is cargo/tsc/on-GPU-export verified.
+Remaining (not baseline-critical; guided by Wren's hands-on driving): Save-As dialog, transitions/effects,
+export options UI, edit-menu cut/copy/paste, the human-gated release items (signing key, Convex/Clerk).
