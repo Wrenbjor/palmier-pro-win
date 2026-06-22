@@ -55,7 +55,8 @@ import {
 import { adaptMedia } from "../media-panel/adapt";
 import { parseUri } from "../media-panel/drag";
 
-import { PreviewPanel, createPreviewStore } from "../preview";
+import { PreviewPanel, createPreviewStore, tabId } from "../preview";
+import type { PreviewTab } from "../preview";
 
 import {
   InspectorPanel,
@@ -542,6 +543,31 @@ export default function Project({ projectId }: { projectId: string }) {
   useEffect(() => {
     preview.setActivePlayhead(playheadFrame);
   }, [preview, playheadFrame]);
+
+  // ── Media-panel moment-tap → preview seek (Gap 3 / reference previewMoment) ──
+  //
+  // The media panel can't reach the preview store directly (sibling stores, both owned
+  // here — FOUNDATION §4 layering), so a moment/spoken-hit tap publishes a `seekRequest`
+  // on the media store; we consume it here: open/activate that asset's preview tab and
+  // set its playhead to the source frame the tap carried (computed with the SAME
+  // composition fps, so it's already the preview's per-tab frame unit). The `nonce`
+  // makes repeated taps on the same asset+frame distinct so the seek re-fires.
+  const seekRequest = useMediaStore(media.store, (s) => s.seekRequest);
+  useEffect(() => {
+    if (!seekRequest) return;
+    const asset = media.store
+      .getState()
+      .snapshot.assets.find((a) => a.id === seekRequest.assetId);
+    if (!asset) return;
+    const tab: PreviewTab = {
+      kind: "mediaAsset",
+      id: asset.id,
+      name: asset.name,
+      clipType: asset.type,
+    };
+    preview.openTab(tab);
+    preview.setPlayhead(tabId(tab), seekRequest.frame);
+  }, [preview, media.store, seekRequest]);
 
   // ── Tool mode — owned here so the Toolbar (E12-S9) and the TimelineEditor's V/C
   //    keyboard shortcuts stay in sync (controlled `tool` prop). ────────────────

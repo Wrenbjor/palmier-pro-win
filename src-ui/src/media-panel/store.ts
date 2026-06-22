@@ -48,6 +48,14 @@ export interface MediaPanelState {
   indexStatus: IndexStatus;
   // --- generation (E4-S11) ---
   jobs: GenJob[];
+  /**
+   * The last preview-seek request published by a moment/spoken-hit tap
+   * (`selectMediaAtSource`). `null` until the first tap; the `nonce` makes
+   * consecutive taps on the SAME asset+frame distinct so Project.tsx re-forwards the
+   * seek to the preview surface (which the media panel can't reach directly). The
+   * panel publishes; the Project surface owns the preview store and consumes it.
+   */
+  seekRequest: { assetId: string; frame: number; nonce: number } | null;
 }
 
 export interface MediaPanelStore {
@@ -74,6 +82,12 @@ export interface MediaPanelStore {
   toggleSelection: (key: MediaPanelItemKey, additive: boolean) => void;
   setFocused: (key: MediaPanelItemKey | null) => void;
   clearSelection: () => void;
+  /**
+   * Publish a preview-seek request for a moment/spoken-hit tap (the Project surface
+   * forwards it to the preview store, which the panel can't reach directly). Each
+   * call bumps an internal nonce so repeated taps on the same asset+frame still fire.
+   */
+  requestSeek: (assetId: string, frame: number) => void;
 
   // snapshot mutation (local; Tauri commands replace these at E7)
   setSnapshot: (snapshot: MediaSnapshot) => void;
@@ -121,7 +135,10 @@ export function createMediaPanelStore(
     searchResults: initial?.searchResults ?? null,
     indexStatus: initial?.indexStatus ?? { kind: "notInstalled" },
     jobs: initial?.jobs ?? [],
+    seekRequest: initial?.seekRequest ?? null,
   };
+
+  let seekNonce = 0;
 
   const listeners = new Set<() => void>();
   const emit = () => listeners.forEach((l) => l());
@@ -192,6 +209,8 @@ export function createMediaPanelStore(
     },
     setFocused: (key) => setState({ focusedKey: key }),
     clearSelection: () => setState({ selection: new Set(), focusedKey: null }),
+    requestSeek: (assetId, frame) =>
+      setState({ seekRequest: { assetId, frame, nonce: ++seekNonce } }),
 
     setSnapshot: (snapshot) => setState({ snapshot }),
     addFolder: (folder) =>

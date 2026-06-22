@@ -613,6 +613,79 @@ pub fn editor_edit<R: Runtime>(
     Ok(parsed)
 }
 
+/// `editor_relink_media` — repoint a missing asset's source to a new on-disk path
+/// (the Media panel's Relink affordance). There is no MCP tool for relinking (it is a
+/// UI-only repair action), so this mutates the SHARED `EditorState.library` directly
+/// through `palmier_tools::library::relink_media`, which registers ONE library
+/// agent-undo step over the whole-library snapshot — the same path the dispatched
+/// library tools use. On success it marks the document dirty (so the repointed path
+/// survives save/reload) and emits `timeline://changed` so the panel refetches.
+#[tauri::command]
+pub fn editor_relink_media<R: Runtime>(
+    app: AppHandle<R>,
+    agent: State<'_, AgentState>,
+    asset_id: String,
+    new_path: String,
+) -> Result<(), String> {
+    let result = agent
+        .executor
+        .with_state_mut(|state| palmier_tools::library::relink_media(state, &asset_id, &new_path));
+    if result.is_error {
+        let msg = result
+            .content
+            .into_iter()
+            .find_map(|b| match b {
+                palmier_tools::Block::Text(s) => Some(s),
+                palmier_tools::Block::Image { .. } => None,
+            })
+            .unwrap_or_else(|| "relink_media failed".to_string());
+        return Err(msg);
+    }
+    crate::project::mark_timeline_dirty(&app);
+    if let Err(err) = app.emit(TIMELINE_CHANGED_EVENT, ()) {
+        tracing::warn!(target: "app", error = %err, "failed to emit timeline://changed after relink");
+    }
+    tracing::info!(target: "app", asset = %asset_id, "editor_relink_media (shared executor)");
+    Ok(())
+}
+
+/// `editor_move_folders` — reparent media-library folders (the Media panel's in-panel
+/// folder drag). The dispatched `move_to_folder` tool moves ASSETS only, so folder
+/// nesting has no MCP tool; this mutates the SHARED `EditorState.library` directly
+/// through `palmier_tools::library::move_folders`, which applies the model's three
+/// cycle guards (reject no-op / into-descendant / into-self — mirroring the frontend
+/// `legalFolderMoves`) and registers ONE library agent-undo step. `target_folder_id`
+/// of `None` moves to the project root. On success it marks the document dirty and
+/// emits `timeline://changed` so the panel refetches.
+#[tauri::command]
+pub fn editor_move_folders<R: Runtime>(
+    app: AppHandle<R>,
+    agent: State<'_, AgentState>,
+    folder_ids: Vec<String>,
+    target_folder_id: Option<String>,
+) -> Result<(), String> {
+    let result = agent.executor.with_state_mut(|state| {
+        palmier_tools::library::move_folders(state, &folder_ids, target_folder_id.as_deref())
+    });
+    if result.is_error {
+        let msg = result
+            .content
+            .into_iter()
+            .find_map(|b| match b {
+                palmier_tools::Block::Text(s) => Some(s),
+                palmier_tools::Block::Image { .. } => None,
+            })
+            .unwrap_or_else(|| "move_folders failed".to_string());
+        return Err(msg);
+    }
+    crate::project::mark_timeline_dirty(&app);
+    if let Err(err) = app.emit(TIMELINE_CHANGED_EVENT, ()) {
+        tracing::warn!(target: "app", error = %err, "failed to emit timeline://changed after folder move");
+    }
+    tracing::info!(target: "app", count = folder_ids.len(), "editor_move_folders (shared executor)");
+    Ok(())
+}
+
 // ─── media import (File → Import Media / panel drop / Import button) ───────────────
 //
 // The user-facing import path: get media files INTO the shared media library (the one

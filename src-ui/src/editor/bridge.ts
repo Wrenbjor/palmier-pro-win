@@ -129,6 +129,45 @@ export async function importMedia(
 }
 
 /**
+ * Repoint a missing asset's source to a new on-disk path (the Media panel's Relink
+ * affordance) via `editor_relink_media`. Persists into the shared library so the
+ * repointed path survives save/reload; the backend emits `timeline://changed` so the
+ * panel refetches. Outside Tauri it is a no-op. Errors are logged, not thrown.
+ */
+export async function relinkMedia(assetId: string, newPath: string): Promise<void> {
+  if (!inTauri()) return;
+  try {
+    await invoke("editor_relink_media", { assetId, newPath });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[editor] editor_relink_media failed:", err);
+  }
+}
+
+/**
+ * Reparent media-library folders (the panel's in-panel folder drag) via
+ * `editor_move_folders`. `targetFolderId` of `undefined`/`null` moves to the project
+ * root. The backend applies the same cycle guards as the frontend and persists the
+ * reparent into the shared library; it emits `timeline://changed` so the panel
+ * refetches. Outside Tauri it is a no-op. Errors are logged, not thrown.
+ */
+export async function moveFolders(
+  folderIds: string[],
+  targetFolderId?: string,
+): Promise<void> {
+  if (!inTauri() || folderIds.length === 0) return;
+  try {
+    await invoke("editor_move_folders", {
+      folderIds,
+      targetFolderId: targetFolderId ?? null,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[editor] editor_move_folders failed:", err);
+  }
+}
+
+/**
  * Subscribe to `timeline://changed`; `handler` runs after any mutation (UI or
  * agent/MCP). Returns an unlisten fn (a no-op outside Tauri). The Project surface
  * uses this to refetch the timeline + media instead of polling.

@@ -34,6 +34,8 @@ import {
 } from "./drag";
 import { fileMatches, formatTimecode, secondsToFrame } from "./search";
 import { Spacing } from "./theme";
+import { createMediaPanelStore } from "./store";
+import { MediaPanelController } from "./controller";
 import type {
   FilterableType,
   MediaAssetView,
@@ -340,6 +342,59 @@ export function runMediaParityChecks(): string[] {
     check(formatTimecode(75) === "1:15", "timecode 75 → 1:15");
     check(formatTimecode(75.4) === "1:15", "timecode rounds to nearest second");
     check(formatTimecode(3661) === "1:01:01", "timecode ≥1h → h:mm:ss");
+  }
+
+  // --- media-panel completeness wiring (Gaps 1–3) ----------------------------
+  // Outside Tauri the backend bridge calls are no-ops, but the LOCAL store
+  // mutations + the published seek request (the part Project.tsx consumes) are
+  // observable and verified here.
+  {
+    const store = createMediaPanelStore({
+      snapshot: {
+        assets: [asset({ id: "a1", name: "Clip", type: "video", path: "/old.mov" })],
+        folders: [
+          { id: "f1", name: "A", parentFolderId: null },
+          { id: "f2", name: "B", parentFolderId: null },
+        ],
+      },
+    });
+    const ctrl = new MediaPanelController(store);
+
+    // Gap 3 — a moment tap publishes a seek request (asset + source frame) the
+    // Project surface forwards to the preview store; repeated taps re-fire (nonce).
+    check(store.getState().seekRequest === null, "seekRequest starts null");
+    ctrl.selectMediaAtSource("a1", 42);
+    const sr1 = store.getState().seekRequest;
+    check(
+      sr1 != null && sr1.assetId === "a1" && sr1.frame === 42,
+      `selectMediaAtSource publishes {a1,42}, got ${JSON.stringify(sr1)}`,
+    );
+    check(
+      store.getState().selection.has("a1") && store.getState().focusedKey === "a1",
+      "selectMediaAtSource still selects + focuses the asset",
+    );
+    ctrl.selectMediaAtSource("a1", 42); // same asset+frame → nonce bumps so it re-fires
+    const sr2 = store.getState().seekRequest;
+    check(
+      sr2 != null && sr1 != null && sr2.nonce !== sr1.nonce,
+      "repeat tap on the same asset+frame bumps the nonce",
+    );
+
+    // Gap 2 — a legal folder reparent mutates the local store (the backend dispatch
+    // is a no-op outside Tauri); the cycle guard still rejects illegal moves.
+    ctrl.resolveTextDrop("palmier-folder://f2", "f1");
+    check(
+      store.getState().snapshot.folders.find((f) => f.id === "f2")?.parentFolderId ===
+        "f1",
+      "folder reparent moves f2 under f1 (local store)",
+    );
+
+    // Gap 1 — relink updates the asset path locally (backend persist gated on Tauri).
+    store.relinkAsset("a1", "/new.mov");
+    check(
+      store.getState().snapshot.assets.find((a) => a.id === "a1")?.path === "/new.mov",
+      "relinkAsset repoints the path (local store)",
+    );
   }
 
   return fail;

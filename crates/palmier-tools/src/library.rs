@@ -217,6 +217,77 @@ fn apply_name(lib: &mut MediaLibrary, id: &str, name: Option<&str>) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// relink_media (UI Relink — repoint a missing asset's source path)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `relink_media` (`mediaRef`, `newPath`): repoint an asset's source to a new
+/// absolute on-disk path as ONE undo step. There is no reference MCP tool for this
+/// (it backs the panel's Relink affordance only — `MediaTab+Drag.swift`'s relink),
+/// so it lives behind the dedicated `editor_relink_media` command rather than the
+/// 30-tool dispatch. Writes the new [`MediaSource::External`] onto both the runtime
+/// asset and the manifest entry so the repointed path survives save/reload.
+pub fn relink_media(state: &mut EditorState, media_ref: &str, new_path: &str) -> ToolResult {
+    if new_path.is_empty() {
+        return ToolResult::error("relink_media: newPath is required");
+    }
+    if !state.library.assets.iter().any(|a| a.id == media_ref) {
+        return ToolResult::error(format!("Media asset not found: {media_ref}"));
+    }
+    let media_ref = media_ref.to_string();
+    let new_path = new_path.to_string();
+    library_agent_edit(state, "Relink Media", move |lib| {
+        let source = MediaSource::External { absolute_path: new_path.clone() };
+        if let Some(asset) = lib.assets.iter_mut().find(|a| a.id == media_ref) {
+            asset.source = source.clone();
+        }
+        if let Some(entry) = lib.manifest.entries.iter_mut().find(|e| e.id == media_ref) {
+            entry.source = source;
+        }
+        Ok(ToolResult::ok(format!("Relinked {media_ref} to '{new_path}'")))
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// move_folders (UI in-panel folder reparent — cycle-guarded)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `move_folders` (`folderIds[]`, `targetFolderId?`): reparent folders onto
+/// `target_folder_id` (`None` = root) as ONE undo step, applying the model's three
+/// cycle guards (reject no-op / into-descendant / into-self — see
+/// [`MediaLibrary::move_folders_to_folder`]). The reference `move_to_folder` tool
+/// only reparents ASSETS, so folder-into-folder moves have no MCP tool; this backs
+/// the panel's in-panel folder drag (`MediaTab+Drag.swift`) behind the dedicated
+/// `editor_move_folders` command so the reparent survives save/reload.
+pub fn move_folders(
+    state: &mut EditorState,
+    folder_ids: &[String],
+    target_folder_id: Option<&str>,
+) -> ToolResult {
+    if folder_ids.is_empty() {
+        return ToolResult::error("move_folders: folderIds is required");
+    }
+    for id in folder_ids {
+        if state.library.folder(id).is_none() {
+            return ToolResult::error(format!("folderId not found: {id}"));
+        }
+    }
+    if let Some(target) = target_folder_id {
+        if state.library.folder(target).is_none() {
+            return ToolResult::error(format!("targetFolderId not found: {target}"));
+        }
+    }
+    let set: HashSet<String> = folder_ids.iter().cloned().collect();
+    let target = target_folder_id.map(str::to_string);
+    let n = folder_ids.len();
+    library_agent_edit(state, "Move Folder", move |lib| {
+        // The model self-guards cycles (matching the frontend `legalFolderMoves`);
+        // a fully-rejected batch leaves the library unchanged (no undo step).
+        lib.move_folders_to_folder(&set, target.as_deref());
+        Ok(ToolResult::ok(format!("Moved {n} folder(s)")))
+    })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // create_folder (dual-shape)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -672,6 +743,93 @@ fn base64_decode(input: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::EditorState;
+    use palmier_model::{ClipType, MediaAsset};
+
+    fn editor_with_asset(id: &str, path: &str) -> EditorState {
+        let mut lib = MediaLibrary::new();
+        let asset = MediaAsset::new(
+            id,
+            id,
+            ClipType::Video,
+            MediaSource::External { absolute_path: path.to_string() },
+            1.0,
+        );
+        lib.manifest.entries.push(palmier_model::MediaManifestEntry {
+            id: asset.id.clone(),
+            name: asset.name.clone(),
+            asset_type: asset.asset_type,
+            source: asset.source.clone(),
+            duration: asset.duration_seconds,
+            generation_input: None,
+            source_width: None,
+            source_height: None,
+            source_fps: None,
+            has_audio: Some(asset.has_audio),
+            folder_id: None,
+            cached_remote_url: None,
+            cached_remote_url_expires_at: None,
+        });
+        lib.assets.push(asset);
+        EditorState::with_library(lib)
+    }
+
+    #[test]
+    fn relink_media_repoints_source_on_asset_and_manifest_and_pushes_one_step() {
+        let mut state = editor_with_asset("a1", "/old/clip.mov");
+        let r = relink_media(&mut state, "a1", "/new/clip.mov");
+        assert!(!r.is_error, "relink should succeed: {:?}", r.content);
+        // Both the runtime asset and the manifest entry carry the new External path.
+        let asset = state.library.assets.iter().find(|a| a.id == "a1").unwrap();
+        assert_eq!(
+            asset.source,
+            MediaSource::External { absolute_path: "/new/clip.mov".into() }
+        );
+        let entry = state.library.manifest.entries.iter().find(|e| e.id == "a1").unwrap();
+        assert_eq!(
+            entry.source,
+            MediaSource::External { absolute_path: "/new/clip.mov".into() }
+        );
+        // Exactly one library agent-undo step (the snapshot the panel relink relies on).
+        assert_eq!(state.lib_history.agent_undo_len(), 1);
+    }
+
+    #[test]
+    fn relink_media_rejects_unknown_asset_and_empty_path() {
+        let mut state = editor_with_asset("a1", "/old/clip.mov");
+        assert!(relink_media(&mut state, "nope", "/x.mov").is_error);
+        assert!(relink_media(&mut state, "a1", "").is_error);
+        // No change registered on the rejection paths.
+        assert_eq!(state.lib_history.agent_undo_len(), 0);
+    }
+
+    #[test]
+    fn move_folders_reparents_with_cycle_guard_and_one_step() {
+        let mut lib = MediaLibrary::new();
+        let a = lib.create_folder("A", None);
+        let b = lib.create_folder("B", None);
+        let mut state = EditorState::with_library(lib);
+
+        // B → A is a valid reparent (one undo step, B.parent == A).
+        let r = move_folders(&mut state, &[b.clone()], Some(&a));
+        assert!(!r.is_error, "{:?}", r.content);
+        assert_eq!(state.library.folder(&b).unwrap().parent_id.as_deref(), Some(a.as_str()));
+        assert_eq!(state.lib_history.agent_undo_len(), 1);
+
+        // Moving A into its descendant B is rejected by the model guard → no change,
+        // no new undo step (the fully-rejected batch leaves the library untouched).
+        let r2 = move_folders(&mut state, &[a.clone()], Some(&b));
+        assert!(!r2.is_error, "tool reports ok even when the guard rejects the move");
+        assert_eq!(state.library.folder(&a).unwrap().parent_id, None);
+        assert_eq!(state.lib_history.agent_undo_len(), 1, "no step for a no-op move");
+    }
+
+    #[test]
+    fn move_folders_rejects_unknown_ids() {
+        let mut state = EditorState::with_library(MediaLibrary::new());
+        assert!(move_folders(&mut state, &[], None).is_error);
+        assert!(move_folders(&mut state, &["nope".into()], None).is_error);
+    }
 
     #[test]
     fn base64_roundtrip_known_vectors() {

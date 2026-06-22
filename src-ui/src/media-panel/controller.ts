@@ -34,7 +34,14 @@ import type {
   MediaSnapshot,
   ViewMode,
 } from "./types";
-import { editorEdit, getMedia, importMedia, inTauri } from "../editor/bridge";
+import {
+  editorEdit,
+  getMedia,
+  importMedia,
+  inTauri,
+  moveFolders,
+  relinkMedia,
+} from "../editor/bridge";
 import { adaptMedia } from "./adapt";
 
 /** The outcome of a panel-driven tool dispatch (captions / generation). */
@@ -179,8 +186,14 @@ export class MediaPanelController {
    * folder ids → `moveFoldersToFolder` (cycle-guarded), asset ids → `moveAssetsToFolder`.
    * Moment URIs carry a segment that is meaningless for an in-panel move, so they
    * reparent the underlying asset.
-   * TODO(E6/E7): route through palmier-model moves with one snapshot-undo entry
-   * (palmier-history) instead of the local store mutation.
+   *
+   * WIRED: asset reparent → `move_to_folder`; folder reparent → `editor_move_folders`
+   * (the dispatched `move_to_folder` tool moves assets only, so folder nesting routes
+   * through the dedicated command). Both apply the same three cycle guards the local
+   * `moveFolders` does (the backend mirrors `legalFolderMoves`), so passing the raw
+   * drop ids is safe — an illegal/no-op move is rejected on both sides and registers
+   * no undo step. The local store mutates first for instant feedback; the
+   * `timeline://changed` refetch then reconciles. Omit the target for the project root.
    */
   resolveTextDrop(payload: string, targetFolderId: string | null): void {
     const parts = parsePayload(payload);
@@ -190,11 +203,12 @@ export class MediaPanelController {
       if (p.kind === "folder") folderIds.push(p.id);
       else assetIds.push(p.id); // asset | moment → reparent the asset
     }
-    if (folderIds.length > 0) this.store.moveFolders(folderIds, targetFolderId);
+    if (folderIds.length > 0) {
+      this.store.moveFolders(folderIds, targetFolderId);
+      if (inTauri()) void moveFolders(folderIds, targetFolderId ?? undefined);
+    }
     if (assetIds.length > 0) {
       this.store.moveAssets(assetIds, targetFolderId);
-      // WIRED: asset reparent → `move_to_folder` (folder reparent has no tool yet, so
-      // it stays local-only — a follow-up seam). Omit folderId for the project root.
       if (inTauri()) {
         const args: Record<string, unknown> = { assetIds };
         if (targetFolderId) args.folderId = targetFolderId;
@@ -250,13 +264,22 @@ export class MediaPanelController {
   /**
    * Relink a missing asset: open the OS picker (Tauri `dialog`) to repoint the
    * source file, then update the asset path + clear its missing flag.
-   * TODO(E7): persist the repointed path through palmier-project.
+   *
+   * WIRED: inside Tauri the picked path is persisted into the shared media library
+   * via `editor_relink_media` (bridge `relinkMedia`) — there is no MCP tool for
+   * relinking, so it routes through the dedicated command, which writes the new
+   * `External` source onto the asset + manifest entry and marks the document dirty so
+   * the repointed path survives save/reload. The local `relinkAsset` runs first for
+   * instant feedback (and is the sole path outside Tauri); the `timeline://changed`
+   * refetch then reconciles.
    */
   async relinkAsset(assetId: string): Promise<void> {
     const a = this.store.getState().snapshot.assets.find((x) => x.id === assetId);
     if (!a) return;
     const picked = await pickRelinkPath(a.name);
-    if (picked) this.store.relinkAsset(assetId, picked);
+    if (!picked) return;
+    this.store.relinkAsset(assetId, picked);
+    if (inTauri()) await relinkMedia(assetId, picked);
   }
 
   // --- Search (E10 local + E11 backend seam) ---------------------------------
@@ -336,15 +359,20 @@ export class MediaPanelController {
   /**
    * `previewMoment` → `selectMediaAsset(asset, atSourceFrame:)`
    * (MediaTab+Search.swift): tapping a moment / spoken hit selects the underlying
-   * asset and focuses it. `atSourceFrame` is the hit's source time converted to an
-   * integer frame via `secondsToFrame(range.lowerBound, fps)` at the call site —
-   * the reference scrubs the preview to that source frame.
-   * TODO(E5/E6): seek the preview/inspector to `atSourceFrame` once the preview
-   * surface owns a source-time cursor; today it selects + focuses the asset.
+   * asset, focuses it, AND scrubs the preview to that source frame. `atSourceFrame`
+   * is the hit's source time converted to an integer frame via
+   * `secondsToFrame(range.lowerBound, fps)` at the call site.
+   *
+   * WIRED: the media panel can't reach the preview store directly (FOUNDATION §4
+   * layering — they are sibling stores owned by the Project surface), so we publish
+   * the seek as `store.requestSeek(assetId, atSourceFrame)`. Project.tsx subscribes
+   * to `seekRequest`, opens/activates that asset's preview tab, and sets its playhead
+   * to the source frame — the source-time cursor the reference scrubs.
    */
-  selectMediaAtSource(assetId: string, _atSourceFrame: number): void {
+  selectMediaAtSource(assetId: string, atSourceFrame: number): void {
     this.store.setSelection([assetId]);
     this.store.setFocused(assetId);
+    this.store.requestSeek(assetId, atSourceFrame);
   }
 
   // --- Selection / view derivation -------------------------------------------

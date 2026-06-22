@@ -160,6 +160,11 @@ fn main() {
             commands::editor_get_timeline,
             commands::editor_get_media,
             commands::editor_edit,
+            // Media-panel completeness — repoint a missing asset (Relink) and reparent
+            // folders (in-panel folder drag). Neither has an MCP tool, so they mutate the
+            // shared library directly and emit `timeline://changed` so the panel refetches.
+            commands::editor_relink_media,
+            commands::editor_move_folders,
             // User-facing media import (File → Import Media / panel drop / Import
             // button). Opens a native file dialog when no paths are passed; imports each
             // through the SAME shared executor `import_media` tool, then emits
