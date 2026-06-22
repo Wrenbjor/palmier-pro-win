@@ -44,21 +44,59 @@ export interface ExportResult {
   hasAudio: boolean;
 }
 
+/** A video codec the Export panel can pick (mirrors Rust `ExportFormat`). */
+export type VideoFormat = "h264" | "h265" | "prores422";
+
+/** A resolution preset the Export panel can pick (keyed off the project canvas). */
+export type ResolutionPreset = "source" | "1080p" | "720p";
+
+/** Options for {@link exportVideo} (the panel's explicit format + resolution). */
+export interface ExportVideoOptions {
+  /** Destination path. Omit ⇒ the backend opens a native Save dialog. */
+  outPath?: string;
+  /** Explicit codec. Omit ⇒ backend derives it from the extension (legacy). */
+  format?: VideoFormat;
+  /** Resolution preset. Omit ⇒ backend defaults to "source" (native scale). */
+  resolution?: ResolutionPreset;
+}
+
 /**
  * Render the ACTIVE timeline to a video file. When `outPath` is omitted, the backend
- * opens a native Save dialog (the user cancelling returns `null`). The codec is chosen
- * from the extension (`.mov` ⇒ ProRes 422, else H.264 `.mp4`).
+ * opens a native Save dialog (the user cancelling returns `null`). `format` is the
+ * EXPLICIT codec the panel chose; when omitted the backend derives it from the
+ * extension (`.mov` ⇒ ProRes 422, else H.264 `.mp4`). `resolution` is the panel's
+ * preset (keyed off the project canvas); omitted ⇒ "source" (native scale).
  *
  * Resolves to the {@link ExportResult} on success, `null` if cancelled / outside Tauri.
  * Rejects with the backend error string (no GPU, no HW encoder, FFmpeg error, …) so the
  * caller can surface it.
  */
-export async function exportVideo(outPath?: string): Promise<ExportResult | null> {
+export async function exportVideo(
+  options: ExportVideoOptions = {},
+): Promise<ExportResult | null> {
   if (!inTauri()) return null;
   const result = await invoke<ExportResult | null>("export_video", {
-    outPath: outPath ?? null,
+    outPath: options.outPath ?? null,
+    format: options.format ?? null,
+    resolution: options.resolution ?? null,
   });
   return result ?? null;
+}
+
+/**
+ * Export the ACTIVE timeline as an FCP7/Premiere XMEML 4 document. Wraps the
+ * `export_timeline_xml` command (the proven, golden-tested emitter). When `outPath` is
+ * omitted the backend opens a native Save dialog (`.xml` filter; cancel ⇒ `null`).
+ * Instant — there is no per-frame progress. Resolves to the absolute path written (for
+ * reveal-in-explorer), or `null` if cancelled / outside Tauri. Rejects with the backend
+ * error string on a write failure.
+ */
+export async function exportTimelineXml(outPath?: string): Promise<string | null> {
+  if (!inTauri()) return null;
+  const written = await invoke<string | null>("export_timeline_xml", {
+    outPath: outPath ?? null,
+  });
+  return written ?? null;
 }
 
 /**

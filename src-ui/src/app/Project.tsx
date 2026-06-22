@@ -32,6 +32,7 @@ import {
   EditController,
   TimelineEditor,
   Toolbar,
+  ExportPanel,
   createTimelineStore,
   useTimelineStore,
   useExport,
@@ -135,8 +136,12 @@ export default function Project({ projectId }: { projectId: string }) {
   const showInspector = panels.inspector && !panels.maximized;
   const showAgent = panels.agent && !panels.maximized;
 
-  // Shared export controller — drives BOTH the Toolbar Export button and File → Export.
+  // Shared export controller — drives the run/progress state for BOTH the Toolbar
+  // Export button and File → Export. The button + menu OPEN the Export panel (below);
+  // the panel's confirm calls `exportController.runExport`.
   const exportController = useExport();
+  // Whether the Export panel (format + resolution chooser, FOUNDATION §385) is open.
+  const [exportPanelOpen, setExportPanelOpen] = useState(false);
 
   // ── Initial load + `timeline://changed` refetch (replaces the 750ms poll) ────
   useEffect(() => {
@@ -338,10 +343,12 @@ export default function Project({ projectId }: { projectId: string }) {
           console.debug("[menu] open_project_dialog failed:", err),
         );
       },
-      // File → Export (Ctrl+E). Runs the SAME flow as the Toolbar Export button
-      // (shared `useExport` controller): native Save dialog → export_video → progress.
+      // File → Export (Ctrl+E). Opens the Export panel (format + resolution chooser,
+      // FOUNDATION §385) — the SAME panel the Toolbar Export button opens. The panel's
+      // confirm drives the shared `useExport` controller (export_video /
+      // export_timeline_xml → native Save dialog → progress / instant write).
       export: () => {
-        void exportController.runExport();
+        setExportPanelOpen(true);
       },
       // Edit → Copy (Ctrl+C). Capture the selected clips' full specs into the clipboard.
       copy: () => {
@@ -420,9 +427,9 @@ export default function Project({ projectId }: { projectId: string }) {
       });
 
     return () => unlisten?.();
-    // `setPanels` is stable; `exportController.runExport` is a stable useCallback, so a
-    // single registration captures the live handlers without re-subscribing per render.
-  }, [editor.store, editor.controller, exportController.runExport]);
+    // `setPanels` / `setExportPanelOpen` are stable, so a single registration captures
+    // the live handlers without re-subscribing per render.
+  }, [editor.store, editor.controller]);
 
   // ── Agent backend status seed (preserved from the prior shell) ──────────────
   useEffect(() => {
@@ -649,6 +656,7 @@ export default function Project({ projectId }: { projectId: string }) {
               tool={tool}
               onToolChange={setTool}
               exportController={exportController}
+              onRequestExport={() => setExportPanelOpen(true)}
             />
             <div
               className="flex-1 min-h-0 relative"
@@ -697,6 +705,15 @@ export default function Project({ projectId }: { projectId: string }) {
           />
         )}
       </div>
+
+      {/* Export panel (Ctrl+E / File → Export / Toolbar Export button, §385). On
+          confirm it hands an ExportRequest to the shared controller and closes. */}
+      {exportPanelOpen && (
+        <ExportPanel
+          onExport={(request) => void exportController.runExport(request)}
+          onClose={() => setExportPanelOpen(false)}
+        />
+      )}
     </div>
   );
 }

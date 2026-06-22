@@ -54,6 +54,9 @@ use palmier_export::video::{
     AudioInput, CancelFlag, ExportFormat, ExportResolution, VideoExportConfig,
     VideoExportOutcome,
 };
+// The pure FCP7/Premiere XMEML emitter + its resolver — the `export_timeline_xml`
+// command wires the LIVE library's manifest through these (E6-S1..S4, FOUNDATION §638).
+use palmier_export::{export_xmeml, ManifestResolver};
 use palmier_media::{AudioPcmCache, FrameSource};
 use palmier_model::{MediaSource, Timeline};
 
@@ -161,12 +164,51 @@ fn asset_path(source: &MediaSource) -> Option<PathBuf> {
 }
 
 /// Pick the output format from the file extension (`.mov` → ProRes 422, anything
-/// else → H.264 MP4). Keeps the command's surface tiny — the user picks the codec by
-/// choosing the extension in the save dialog, defaulting to H.264 `.mp4`.
+/// else → H.264 MP4). The extension-derived format is the **fallback** when the
+/// panel doesn't pass an explicit `format` (keeps existing callers/tests working).
 fn format_for_path(path: &std::path::Path) -> ExportFormat {
     match path.extension().and_then(|e| e.to_str()) {
         Some(ext) if ext.eq_ignore_ascii_case("mov") => ExportFormat::ProRes422,
         _ => ExportFormat::H264,
+    }
+}
+
+/// Map the panel's explicit format token (`"h264" | "h265" | "prores422"`) to an
+/// [`ExportFormat`]. Returns `None` for an unknown/absent token so the caller falls
+/// back to [`format_for_path`] (the extension-derived default).
+fn format_from_token(token: Option<&str>) -> Option<ExportFormat> {
+    match token.map(str::trim) {
+        Some("h264") => Some(ExportFormat::H264),
+        Some("h265") => Some(ExportFormat::H265),
+        Some("prores422") => Some(ExportFormat::ProRes422),
+        _ => None,
+    }
+}
+
+/// Map the panel's resolution token to an [`ExportResolution`] preset, keyed off the
+/// project canvas for `"source"`. The render scales the canvas so its SHORT side hits
+/// the preset (even-snapped, [`render_size`]):
+/// - `"720p"` → [`ExportResolution::P720`], `"1080p"` → [`ExportResolution::P1080`];
+/// - `"source"` / absent → the preset whose short side matches the timeline's short
+///   side (P720 ≤ 720, P1080 ≤ 2160, else P2160) so "Source" stays at native scale and
+///   never upscales past 4K. Defaults to P1080 (the proven preset) when unknown.
+fn resolution_from_token(token: Option<&str>, canvas_short_side: u32) -> ExportResolution {
+    match token.map(str::trim) {
+        Some("720p") => ExportResolution::P720,
+        Some("1080p") => ExportResolution::P1080,
+        // "source" (or absent) → the preset whose short side is at/just-above the
+        // native short side, so Source exports at the project's own scale without
+        // upscaling past the next preset (≤720 → P720, ≤2160 → P1080, else P2160).
+        Some("source") | None => {
+            if canvas_short_side <= 720 {
+                ExportResolution::P720
+            } else if canvas_short_side <= 2160 {
+                ExportResolution::P1080
+            } else {
+                ExportResolution::P2160
+            }
+        }
+        _ => ExportResolution::P1080,
     }
 }
 
@@ -185,13 +227,28 @@ fn prompt_export_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
         .and_then(|p| p.into_path().ok())
 }
 
+/// Open the native Save dialog for the XMEML/Premiere XML export (`.xml` filter,
+/// defaulting to `timeline.xml`). Returns the chosen path, or `None` on cancel. Driven
+/// Rust-side like [`prompt_export_path`] (no JS dialog plugin in this repo).
+fn prompt_xml_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    app.dialog()
+        .file()
+        .set_title("Export Premiere XML")
+        .set_file_name("timeline.xml")
+        .add_filter("Premiere / FCP7 XML", &["xml"])
+        .blocking_save_file()
+        .and_then(|p| p.into_path().ok())
+}
+
 /// `export_video` — render the ACTIVE timeline to a video file.
 ///
 /// `out_path` is the destination; when `None` the native Save dialog is opened (the
-/// user cancelling it returns `Ok(None)` — not an error). The codec is chosen from the
-/// extension (`.mov` ⇒ ProRes 422, else H.264 MP4). Resolution defaults to the 1080p
-/// short-side preset and output fps defaults to the project fps. Progress streams over
-/// [`EXPORT_PROGRESS_EVENT`].
+/// user cancelling it returns `Ok(None)` — not an error). `format` is the EXPLICIT
+/// codec the Export panel chose (`"h264" | "h265" | "prores422"`); when absent it
+/// falls back to the extension (`.mov` ⇒ ProRes 422, else H.264 MP4) so legacy callers
+/// keep working. `resolution` is the panel's preset token (`"source" | "1080p" |
+/// "720p"`) keyed off the project canvas; absent defaults to "source". Output fps
+/// defaults to the project fps. Progress streams over [`EXPORT_PROGRESS_EVENT`].
 ///
 /// The heavy GPU/FFmpeg work runs on a blocking worker via
 /// [`tauri::async_runtime::spawn_blocking`] so it never blocks the UI / other commands.
@@ -203,6 +260,8 @@ pub async fn export_video<R: Runtime>(
     agent: State<'_, AgentState>,
     audio: State<'_, PreviewAudioState>,
     out_path: Option<String>,
+    format: Option<String>,
+    resolution: Option<String>,
 ) -> Result<Option<ExportResult>, String> {
     // Resolve the destination — either the explicit path or a Save dialog. The dialog
     // is blocking; run it on a blocking worker so the async runtime stays free.
@@ -227,12 +286,14 @@ pub async fn export_video<R: Runtime>(
     // decoded for playback isn't re-decoded for export; cheap Arc clone).
     let audio_cache = audio.cache.clone();
 
-    // Build the export config. The codec comes from the extension; resolution defaults
-    // to the proven 1080p short-side preset; output fps `0` ⇒ use the project fps.
-    let format = format_for_path(&output_path);
+    // Build the export config. The codec is the panel's EXPLICIT choice, falling back
+    // to the extension when absent (legacy callers). The resolution preset is keyed off
+    // the project canvas's short side; output fps `0` ⇒ use the project fps.
+    let format = format_from_token(format.as_deref()).unwrap_or_else(|| format_for_path(&output_path));
+    let canvas_short_side = snap.timeline.width.min(snap.timeline.height).max(1) as u32;
     let config = VideoExportConfig {
         format,
-        resolution: ExportResolution::P1080,
+        resolution: resolution_from_token(resolution.as_deref(), canvas_short_side),
         output_path: output_path.clone(),
         output_fps: 0, // use the project fps
     };
@@ -329,6 +390,63 @@ fn emit_progress<R: Runtime>(app: &AppHandle<R>, frame: u64, total: u64) {
     }
 }
 
+/// `export_timeline_xml` — emit the ACTIVE timeline as an FCP7/Premiere XMEML 4
+/// document and write it (FOUNDATION §638; the Export panel's "Premiere XML" format).
+/// This is the wiring for the already-proven, golden-tested
+/// [`palmier_export::export_xmeml`] emitter — it does NOT alter the emitter.
+///
+/// Reads the live `EditorState` library (timeline + media manifest) out of the SAME
+/// shared executor every other command uses ([`AgentState::executor`]), builds a
+/// [`ManifestResolver`] over the manifest (the same resolver the golden tests drive),
+/// emits the byte-stable XML, and writes it. Unlike the video export this is instant
+/// (a pure `Timeline -> String` + a file write), so there is no progress stream.
+///
+/// `out_path` is the destination; when `None`/empty the native Save dialog is opened
+/// (`.xml` filter), and the user cancelling returns `Ok(None)` — not an error. Returns
+/// the absolute path written (for the panel's reveal-in-explorer), `Ok(None)` if the
+/// dialog was cancelled / outside Tauri, or an `Err(String)` the panel surfaces.
+#[tauri::command]
+pub async fn export_timeline_xml<R: Runtime>(
+    app: AppHandle<R>,
+    agent: State<'_, AgentState>,
+    out_path: Option<String>,
+) -> Result<Option<String>, String> {
+    // Resolve the destination — either the explicit path or a Save dialog (blocking,
+    // so run it on a blocking worker, exactly as `export_video` does).
+    let output_path = match out_path {
+        Some(p) if !p.trim().is_empty() => PathBuf::from(p),
+        _ => {
+            let app_for_dialog = app.clone();
+            let picked =
+                tauri::async_runtime::spawn_blocking(move || prompt_xml_path(&app_for_dialog))
+                    .await
+                    .map_err(|e| format!("xml save dialog task failed: {e}"))?;
+            match picked {
+                Some(p) => p,
+                None => return Ok(None), // user cancelled — not an error
+            }
+        }
+    };
+
+    // Snapshot the live library (timeline + manifest) under the executor lock — the
+    // SAME read pattern `editor_get_timeline` / the video export `snapshot` use.
+    let (timeline, manifest) = agent.executor.with_state_ref(|state| {
+        (state.library.timeline.clone(), state.library.manifest.clone())
+    });
+
+    // The pure emitter resolves media display-names/URLs through a `MediaResolver`;
+    // `ManifestResolver` over the live manifest is the production resolver (the golden
+    // tests use the same type). Clips whose media is unresolvable are dropped by the
+    // emitter, exactly as the reference does.
+    let resolver = ManifestResolver::new(manifest);
+    let xml = export_xmeml(&timeline, &resolver);
+
+    std::fs::write(&output_path, xml.as_bytes())
+        .map_err(|e| format!("failed to write XMEML to {}: {e}", output_path.display()))?;
+
+    Ok(Some(output_path.to_string_lossy().to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,6 +459,30 @@ mod tests {
         // Unknown / no extension defaults to H.264 MP4.
         assert_eq!(format_for_path(std::path::Path::new("a.mkv")), ExportFormat::H264);
         assert_eq!(format_for_path(std::path::Path::new("noext")), ExportFormat::H264);
+    }
+
+    #[test]
+    fn explicit_format_token_overrides_extension() {
+        // The panel's explicit token wins over the extension.
+        assert_eq!(format_from_token(Some("h264")), Some(ExportFormat::H264));
+        assert_eq!(format_from_token(Some("h265")), Some(ExportFormat::H265));
+        assert_eq!(format_from_token(Some("prores422")), Some(ExportFormat::ProRes422));
+        // Unknown / absent ⇒ None (caller falls back to the extension).
+        assert_eq!(format_from_token(Some("vp9")), None);
+        assert_eq!(format_from_token(None), None);
+    }
+
+    #[test]
+    fn resolution_token_maps_presets_and_source() {
+        assert_eq!(resolution_from_token(Some("720p"), 1080), ExportResolution::P720);
+        assert_eq!(resolution_from_token(Some("1080p"), 720), ExportResolution::P1080);
+        // "source"/absent key off the canvas short side (native scale).
+        assert_eq!(resolution_from_token(Some("source"), 720), ExportResolution::P720);
+        assert_eq!(resolution_from_token(Some("source"), 1080), ExportResolution::P1080);
+        assert_eq!(resolution_from_token(None, 1080), ExportResolution::P1080);
+        assert_eq!(resolution_from_token(Some("source"), 4320), ExportResolution::P2160);
+        // Unknown token defaults to the proven P1080 preset.
+        assert_eq!(resolution_from_token(Some("8k"), 1080), ExportResolution::P1080);
     }
 
     #[test]

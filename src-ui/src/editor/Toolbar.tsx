@@ -49,9 +49,15 @@ export interface ToolbarProps {
   onToolChange: (tool: ToolMode) => void;
   /**
    * Shared export controller (owned by the Project surface via `useExport`) so the
-   * Export button and the File → Export menu run the SAME flow / share one state.
+   * Export button + the File → Export menu share one run/progress state.
    */
   exportController: ExportController;
+  /**
+   * Open the Export panel (format + resolution selection). The Export/Retry buttons
+   * OPEN this panel (spec FOUNDATION §385) rather than running export directly; the
+   * panel's confirm then drives `exportController.runExport`.
+   */
+  onRequestExport: () => void;
   className?: string;
   style?: CSSProperties;
 }
@@ -129,8 +135,16 @@ function exportButtonStyle(running: boolean): CSSProperties {
 }
 
 export function Toolbar(props: ToolbarProps): JSX.Element {
-  const { store, controller, tool, onToolChange, exportController, className, style } =
-    props;
+  const {
+    store,
+    controller,
+    tool,
+    onToolChange,
+    exportController,
+    onRequestExport,
+    className,
+    style,
+  } = props;
 
   // Reactive viewport slices (selection / playhead / zoom) drive enable-state + zoom.
   const playheadFrame = useTimelineStore(store, (s) => s.viewport.playheadFrame);
@@ -260,13 +274,13 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
     setZoomFromLog(Math.log(pixelsPerFrame) + ZOOM_STEP_LOG);
   }, [pixelsPerFrame, setZoomFromLog]);
 
-  // ── Export — render the active timeline to a video file. ───────────────────
-  // Drives the `export_video` command (opens a native Save dialog Rust-side), shows
-  // live progress (export://progress), and on completion offers reveal-in-explorer.
-  // The state machine + trigger are OWNED by the Project surface (`useExport`) and
-  // passed in, so the File → Export menu item runs the exact same flow / shares state.
-  const { state: exportState, runExport, revealExport, dismissExport } =
-    exportController;
+  // ── Export — open the Export panel (format + resolution), then render. ──────
+  // The Export/Retry buttons OPEN the Export panel (`onRequestExport`, spec §385); the
+  // panel's confirm drives `export_video` / `export_timeline_xml` via the shared
+  // controller (live progress on export://progress, reveal-in-explorer on completion).
+  // The run/progress state is OWNED by the Project surface (`useExport`) and passed in,
+  // so the File → Export menu item shares the exact same state.
+  const { state: exportState, revealExport, dismissExport } = exportController;
 
   const exportLabel =
     exportState.kind === "running"
@@ -423,7 +437,7 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
             <button
               type="button"
               style={exportButtonStyle(false)}
-              onClick={() => void runExport()}
+              onClick={onRequestExport}
               title="Retry export"
               aria-label="Retry export"
             >
@@ -435,9 +449,9 @@ export function Toolbar(props: ToolbarProps): JSX.Element {
             type="button"
             style={exportButtonStyle(exportState.kind === "running")}
             disabled={exportState.kind === "running"}
-            onClick={() => void runExport()}
-            title="Export video"
-            aria-label="Export video"
+            onClick={onRequestExport}
+            title="Export…"
+            aria-label="Export"
           >
             <ExportGlyph />
             <span style={{ marginLeft: 6 }}>{exportLabel}</span>

@@ -18,7 +18,21 @@ export type { ToolbarProps } from "./Toolbar";
 
 // Shared export trigger/state (Toolbar Export button + File → Export menu).
 export { useExport } from "./useExport";
-export type { ExportController, ExportUiState } from "./useExport";
+export type { ExportController, ExportUiState, ExportRequest } from "./useExport";
+
+// The Export panel (format + resolution chooser, FOUNDATION §385) + its pure option
+// tables / request mapping (exported so the editor checks can assert the mapping).
+export {
+  ExportPanel,
+  FORMAT_OPTIONS,
+  RESOLUTION_OPTIONS,
+  buildExportRequest,
+} from "./ExportPanel";
+export type {
+  ExportPanelProps,
+  FormatChoice,
+  ResolutionChoice,
+} from "./ExportPanel";
 
 // In-memory clip clipboard (Edit → Cut / Copy / Paste).
 export {

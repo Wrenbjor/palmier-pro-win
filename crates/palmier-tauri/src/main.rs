@@ -153,6 +153,9 @@ fn main() {
             // Export button). Snapshots the active timeline + media map, renders on a
             // blocking worker, streams `export://progress`, returns the outcome.
             export::export_video,
+            // Timeline → FCP7/Premiere XMEML 4 export (the proven golden-tested emitter
+            // wired to the Export panel's "Premiere XML" format; instant, no progress).
+            export::export_timeline_xml,
             // Project editor bridge — read the shared timeline / media library and
             // dispatch mutating tools through the ONE shared executor (the same owner
             // the MCP server + in-app agent drive). `editor_edit` emits

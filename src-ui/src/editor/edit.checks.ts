@@ -28,6 +28,11 @@ import { Snap, Layout } from "./theme";
 import { makeFixtureTimeline } from "./fixture";
 import { clipRect, frameAt, makeLayout } from "./geometry";
 import type { EditIntent } from "./edit-types";
+import {
+  FORMAT_OPTIONS,
+  RESOLUTION_OPTIONS,
+  buildExportRequest,
+} from "./ExportPanel";
 
 function baseClip(over: Partial<ClipView>): ClipView {
   return {
@@ -399,6 +404,51 @@ export function runEditChecks(): string[] {
     check(!targets.some((t) => t.frame === 0), "collectTargets excludes dragged clip start");
     check(targets.some((t) => t.frame === 200 && t.kind === "clipEdge"), "collectTargets keeps other clip edge");
     check(targets.some((t) => t.frame === 333 && t.kind === "playhead"), "collectTargets includes playhead");
+  }
+
+  // --- Export panel: each format maps to the right command request + extension ---
+  // Guards the §385 panel's selection → ExportRequest contract (the request the shared
+  // useExport controller runs): video formats carry their codec + the chosen
+  // resolution; Premiere XML maps to the instant `xml` request and ignores resolution.
+  {
+    const byId = (id: string) => {
+      const f = FORMAT_OPTIONS.find((o) => o.id === id);
+      if (!f) throw new Error(`missing format option ${id}`);
+      return f;
+    };
+
+    // Video formats → { kind:"video", format:<codec>, resolution:<chosen> }.
+    const h264Req = buildExportRequest(byId("h264"), "1080p");
+    check(
+      h264Req.kind === "video" &&
+        h264Req.format === "h264" &&
+        h264Req.resolution === "1080p",
+      "h264 → video request carrying codec + chosen resolution",
+    );
+    const proresReq = buildExportRequest(byId("prores422"), "source");
+    check(
+      proresReq.kind === "video" &&
+        proresReq.format === "prores422" &&
+        proresReq.resolution === "source",
+      "prores422 → video request (source resolution)",
+    );
+
+    // Premiere XML → { kind:"xml" } (no codec/resolution; emitter writes native dims).
+    const xmlReq = buildExportRequest(byId("xml"), "720p");
+    check(xmlReq.kind === "xml", "xml format → instant xml request (resolution ignored)");
+
+    // Each video format declares the container its Save dialog filters to; the XML
+    // format declares `.xml`. (Codec/container parity with the backend ExportFormat.)
+    check(byId("h264").extension === "mp4", "h264 container is .mp4");
+    check(byId("h265").extension === "mp4", "h265 container is .mp4");
+    check(byId("prores422").extension === "mov", "prores422 container is .mov");
+    check(byId("xml").extension === "xml", "Premiere XML container is .xml");
+
+    // The resolution presets the panel offers (Source default + 1080p/720p).
+    check(
+      RESOLUTION_OPTIONS.map((r) => r.id).join(",") === "source,1080p,720p",
+      "resolution presets are source,1080p,720p (Source first/default)",
+    );
   }
 
   return fail;
