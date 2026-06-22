@@ -82,6 +82,26 @@ export type EditIntent =
       clipIds: string[];
       /** Ripple-close the gap (shift later clips left) vs leave a hole. */
       ripple: boolean;
+    }
+  | {
+      kind: "setClipProperties";
+      clipIds: string[];
+      /** Static linear volume (audio rubber-band drag-to-set). */
+      volume?: number;
+      /** Static opacity 0..1 (video opacity-line drag-to-set). */
+      opacity?: number;
+    }
+  | {
+      kind: "setKeyframes";
+      clipId: string;
+      /** Animatable property name (`set_keyframes` wire form), e.g. "volume"/"opacity". */
+      property: "volume" | "opacity";
+      /**
+       * The REPLACEMENT keyframe rows: `[frame, value, interp?]` (frames CLIP-RELATIVE,
+       * value in the property's native units — dB for volume, 0..1 for opacity). The
+       * tool REPLACES the whole track, so this carries the merged+sorted full list.
+       */
+      keyframes: (readonly [number, number] | readonly [number, number, string])[];
     };
 
 /** Which undo stack an edit registers on (user vs agent — E3-S8 separation). */

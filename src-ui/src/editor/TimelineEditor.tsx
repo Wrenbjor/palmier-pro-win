@@ -56,6 +56,14 @@ import {
   findSnap,
   makeSnapState,
 } from "./snap";
+import {
+  envelopeBodyRect,
+  envelopeValueForY,
+  hitTestEnvelope,
+  mergeScalarKeyframe,
+  yForEnvelopeValue,
+} from "./envelope";
+import { volumeLinearFromDb } from "./inspector/bodyLogic";
 
 export type ToolMode = "pointer" | "razor";
 
@@ -150,7 +158,9 @@ export function TimelineEditor(props: TimelineEditorProps): JSX.Element {
     marquee: Rect | null;
     ghost: { rect: Rect } | null;
     razorX: number | null;
-  }>({ snapX: null, marquee: null, ghost: null, razorX: null });
+    /** Live envelope line being dragged (content-space). */
+    envelope: { rect: Rect; lineY: number; dotX: number | null } | null;
+  }>({ snapX: null, marquee: null, ghost: null, razorX: null, envelope: null });
 
   const layout = useMemo<TimelineLayout>(
     () => makeLayout(viewport.pixelsPerFrame, timeline.tracks.map((t) => t.displayHeight)),
@@ -221,6 +231,36 @@ export function TimelineEditor(props: TimelineEditorProps): JSX.Element {
       ctx.lineWidth = 1;
       ctx.fillRect(m.x - scrollX, m.y, m.w, m.h);
       ctx.strokeRect(m.x - scrollX, m.y, m.w, m.h);
+    }
+
+    // Live envelope line (volume rubber band / opacity line) during a drag — drawn at
+    // the dragged level so feedback precedes the committed edit (parity with move/trim).
+    if (overlay.envelope) {
+      const env = overlay.envelope;
+      const r = env.rect;
+      ctx.strokeStyle = rgba(255, 255, 255, 0.95);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(r.x - scrollX, env.lineY);
+      ctx.lineTo(r.x + r.w - scrollX, env.lineY);
+      ctx.stroke();
+      // Alt-drag shows the keyframe-to-be as a small diamond at the cursor frame.
+      if (env.dotX !== null) {
+        const cx = env.dotX - scrollX;
+        const cy = env.lineY;
+        const half = 3.5;
+        ctx.fillStyle = rgba(255, 255, 255, 0.95);
+        ctx.strokeStyle = rgba(0, 0, 0, 0.5);
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy - half);
+        ctx.lineTo(cx + half, cy);
+        ctx.lineTo(cx, cy + half);
+        ctx.lineTo(cx - half, cy);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
     }
   }, [overlay, viewport.scrollX, layout.rulerHeight]);
 
@@ -306,6 +346,43 @@ export function TimelineEditor(props: TimelineEditorProps): JSX.Element {
       const localX = px - hit.rect.x;
       const sub = subModeForLocalX(localX, hit.rect.w);
       const linkedOn = !mods.alt;
+
+      // Envelope line grab (volume rubber band / opacity line) — checked before
+      // trim/move when the press lands ON the drawn line (and not on a trim handle, so
+      // edge trims still win). Drag-to-set the flat level; Alt-drag inserts a keyframe.
+      if (sub === "moveClip" && !mods.shift && !mods.ctrl) {
+        const relFrame = frameAt(layout, px) - hit.clip.startFrame;
+        const envHit = hitTestEnvelope(hit.clip, hit.rect, px, py, relFrame);
+        if (envHit) {
+          // Select the clip (so the band's keyframe diamonds show) without expanding to
+          // the link group — an envelope edit targets just this clip.
+          if (!store.getState().viewport.selectedClipIds.has(hit.clip.id)) {
+            store.setSelection([hit.clip.id]);
+            emitSelection();
+          }
+          const clampedRel = Math.max(0, Math.min(hit.clip.durationFrames, relFrame));
+          const liveValue = envelopeValueForY(envHit.kind, py, envHit.body);
+          dragRef.current = {
+            kind: "dragEnvelope",
+            clipId: hit.clip.id,
+            envelope: envHit.kind,
+            rect: hit.rect,
+            insertKeyframe: mods.alt,
+            liveValue,
+            relFrame: clampedRel,
+          };
+          setOverlay((o) => ({
+            ...o,
+            envelope: {
+              rect: hit.rect,
+              lineY: yForEnvelopeValue(envHit.kind, liveValue, envHit.body),
+              dotX: mods.alt ? xForFrame(layout, hit.clip.startFrame + clampedRel) : null,
+            },
+          }));
+          (e.target as Element).setPointerCapture?.(e.pointerId);
+          return;
+        }
+      }
 
       // Selection bookkeeping.
       const selected = store.getState().viewport.selectedClipIds;
@@ -454,6 +531,23 @@ export function TimelineEditor(props: TimelineEditorProps): JSX.Element {
           }
           break;
         }
+        case "dragEnvelope": {
+          // Track the cursor Y → native value (dB | opacity), clamped to the body axis.
+          const body = envelopeBodyRect(drag.rect);
+          const value = envelopeValueForY(drag.envelope, py, body);
+          drag.liveValue = value;
+          const lineY = yForEnvelopeValue(drag.envelope, value, body);
+          const clip = findClipView(timeline, drag.clipId);
+          const dotX =
+            drag.insertKeyframe && clip
+              ? xForFrame(layout, clip.startFrame + drag.relFrame)
+              : null;
+          setOverlay((o) => ({
+            ...o,
+            envelope: { rect: drag.rect, lineY, dotX },
+          }));
+          break;
+        }
         case "trimLeft":
         case "trimRight": {
           const clip = findClipView(timeline, drag.clipId);
@@ -571,12 +665,54 @@ export function TimelineEditor(props: TimelineEditorProps): JSX.Element {
           }
           break;
         }
+        case "dragEnvelope": {
+          // Final cursor Y → native value (dB | opacity) via the SAME mapping the line
+          // was drawn with (envelope.ts), so what the user grabbed is what gets stored.
+          const py = e.clientY - (overlayRef.current?.getBoundingClientRect().top ?? 0);
+          const body = envelopeBodyRect(drag.rect);
+          const value = envelopeValueForY(drag.envelope, py, body);
+          const clip = findClipView(timeline, drag.clipId);
+          if (clip) {
+            if (drag.insertKeyframe) {
+              // Alt-drag → insert/update a keyframe at the grab frame. Merge into the
+              // existing rows for this property (REPLACE semantics, sorted by frame).
+              const track =
+                drag.envelope === "volume" ? clip.volumeTrack : clip.opacityTrack;
+              const rows = mergeScalarKeyframe(
+                track?.keyframes ?? [],
+                drag.relFrame,
+                value,
+              );
+              controller.dispatch({
+                kind: "setKeyframes",
+                clipId: drag.clipId,
+                property: drag.envelope,
+                keyframes: rows,
+              });
+            } else if (drag.envelope === "volume") {
+              // Flat drag-to-set: store LINEAR volume (band value is dB → linear, with
+              // floor → true-mute 0), matching the inspector Audio tab.
+              controller.dispatch({
+                kind: "setClipProperties",
+                clipIds: [drag.clipId],
+                volume: volumeLinearFromDb(value),
+              });
+            } else {
+              controller.dispatch({
+                kind: "setClipProperties",
+                clipIds: [drag.clipId],
+                opacity: value,
+              });
+            }
+          }
+          break;
+        }
         default:
           break;
       }
 
       dragRef.current = { kind: "idle" };
-      setOverlay({ snapX: null, marquee: null, ghost: null, razorX: null });
+      setOverlay({ snapX: null, marquee: null, ghost: null, razorX: null, envelope: null });
       (e.target as Element).releasePointerCapture?.(e.pointerId);
     },
     [pointAt, layout, timeline, controller, viewport.playheadFrame, viewport.pixelsPerFrame],

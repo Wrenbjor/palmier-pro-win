@@ -33,6 +33,10 @@ function actionName(intent: EditIntent): string {
       return "Ripple Delete Range";
     case "deleteClips":
       return intent.ripple ? "Ripple Delete" : "Delete Clips";
+    case "setClipProperties":
+      return intent.volume !== undefined ? "Set Volume" : "Set Opacity";
+    case "setKeyframes":
+      return intent.property === "volume" ? "Set Volume Keyframe" : "Set Opacity Keyframe";
   }
 }
 
@@ -157,6 +161,27 @@ export class EditController {
             moves: [{ clipId: intent.clipId, toFrame: Math.max(0, newStart) }],
           });
         }
+        return;
+      }
+
+      case "setClipProperties": {
+        // Drag-to-set a flat envelope level. Volume is linear (audio rubber band);
+        // opacity is 0..1 (video opacity line). Mirrors the inspector Audio/Video tabs.
+        const patch: Record<string, unknown> = { clipIds: intent.clipIds };
+        if (intent.volume !== undefined) patch.volume = intent.volume;
+        if (intent.opacity !== undefined) patch.opacity = intent.opacity;
+        await editorEdit("set_clip_properties", patch);
+        return;
+      }
+
+      case "setKeyframes": {
+        // Alt-drag inserted/updated a keyframe — REPLACE the property track with the
+        // merged rows. `keyframes` is the full sorted `[frame, value, interp?]` list.
+        await editorEdit("set_keyframes", {
+          clipId: intent.clipId,
+          property: intent.property,
+          keyframes: intent.keyframes.map((r) => [...r]),
+        });
         return;
       }
 

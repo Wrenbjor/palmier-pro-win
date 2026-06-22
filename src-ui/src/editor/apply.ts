@@ -372,8 +372,60 @@ export function applyEdit(timeline: TimelineView, intent: EditIntent): TimelineV
     case "deleteClips":
       applyDeleteClips(t, intent.clipIds, intent.ripple);
       break;
+    case "setClipProperties":
+      applySetClipProperties(t, intent);
+      break;
+    case "setKeyframes":
+      applySetKeyframes(t, intent);
+      break;
   }
   return t;
+}
+
+/**
+ * Set static clip scalars (volume linear / opacity 0..1). Setting a scalar CLEARS that
+ * property's keyframe track (matches the backend `set_clip_properties`, properties.rs
+ * §259 "Setting a scalar clears that property's keyframe track").
+ */
+function applySetClipProperties(
+  t: TimelineView,
+  intent: Extract<EditIntent, { kind: "setClipProperties" }>,
+): void {
+  for (const id of intent.clipIds) {
+    const loc = findClip(t, id);
+    if (!loc) continue;
+    if (intent.volume !== undefined) {
+      loc.clip.volume = intent.volume;
+      loc.clip.volumeTrack = null;
+    }
+    if (intent.opacity !== undefined) {
+      loc.clip.opacity = intent.opacity;
+      loc.clip.opacityTrack = null;
+    }
+  }
+}
+
+/**
+ * Replace a clip's keyframe track for `property` with the given rows (REPLACE semantics
+ * mirroring the backend `set_keyframes`). Rows are `[frame, value, interp?]`; an empty
+ * list clears the track.
+ */
+function applySetKeyframes(
+  t: TimelineView,
+  intent: Extract<EditIntent, { kind: "setKeyframes" }>,
+): void {
+  const loc = findClip(t, intent.clipId);
+  if (!loc) return;
+  const kfs = intent.keyframes
+    .map((row) => ({
+      frame: row[0],
+      value: row[1],
+      interpolationOut: (row[2] as "linear" | "hold" | "smooth" | undefined) ?? "smooth",
+    }))
+    .sort((a, b) => a.frame - b.frame);
+  const track: KeyframeTrackView | null = kfs.length > 0 ? { keyframes: kfs } : null;
+  if (intent.property === "volume") loc.clip.volumeTrack = track;
+  else loc.clip.opacityTrack = track;
 }
 
 function applyMove(t: TimelineView, intent: Extract<EditIntent, { kind: "move" }>): void {

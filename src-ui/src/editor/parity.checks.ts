@@ -31,8 +31,18 @@ import {
   tickInterval,
   volumeAt,
 } from "./geometry";
-import { Defaults, VolumeScale } from "./theme";
+import { Defaults, VolumeScale, ClipRender } from "./theme";
 import type { ClipView, KeyframeTrackView } from "./types";
+import {
+  dbForY,
+  envelopeBodyRect,
+  envelopeValueForY,
+  hitTestEnvelope,
+  mergeScalarKeyframe,
+  opacityForY,
+  yForDb,
+  yForOpacity,
+} from "./envelope";
 
 function approx(a: number, b: number, eps = 1e-9): boolean {
   return Math.abs(a - b) <= eps;
@@ -162,6 +172,64 @@ export function runParityChecks(): string[] {
     // audio never applies opacity fade reduction even with a fade present
     const af = baseClip({ mediaType: "audio", fadeInFrames: 20 });
     check(approx(opacityAt(af, 0), 1), "audio opacity ignores fade");
+  }
+
+  // --- envelope value↔y mapping (the SHARED draw + hit-test math) ---
+  {
+    const body = { x: 0, y: 100, w: 400, h: 50 };
+    // Volume dB axis: top=6 → body.y, bottom=-60 → body.y+h; round-trips.
+    check(approx(yForDb(ClipRender.volumeRubberBandTopDb, body), 100), "yForDb top→body.y");
+    check(approx(yForDb(ClipRender.volumeRubberBandBottomDb, body), 150), "yForDb bottom→body bottom");
+    check(approx(dbForY(yForDb(0, body), body), 0), "dbForY∘yForDb(0 dB) round-trip");
+    check(approx(dbForY(yForDb(-20, body), body), -20), "dbForY∘yForDb(-20 dB) round-trip");
+    // Opacity axis: 1 → top, 0 → bottom; round-trips.
+    check(approx(yForOpacity(1, body), 100), "yForOpacity 1→body.y");
+    check(approx(yForOpacity(0, body), 150), "yForOpacity 0→body bottom");
+    check(approx(opacityForY(yForOpacity(0.5, body), body), 0.5), "opacityForY round-trip 0.5");
+    check(approx(opacityForY(125, body), 0.5), "opacityForY midpoint→0.5");
+    // Generic dispatch by kind agrees with the per-kind helpers.
+    check(approx(envelopeValueForY("opacity", 125, body), 0.5), "envelopeValueForY opacity mid");
+    check(approx(envelopeValueForY("volume", yForDb(-12, body), body), -12), "envelopeValueForY volume -12");
+  }
+
+  // --- envelope hit-test: grabbing the drawn line at a given y ---
+  {
+    const layout = makeLayout(Defaults.pixelsPerFrame, [50]);
+    // Audio clip, static volume 1.0 → 0 dB → line at body.y; body for clipRect(track0).
+    const aclip = baseClip({ mediaType: "audio", sourceClipType: "audio", volume: 1, durationFrames: 60 });
+    const arect = clipRect(layout, aclip, 0);
+    const abody = envelopeBodyRect(arect);
+    const lineY = yForDb(VolumeScale.dbFromLinear(aclip.volume), abody);
+    // Cursor right on the line, mid-clip → hit; value read back is ~0 dB.
+    const hit = hitTestEnvelope(aclip, arect, arect.x + arect.w / 2, lineY, 30);
+    check(hit !== null && hit.kind === "volume", "hitTestEnvelope volume on-line hits");
+    check(hit !== null && approx(hit.lineY, lineY), "hitTestEnvelope reports line y");
+    // Cursor far from the line (bottom of body, ~full-scale away) → miss (beyond tol).
+    const miss = hitTestEnvelope(aclip, arect, arect.x + arect.w / 2, abody.y + abody.h, 30);
+    check(miss === null, "hitTestEnvelope off-line misses");
+    // Dragging to a new y computes the value the renderer would draw there.
+    const targetY = yForDb(-12, abody);
+    const dragged = envelopeValueForY("volume", targetY, abody);
+    check(approx(dragged, -12), `envelope drag y→-12 dB (got ${dragged})`);
+    // → stored linear volume via VolumeScale (band value is dB).
+    check(approx(VolumeScale.linearFromDb(dragged), VolumeScale.linearFromDb(-12)), "drag→linear volume");
+  }
+
+  // --- Alt-drag keyframe row: merge into a sorted [frame,value,interp] list ---
+  {
+    const existing = [
+      { frame: 0, value: -6, interpolationOut: "linear" as const },
+      { frame: 40, value: -3, interpolationOut: "smooth" as const },
+    ];
+    // Insert a new keyframe at frame 20 with value -12.
+    const rows = mergeScalarKeyframe(existing, 20, -12);
+    check(rows.length === 3, `merge inserts new kf (len ${rows.length})`);
+    check(rows[0][0] === 0 && rows[1][0] === 20 && rows[2][0] === 40, "merge keeps frame-sorted");
+    check(rows[1][1] === -12, "merge new kf value");
+    // Replacing an existing frame updates in place (no duplicate).
+    const replaced = mergeScalarKeyframe(existing, 40, -1);
+    check(replaced.length === 2, `merge replaces same-frame kf (len ${replaced.length})`);
+    check(replaced[1][0] === 40 && replaced[1][1] === -1, "merge replaced value at frame 40");
   }
 
   return fail;

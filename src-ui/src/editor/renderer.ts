@@ -47,6 +47,7 @@ import {
   volumeAt,
   xForFrame,
 } from "./geometry";
+import { envelopeBodyRect, yForDb, yForOpacity } from "./envelope";
 
 export interface RenderArgs {
   timeline: TimelineView;
@@ -235,6 +236,16 @@ function drawClip(
   }
   ctx.stroke();
 
+  // 5b) Linked partners — "1 px subtle outline" (FOUNDATION §479) so the user can see
+  // linked A/V clips. Subtle (low-opacity white) and only when NOT selected, so it
+  // never fights the 1.5 px selection stroke drawn above.
+  if (clip.linkGroupId && !selected) {
+    roundedRectPath(ctx, rect, cornerRadius);
+    ctx.strokeStyle = rgba(255, 255, 255, 0.28);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
   // 6) Missing-media red wash + red border.
   if (isMissing) {
     const [r, g, b] = Theme.status.error;
@@ -259,24 +270,9 @@ function drawClip(
   ctx.fillRect(rect.x + rect.w - handleW, rect.y, handleW, rect.h);
 }
 
-/** Body area below the label bar (ClipRenderer.clipBodyRect). */
-function clipBodyRect(rect: Rect): Rect {
-  return {
-    x: rect.x,
-    y: rect.y + ClipRender.labelBarHeight,
-    w: rect.w,
-    h: Math.max(0, rect.h - ClipRender.labelBarHeight - 1),
-  };
-}
-
-/** y(forDb) — high dB → smaller y across the body height (ClipRenderer.y). */
-function yForDb(db: number, body: Rect): number {
-  const top = ClipRender.volumeRubberBandTopDb;
-  const bottom = ClipRender.volumeRubberBandBottomDb;
-  const clamped = Math.min(top, Math.max(bottom, db));
-  const frac = (top - clamped) / (top - bottom);
-  return body.y + frac * body.h;
-}
+// `clipBodyRect` + `yForDb` now live in `envelope.ts` (shared with hit-testing so the
+// drawn line and the grabbable line can't drift) — imported above.
+const clipBodyRect = envelopeBodyRect;
 
 /** fade knee X clamped into the fixed fade lane (ClipRenderer.fadeHandleRenderX). */
 function fadeHandleRenderX(
@@ -487,7 +483,6 @@ function drawOpacityFades(
   selected: boolean,
 ): void {
   if (clip.durationFrames <= 0) return;
-  if (clip.fadeInFrames <= 0 && clip.fadeOutFrames <= 0 && !selected) return;
   const pxPerFrame = rect.w / clip.durationFrames;
   if (pxPerFrame <= 0) return;
   const body = clipBodyRect(rect);
@@ -495,9 +490,78 @@ function drawOpacityFades(
   const lineColor = rgba(255, 255, 255, alpha);
   const fadeColor = rgba(255, 255, 255, alpha * 0.7);
 
+  // Opacity envelope line across the clip (FOUNDATION §479): the level the user grabs
+  // to drag-to-set / Alt-drag a keyframe. Flat at `clip.opacity` with no keyframes,
+  // else a polyline through the opacity keyframe values (mirrors the volume band).
+  drawOpacityEnvelope(ctx, clip, rect, body, pxPerFrame, lineColor, selected);
+
   drawFades(ctx, clip, rect, body, pxPerFrame, fadeColor, true);
   if (!selected) return;
   drawFadeKneeSquares(ctx, clip, rect, body, pxPerFrame, lineColor);
+}
+
+/** Opacity envelope line — same line structure as the volume rubber band (0..1 axis). */
+function drawOpacityEnvelope(
+  ctx: CanvasRenderingContext2D,
+  clip: ClipView,
+  rect: Rect,
+  body: Rect,
+  pxPerFrame: number,
+  lineColor: string,
+  selected: boolean,
+): void {
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  const kfs = (clip.opacityTrack?.keyframes ?? []).filter(
+    (k) => k.frame >= 0 && k.frame <= clip.durationFrames,
+  );
+  if (kfs.length > 0) {
+    const firstX = rect.x + kfs[0].frame * pxPerFrame;
+    const firstY = yForOpacity(kfs[0].value, body);
+    ctx.moveTo(rect.x, firstY);
+    ctx.lineTo(firstX, firstY);
+    for (let i = 0; i < kfs.length - 1; i++) {
+      const a = kfs[i];
+      const b = kfs[i + 1];
+      const bX = rect.x + b.frame * pxPerFrame;
+      const aY = yForOpacity(a.value, body);
+      const bY = yForOpacity(b.value, body);
+      if (a.interpolationOut === "linear") {
+        ctx.lineTo(bX, bY);
+      } else if (a.interpolationOut === "hold") {
+        ctx.lineTo(bX, aY);
+        ctx.lineTo(bX, bY);
+      } else {
+        const aX = rect.x + a.frame * pxPerFrame;
+        const steps = 12;
+        for (let s = 1; s <= steps; s++) {
+          const t = s / steps;
+          const x = aX + (bX - aX) * t;
+          const v = a.value + (b.value - a.value) * smoothstep(t);
+          ctx.lineTo(x, yForOpacity(v, body));
+        }
+      }
+    }
+    ctx.lineTo(rect.x + rect.w, yForOpacity(kfs[kfs.length - 1].value, body));
+  } else {
+    const oy = yForOpacity(clip.opacity, body);
+    ctx.moveTo(rect.x, oy);
+    ctx.lineTo(rect.x + rect.w, oy);
+  }
+  ctx.stroke();
+
+  if (!selected) return;
+  // Opacity keyframe diamonds on the line.
+  ctx.fillStyle = lineColor;
+  ctx.strokeStyle = rgba(0, 0, 0, 0.5);
+  ctx.lineWidth = 0.5;
+  const half = ClipRender.volumeKeyframeSize / 2;
+  for (const kf of kfs) {
+    const cx = rect.x + kf.frame * pxPerFrame;
+    const cy = yForOpacity(kf.value, body);
+    diamond(ctx, cx, cy, half);
+  }
 }
 
 function drawFades(

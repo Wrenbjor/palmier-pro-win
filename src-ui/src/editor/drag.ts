@@ -68,6 +68,26 @@ export type DragState =
   | {
       kind: "timelineRange";
       anchorFrame: number;
+    }
+  | {
+      /**
+       * Dragging a clip's envelope line (audio volume rubber band / video opacity
+       * line). Drag-to-set adjusts the flat level; Alt-drag inserts/updates a keyframe
+       * at the cursor's clip-relative frame. The drawn line + hit-test share
+       * `envelope.ts` so what you grab is what you set.
+       */
+      kind: "dragEnvelope";
+      clipId: string;
+      /** "volume" (audio) | "opacity" (video). */
+      envelope: "volume" | "opacity";
+      /** The clip's content-space rect at grab time (for value↔y mapping). */
+      rect: Rect;
+      /** Alt held at grab → insert a keyframe instead of setting the flat level. */
+      insertKeyframe: boolean;
+      /** Live native-unit value (dB | opacity) under the cursor, for optimistic draw. */
+      liveValue: number;
+      /** Clip-relative frame under the cursor (Alt-drag keyframe target). */
+      relFrame: number;
     };
 
 export type SubMode = "trimLeft" | "trimRight" | "moveClip";
