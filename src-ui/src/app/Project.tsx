@@ -34,6 +34,11 @@ import {
   Toolbar,
   createTimelineStore,
   useTimelineStore,
+  useExport,
+  writeClipboard,
+  clipboardHasContent,
+  pasteClipboard,
+  PASTE_LIMITATIONS,
   type ToolMode,
 } from "../editor";
 import { adaptTimeline } from "../editor/adapt";
@@ -60,6 +65,40 @@ import {
 } from "../editor/inspector";
 import { makeTabBodies, makeAssetBody } from "../editor/inspector/tabBodies";
 
+/**
+ * Per-dock visibility + a global "maximize" flag (View menu). `maximized` hides every
+ * side panel regardless of its individual flag, giving the editor the full width; the
+ * individual flags are preserved so un-maximizing restores the prior layout.
+ */
+interface PanelVisibility {
+  media: boolean;
+  inspector: boolean;
+  agent: boolean;
+  maximized: boolean;
+}
+
+/** Default layout — all docks visible (the original Project layout). */
+const DEFAULT_PANELS: PanelVisibility = {
+  media: true,
+  inspector: true,
+  agent: true,
+  maximized: false,
+};
+
+/**
+ * The three layout presets (View → Layout …). Each sets every dock at once so the
+ * presets are distinct and predictable:
+ *   - default:  all four docks (Media + Preview/Timeline + Inspector + Agent).
+ *   - media:    editing-focused — Media + Inspector on, Agent hidden (more canvas).
+ *   - vertical: distraction-free single-column — only the center editor column
+ *               (all side docks hidden), suited to a portrait / vertical edit.
+ */
+const LAYOUT_PRESETS: Record<"default" | "media" | "vertical", PanelVisibility> = {
+  default: { media: true, inspector: true, agent: true, maximized: false },
+  media: { media: true, inspector: true, agent: false, maximized: false },
+  vertical: { media: false, inspector: false, agent: false, maximized: false },
+};
+
 /** Find a clip by id across all tracks (matches the Toolbar's `findClip` helper). */
 function findClipById(timeline: TimelineView, id: string): ClipView | null {
   for (const track of timeline.tracks) {
@@ -85,6 +124,18 @@ export default function Project({ projectId }: { projectId: string }) {
     const s = createAgentPanelStore();
     return { store: s, controller: new AgentPanelController(s) };
   }, []);
+
+  // ── Panel visibility / layout state (View menu) ─────────────────────────────
+  // The four docks are individually toggleable; a "maximize" mode hides every side
+  // panel to give the editor/timeline the full width; layout presets set all four at
+  // once. The center column (preview + timeline + toolbar) is always shown.
+  const [panels, setPanels] = useState<PanelVisibility>(DEFAULT_PANELS);
+  const showMedia = panels.media && !panels.maximized;
+  const showInspector = panels.inspector && !panels.maximized;
+  const showAgent = panels.agent && !panels.maximized;
+
+  // Shared export controller — drives BOTH the Toolbar Export button and File → Export.
+  const exportController = useExport();
 
   // ── Initial load + `timeline://changed` refetch (replaces the 750ms poll) ────
   useEffect(() => {
@@ -138,10 +189,40 @@ export default function Project({ projectId }: { projectId: string }) {
   //   - select-all: select every clip id across all tracks.
   //   - undo/redo: route to the controller (same path the Toolbar buttons use).
   //   - save: persist via the backend (flushes the shared executor state to the bundle).
-  // cut/copy/paste stay logged no-ops: the editor has no clip-clipboard feature yet, so
-  // there is nothing to wire (a clipboard is a separate story, not invented here).
+  //   - new/open: spawn/open a project via the backend (create_project / open_project_dialog).
+  //   - export: run the SAME export flow as the Toolbar's Export button (shared useExport).
+  //   - cut/copy/paste: an in-memory clip clipboard (clipboard.ts) — copy captures full
+  //     clip specs; cut = copy + deleteClips; paste recreates them at the playhead via
+  //     add_clips + property/keyframe restore (limits documented in PASTE_LIMITATIONS).
+  //   - view toggles / maximize / layout presets: panel-visibility state (above).
+  //   - tutorial/about: open the Help window (open_help command).
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+
+    // Resolve a clip id → its track index in the live timeline (clipboard capture).
+    const trackIndexOf = (tl: TimelineView, clipId: string): number => {
+      for (let ti = 0; ti < tl.tracks.length; ti++) {
+        if (tl.tracks[ti].clips.some((c) => c.id === clipId)) return ti;
+      }
+      return 0;
+    };
+
+    // Capture the current selection's full clip specs into the in-memory clipboard.
+    // Returns the captured clip ids (used by Cut to then delete them).
+    const copySelectionToClipboard = (): string[] => {
+      const st = editor.store.getState();
+      const tl = st.timeline;
+      if (!tl) return [];
+      const ids = [...st.viewport.selectedClipIds];
+      const clips: ClipView[] = [];
+      for (const id of ids) {
+        const clip = findClipById(tl, id);
+        if (clip) clips.push(clip);
+      }
+      if (clips.length === 0) return [];
+      writeClipboard(clips, (cid) => trackIndexOf(tl, cid));
+      return clips.map((c) => c.id);
+    };
 
     const bisectedSelected = (): {
       timeline: TimelineView;
@@ -242,6 +323,92 @@ export default function Project({ projectId }: { projectId: string }) {
           console.debug("[menu] save_project_as failed:", err),
         );
       },
+      // File → New (Ctrl+N). Backend opens a Save dialog for a new `.palmier`, then
+      // opens its Project window. Cancel is a no-op (returns None).
+      new: () => {
+        void invoke("create_project").catch((err) =>
+          console.debug("[menu] create_project failed:", err),
+        );
+      },
+      // File → Open (Ctrl+O). Backend opens a native open dialog and opens the chosen
+      // project's window. Cancel is a no-op.
+      open: () => {
+        void invoke("open_project_dialog").catch((err) =>
+          console.debug("[menu] open_project_dialog failed:", err),
+        );
+      },
+      // File → Export (Ctrl+E). Runs the SAME flow as the Toolbar Export button
+      // (shared `useExport` controller): native Save dialog → export_video → progress.
+      export: () => {
+        void exportController.runExport();
+      },
+      // Edit → Copy (Ctrl+C). Capture the selected clips' full specs into the clipboard.
+      copy: () => {
+        copySelectionToClipboard();
+      },
+      // Edit → Cut (Ctrl+X). Copy then delete the selection (non-ripple), as one motion.
+      cut: () => {
+        const captured = copySelectionToClipboard();
+        if (captured.length === 0) return;
+        editor.controller.dispatch({
+          kind: "deleteClips",
+          clipIds: captured,
+          ripple: false,
+        });
+        editor.store.setSelection([]);
+      },
+      // Edit → Paste (Ctrl+V). Recreate the clipboard clips at the playhead via the
+      // backend (add_clips + set_clip_properties/set_keyframes). Best-effort property
+      // restore; PASTE_LIMITATIONS documents the fields the tools can't express.
+      paste: () => {
+        if (!clipboardHasContent()) return;
+        const st = editor.store.getState();
+        const tl = st.timeline;
+        if (!tl) return;
+        void pasteClipboard(tl, st.viewport.playheadFrame)
+          .then((r) => {
+            if (r.pasted > 0 && r.unrestored.length > 0) {
+              console.debug(
+                "[menu] paste: clips recreated; fields not restored:",
+                r.unrestored.join("; "),
+                "(see PASTE_LIMITATIONS:",
+                PASTE_LIMITATIONS.join("; ") + ")",
+              );
+            }
+          })
+          .catch((err) => console.debug("[menu] paste failed:", err));
+      },
+      // View → Toggle Media / Inspector / Agent — flip that dock's visibility. While
+      // maximized, un-maximize first so the toggle is visible (clears the override).
+      "toggle-media-panel": () => {
+        setPanels((p) => ({ ...p, maximized: false, media: !p.media }));
+      },
+      "toggle-inspector": () => {
+        setPanels((p) => ({ ...p, maximized: false, inspector: !p.inspector }));
+      },
+      "toggle-agent-panel": () => {
+        setPanels((p) => ({ ...p, maximized: false, agent: !p.agent }));
+      },
+      // View → Maximize Panel — toggle full-width editor (hide every side dock); the
+      // individual flags are preserved so toggling back restores the prior layout.
+      "maximize-panel": () => {
+        setPanels((p) => ({ ...p, maximized: !p.maximized }));
+      },
+      // View → Layout Default / Media / Vertical — apply a preset to all docks at once.
+      "layout-default": () => setPanels(LAYOUT_PRESETS.default),
+      "layout-media": () => setPanels(LAYOUT_PRESETS.media),
+      "layout-vertical": () => setPanels(LAYOUT_PRESETS.vertical),
+      // Help → Tutorial / About — open the Help window (real window, never a dead click).
+      tutorial: () => {
+        void invoke("open_help").catch((err) =>
+          console.debug("[menu] open_help failed:", err),
+        );
+      },
+      about: () => {
+        void invoke("open_help").catch((err) =>
+          console.debug("[menu] open_help (about) failed:", err),
+        );
+      },
     })
       .then((un) => {
         unlisten = un;
@@ -252,7 +419,9 @@ export default function Project({ projectId }: { projectId: string }) {
       });
 
     return () => unlisten?.();
-  }, [editor.store, editor.controller]);
+    // `setPanels` is stable; `exportController.runExport` is a stable useCallback, so a
+    // single registration captures the live handlers without re-subscribing per render.
+  }, [editor.store, editor.controller, exportController.runExport]);
 
   // ── Agent backend status seed (preserved from the prior shell) ──────────────
   useEffect(() => {
@@ -407,15 +576,17 @@ export default function Project({ projectId }: { projectId: string }) {
       </header>
 
       <div className="flex flex-1 min-h-0">
-        {/* Left dock — Media panel (shares the editor's fps for moment→frame math). */}
-        <div className="w-[280px] flex-shrink-0 min-h-0">
-          <MediaPanel
-            store={media.store}
-            controller={media.controller}
-            seedFixture={false}
-            fps={composition.fps}
-          />
-        </div>
+        {/* Left dock — Media panel (toggled via View menu / layout presets). */}
+        {showMedia && (
+          <div className="w-[280px] flex-shrink-0 min-h-0">
+            <MediaPanel
+              store={media.store}
+              controller={media.controller}
+              seedFixture={false}
+              fps={composition.fps}
+            />
+          </div>
+        )}
 
         {/* Center column — Preview (top) over Timeline (bottom). */}
         <div className="flex flex-1 flex-col min-w-0 min-h-0">
@@ -435,6 +606,7 @@ export default function Project({ projectId }: { projectId: string }) {
               controller={editor.controller}
               tool={tool}
               onToolChange={setTool}
+              exportController={exportController}
             />
             <div
               className="flex-1 min-h-0 relative"
@@ -459,25 +631,29 @@ export default function Project({ projectId }: { projectId: string }) {
           </div>
         </div>
 
-        {/* Right rail — Inspector. */}
-        <div className="w-[300px] flex-shrink-0 min-h-0 border-l border-white/10">
-          <InspectorPanel
-            input={inspectorInput}
-            controller={inspectorController}
-            tabBodies={makeTabBodies({
-              activeFrame: playheadFrame,
-              onSeek: (frame) => editor.store.setPlayhead(frame),
-            })}
-            assetBody={makeAssetBody()}
-          />
-        </div>
+        {/* Right rail — Inspector (toggled via View menu / layout presets). */}
+        {showInspector && (
+          <div className="w-[300px] flex-shrink-0 min-h-0 border-l border-white/10">
+            <InspectorPanel
+              input={inspectorInput}
+              controller={inspectorController}
+              tabBodies={makeTabBodies({
+                activeFrame: playheadFrame,
+                onSeek: (frame) => editor.store.setPlayhead(frame),
+              })}
+              assetBody={makeAssetBody()}
+            />
+          </div>
+        )}
 
-        {/* Far right — the agent dock (wired to the live agent backend). */}
-        <AgentPanel
-          store={agent.store}
-          controller={agent.controller}
-          seedFixture={false}
-        />
+        {/* Far right — the agent dock (toggled via View menu / layout presets). */}
+        {showAgent && (
+          <AgentPanel
+            store={agent.store}
+            controller={agent.controller}
+            seedFixture={false}
+          />
+        )}
       </div>
     </div>
   );
