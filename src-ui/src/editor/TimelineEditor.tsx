@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, JSX, KeyboardEvent, PointerEvent } from "react";
 import type { TimelineView } from "./types";
 import { TimelineCanvas } from "./TimelineCanvas";
+import { TrackHeaders } from "./TrackHeaders";
 import {
   type TimelineStore,
   createTimelineStore,
@@ -849,6 +850,9 @@ export function TimelineEditor(props: TimelineEditorProps): JSX.Element {
         onPointerUp={handlePointerUp}
         aria-hidden
       />
+      {/* Track-header controls (mute/hide/lock) in the reserved left gutter. A DOM
+          overlay (buttons), aligned to each track's Y band via the shared layout. */}
+      <TrackHeaders store={store} layout={layout} />
     </div>
   );
 }

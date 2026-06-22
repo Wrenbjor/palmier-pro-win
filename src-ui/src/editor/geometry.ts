@@ -78,6 +78,24 @@ export function trackHeightAt(layout: TimelineLayout, index: number): number {
   return layout.trackHeights[index] ?? Layout.trackHeight;
 }
 
+/** Screen-space Y/height band of a track's header row (the reserved left gutter). */
+export interface TrackHeaderBand {
+  /** Top edge (screen px) — the track's lane top; headers don't scroll vertically. */
+  y: number;
+  /** Band height (screen px) = the track's displayHeight. */
+  h: number;
+}
+
+/**
+ * The header gutter band for track `index` — its top Y and height, matching the
+ * canvas track lane drawn by `renderer.drawBackground`. The header is a fixed-width
+ * (`Layout.trackHeaderWidth`) DOM column at the timeline's left edge; only the Y axis
+ * is shared with the canvas. Pure so the header overlay and parity checks agree.
+ */
+export function trackHeaderBand(layout: TimelineLayout, index: number): TrackHeaderBand {
+  return { y: trackY(layout, index), h: trackHeightAt(layout, index) };
+}
+
 export function trackY(layout: TimelineLayout, index: number): number {
   return layout.cumulativeY[index] ?? layout.rulerHeight;
 }

@@ -26,7 +26,12 @@ import { EditController, buildMoveClipsArgs } from "./controller";
 import { createTimelineStore } from "./store";
 import { Snap, Layout } from "./theme";
 import { makeFixtureTimeline } from "./fixture";
-import { clipRect, frameAt, makeLayout } from "./geometry";
+import { clipRect, frameAt, makeLayout, trackHeaderBand } from "./geometry";
+import {
+  isAudioBearingType,
+  isVisualType,
+  toggleTrackPatch,
+} from "./TrackHeaders";
 import type { EditIntent } from "./edit-types";
 import {
   FORMAT_OPTIONS,
@@ -449,6 +454,39 @@ export function runEditChecks(): string[] {
       RESOLUTION_OPTIONS.map((r) => r.id).join(",") === "source,1080p,720p",
       "resolution presets are source,1080p,720p (Source first/default)",
     );
+  }
+
+  // --- track-header controls: gutter geometry + toggle → setTrackProperties args ---
+  {
+    // Two 50px tracks → bands start at rulerHeight + dropZoneHeight = 24 + 60 = 84.
+    const layout = makeLayout(4, [50, 50]);
+    const b0 = trackHeaderBand(layout, 0);
+    const b1 = trackHeaderBand(layout, 1);
+    check(b0.y === 84 && b0.h === 50, `track 0 header band y/h (${b0.y},${b0.h})`);
+    check(b1.y === 134 && b1.h === 50, `track 1 header band y/h (${b1.y},${b1.h})`);
+    check(Layout.trackHeaderWidth === 100, "header gutter is 100px");
+
+    // Which controls show per track type.
+    check(isAudioBearingType("audio") && isAudioBearingType("video"), "mute shows on audio+video");
+    check(!isAudioBearingType("image") && !isAudioBearingType("text"), "no mute on image/text");
+    check(
+      isVisualType("video") && isVisualType("image") && isVisualType("text") && isVisualType("lottie"),
+      "hide shows on all visual types",
+    );
+    check(!isVisualType("audio"), "no hide on audio");
+
+    // Each toggle flips ONLY its field — the exact `setTrackProperties` patch the button
+    // dispatches. From defaults (muted=false, hidden=false, syncLocked=true).
+    const dflt = { muted: false, hidden: false, syncLocked: true };
+    const mute = toggleTrackPatch(dflt, "mute");
+    check(mute.muted === true && mute.hidden === undefined && mute.locked === undefined, "mute → { muted:true }");
+    const hide = toggleTrackPatch(dflt, "hide");
+    check(hide.hidden === true && hide.muted === undefined && hide.locked === undefined, "hide → { hidden:true }");
+    const lock = toggleTrackPatch(dflt, "lock");
+    check(lock.locked === false && lock.muted === undefined && lock.hidden === undefined, "lock toggle off default-locked → { locked:false }");
+    // And the inverse: an already-muted track's mute button un-mutes.
+    const unmute = toggleTrackPatch({ ...dflt, muted: true }, "mute");
+    check(unmute.muted === false, "muted track → mute button sends { muted:false }");
   }
 
   return fail;

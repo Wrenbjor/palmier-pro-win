@@ -167,6 +167,41 @@ export async function moveFolders(
   }
 }
 
+/** Partial track-state patch for {@link setTrackProperties} (only-provided fields change). */
+export interface TrackPropertiesPatch {
+  muted?: boolean;
+  hidden?: boolean;
+  locked?: boolean;
+}
+
+/**
+ * Toggle a timeline track's mute / hide / sync-lock state (the track-header controls)
+ * via `editor_set_track_properties`. Only the fields present in `patch` change; omitted
+ * flags keep their current value. Like Relink / folder-move this is a UI-only mutation
+ * (the reference has no `set_track_properties` MCP tool) but lands on the SAME shared
+ * `EditorState` with one undoable step; the backend emits `timeline://changed` so the
+ * timeline refetches the authoritative state (reconciling the optimistic local update
+ * the caller may have applied). Outside Tauri it is a no-op. Errors are logged, not
+ * thrown, so an optimistic UI can roll back on the refetch.
+ */
+export async function setTrackProperties(
+  trackId: string,
+  patch: TrackPropertiesPatch,
+): Promise<void> {
+  if (!inTauri()) return;
+  try {
+    await invoke("editor_set_track_properties", {
+      trackId,
+      muted: patch.muted ?? null,
+      hidden: patch.hidden ?? null,
+      locked: patch.locked ?? null,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[editor] editor_set_track_properties failed:", err);
+  }
+}
+
 /**
  * Subscribe to `timeline://changed`; `handler` runs after any mutation (UI or
  * agent/MCP). Returns an unlisten fn (a no-op outside Tauri). The Project surface

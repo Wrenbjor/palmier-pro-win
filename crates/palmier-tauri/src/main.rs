@@ -168,6 +168,10 @@ fn main() {
             // shared library directly and emit `timeline://changed` so the panel refetches.
             commands::editor_relink_media,
             commands::editor_move_folders,
+            // Timeline track-header controls — toggle a track's mute / hide / sync-lock
+            // (no MCP tool; UI-only like Relink/folder-move). Mutates the shared
+            // EditorState and emits `timeline://changed` so the timeline refetches.
+            commands::editor_set_track_properties,
             // User-facing media import (File → Import Media / panel drop / Import
             // button). Opens a native file dialog when no paths are passed; imports each
             // through the SAME shared executor `import_media` tool, then emits

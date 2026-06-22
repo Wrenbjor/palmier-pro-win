@@ -48,6 +48,7 @@ pub mod schema;
 pub mod search;
 pub mod short_id;
 pub mod texts;
+pub mod tracks;
 pub mod transcript;
 pub mod undo;
 pub mod validate;

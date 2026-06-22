@@ -686,6 +686,46 @@ pub fn editor_move_folders<R: Runtime>(
     Ok(())
 }
 
+/// `editor_set_track_properties` — toggle a track's mute / hide / sync-lock state (the
+/// timeline track-header controls). The reference exposes these as UI-only view-model
+/// actions (`EditorViewModel+Tracks`'s `toggleTrackMute`/`Hidden`/`SyncLock`), NOT as
+/// one of the 30 MCP tools, so this mutates the SHARED `EditorState` directly through
+/// `palmier_tools::tracks::set_track_properties` (one timeline agent-undo step — the
+/// same seam the clip tools use) rather than the 30-tool dispatch. Only the provided
+/// flags change. On success it marks the document dirty (so the toggle survives
+/// save/reload — `muted`/`hidden`/`syncLocked` are persisted track fields) and emits
+/// `timeline://changed` so every window refetches.
+#[tauri::command]
+pub fn editor_set_track_properties<R: Runtime>(
+    app: AppHandle<R>,
+    agent: State<'_, AgentState>,
+    track_id: String,
+    muted: Option<bool>,
+    hidden: Option<bool>,
+    locked: Option<bool>,
+) -> Result<(), String> {
+    let result = agent.executor.with_state_mut(|state| {
+        palmier_tools::tracks::set_track_properties(state, &track_id, muted, hidden, locked)
+    });
+    if result.is_error {
+        let msg = result
+            .content
+            .into_iter()
+            .find_map(|b| match b {
+                palmier_tools::Block::Text(s) => Some(s),
+                palmier_tools::Block::Image { .. } => None,
+            })
+            .unwrap_or_else(|| "set_track_properties failed".to_string());
+        return Err(msg);
+    }
+    crate::project::mark_timeline_dirty(&app);
+    if let Err(err) = app.emit(TIMELINE_CHANGED_EVENT, ()) {
+        tracing::warn!(target: "app", error = %err, "failed to emit timeline://changed after track props");
+    }
+    tracing::info!(target: "app", track = %track_id, "editor_set_track_properties (shared executor)");
+    Ok(())
+}
+
 // ─── media import (File → Import Media / panel drop / Import button) ───────────────
 //
 // The user-facing import path: get media files INTO the shared media library (the one
