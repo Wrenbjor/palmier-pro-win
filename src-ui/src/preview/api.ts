@@ -95,16 +95,19 @@ export interface PreviewFrameData {
   width: number;
   /** Backing (downscaled) height in pixels. */
   height: number;
-  /** Base64 of the row-major RGBA8 pixels (`width * height * 4` bytes). */
-  rgbaBase64: string;
+  /** Image codec of `dataBase64` — currently always `"jpeg"`. */
+  format: string;
+  /** Base64 of the encoded image bytes (a JPEG of the `width × height` frame). */
+  dataBase64: string;
 }
 
 /**
  * Composite the ACTIVE project's timeline at `frame`, downscaled to at most
- * `maxWidth` px wide, and read it back as base64 RGBA for the `<canvas>`. The
+ * `maxWidth` px wide, and read it back as a base64 JPEG for the `<canvas>`. The
  * backend reads the SAME shared timeline `editor_get_timeline` does, so this always
- * reflects the live edit state. Returns `undefined` outside a Tauri webview (the
- * panel then shows the empty viewport for design work).
+ * reflects the live edit state. The render runs on a blocking worker on an async
+ * command, so it never blocks the UI thread. Returns `undefined` outside a Tauri
+ * webview (the panel then shows the empty viewport for design work).
  */
 export const previewRenderFrame = (frame: number, maxWidth?: number) =>
   tryInvoke<PreviewFrameData>("preview_render_frame", {

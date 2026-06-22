@@ -61,10 +61,14 @@ tracing = "0.1"
 # E8-S7: parse the frontend-minted chat session id (a uuid string) so a brand-new
 # chat's first turn adopts that id as its `ChatSession`/`<uuid>.json` filename.
 uuid = { workspace = true }
-# Preview render: base64-encode the offscreen RGBA readback for the `preview_render_frame`
-# command (the frontend decodes it into ImageData for the <canvas>). Same 0.22 the
-# agent/tools crates already use, so no new lock-entry family.
+# Preview render: base64-encode the offscreen readback for the `preview_render_frame`
+# command (the frontend decodes it onto the <canvas>). Same 0.22 the agent/tools crates
+# already use, so no new lock-entry family.
 base64 = "0.22"
+# Preview render: JPEG-encode the GPU readback before base64 so the IPC payload is
+# ~10× smaller than raw RGBA (the play loop streams these). Same `image` 0.25 family the
+# media/search/agent crates already use; only the JPEG codec is needed here.
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
 
 # Workspace crates wired into the binary (boot sequence calls into these).
 palmier-model = { path = "../palmier-model" }
