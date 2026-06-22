@@ -90,6 +90,44 @@ export async function editorEdit(
   }
 }
 
+/** The outcome of an `importMedia` call (mirrors the Rust `editor_import_media`). */
+export interface ImportResult {
+  /** Number of assets imported (0 when the user cancelled the native dialog). */
+  imported: number;
+  /** Per-asset confirmation echoes from the `import_media` tool. */
+  assets: unknown[];
+}
+
+/**
+ * Import media into the shared library (File → Import Media / panel drop / Import
+ * button). With no `paths`, the backend opens a NATIVE multi-select file dialog
+ * (cancel ⇒ `{ imported: 0 }`, a no-op). With `paths` (the absolute paths of an OS
+ * file-drop), it imports those directly.
+ *
+ * The backend imports each path through the SAME shared executor the agent/MCP use,
+ * then emits `timeline://changed` so the Project surface refetches the media library
+ * automatically — the caller need not refetch. Outside Tauri it is a no-op.
+ *
+ * `folderId` optionally targets a media-library folder (the media panel passes its
+ * current folder so a drop lands where the user is browsing).
+ */
+export async function importMedia(
+  paths?: string[],
+  folderId?: string,
+): Promise<ImportResult> {
+  if (!inTauri()) return { imported: 0, assets: [] };
+  try {
+    return await invoke<ImportResult>("editor_import_media", {
+      paths: paths ?? null,
+      folderId: folderId ?? null,
+    });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error("[editor] editor_import_media failed:", err);
+    return { imported: 0, assets: [] };
+  }
+}
+
 /**
  * Subscribe to `timeline://changed`; `handler` runs after any mutation (UI or
  * agent/MCP). Returns an unlisten fn (a no-op outside Tauri). The Project surface

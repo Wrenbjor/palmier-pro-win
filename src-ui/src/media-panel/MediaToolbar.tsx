@@ -39,6 +39,8 @@ export interface MediaToolbarProps {
   onFilterAI: (on: boolean) => void;
   onQuery: (q: string) => void;
   onNewFolder: () => void;
+  /** Open the native file picker and import the chosen media (File → Import Media). */
+  onImport: () => void;
 }
 
 export function MediaToolbar(props: MediaToolbarProps) {
@@ -61,6 +63,13 @@ export function MediaToolbar(props: MediaToolbarProps) {
             padding: "5px 8px",
           }}
         />
+        <button
+          title="Import Media (Ctrl+I)"
+          onClick={props.onImport}
+          style={iconButtonStyle}
+        >
+          Import
+        </button>
         <button
           title="New Folder (Ctrl+Shift+N)"
           onClick={props.onNewFolder}

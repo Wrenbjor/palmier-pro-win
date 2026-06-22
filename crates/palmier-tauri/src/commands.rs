@@ -19,8 +19,9 @@
 use std::sync::Mutex;
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
+use tauri_plugin_dialog::DialogExt;
 
 use palmier_tools::ToolDispatch;
 
@@ -498,6 +499,141 @@ pub fn editor_edit<R: Runtime>(
     Ok(parsed)
 }
 
+// ─── media import (File → Import Media / panel drop / Import button) ───────────────
+//
+// The user-facing import path: get media files INTO the shared media library (the one
+// library the UI, the in-app agent, and the MCP server all read). The menu item
+// `import-media` (Ctrl+I) and the media panel's drop/Import affordance call this; it
+// reuses the SAME `import_media` tool the agent/MCP drive (one library, one undo
+// timeline) rather than introducing a parallel import path.
+//
+// When `paths` is empty/None we open a NATIVE multi-select OPEN dialog Rust-side
+// (the `tauri-plugin-dialog` seam `project.rs` / `media.rs` already use — the JS
+// dialog plugin is not an npm dep here); a cancel is a no-op (`{ "imported": 0 }`),
+// never an error.
+
+/// Media extensions the import file dialog filters to (video / audio / image), matching
+/// the formats `palmier_media::classify_path` accepts.
+const IMPORT_VIDEO_EXTS: &[&str] = &["mp4", "mov", "m4v", "mkv", "webm", "avi"];
+const IMPORT_AUDIO_EXTS: &[&str] = &["mp3", "wav", "aac", "m4a", "flac"];
+const IMPORT_IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "tiff", "heic"];
+
+/// Open a native multi-select OPEN file dialog filtered to media, returning the chosen
+/// absolute paths (empty on cancel). Uses the blocking pick-files variant — the SAME
+/// `app.dialog().file()` seam `project.rs`'s `prompt_save_bundle` / `media.rs`'s
+/// `pick_relink_path` use.
+fn prompt_import_files<R: Runtime>(app: &AppHandle<R>) -> Vec<String> {
+    let all: Vec<&str> = IMPORT_VIDEO_EXTS
+        .iter()
+        .chain(IMPORT_AUDIO_EXTS)
+        .chain(IMPORT_IMAGE_EXTS)
+        .copied()
+        .collect();
+    app.dialog()
+        .file()
+        .set_title("Import Media")
+        .add_filter("Media", &all)
+        .add_filter("Video", IMPORT_VIDEO_EXTS)
+        .add_filter("Audio", IMPORT_AUDIO_EXTS)
+        .add_filter("Images", IMPORT_IMAGE_EXTS)
+        .blocking_pick_files()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p.into_path().ok())
+        .map(|p| p.to_string_lossy().to_string())
+        .collect()
+}
+
+/// Import each path through the SHARED executor by running the existing `import_media`
+/// tool (the same dispatch `editor_edit` uses) — so the asset lands in the ONE shared
+/// media library. Returns `(imported_count, asset_results)`: `imported_count` is the
+/// number of paths that imported without error; `asset_results` is each tool's echoed
+/// confirmation text (a JSON value or string). Factored out of [`editor_import_media`]
+/// so tests can drive it with explicit paths, bypassing the file dialog.
+fn import_media_paths(
+    executor: &palmier_tools::ToolExecutor,
+    paths: &[String],
+    folder_id: Option<&str>,
+) -> (usize, Vec<Value>) {
+    let mut imported = 0usize;
+    let mut assets: Vec<Value> = Vec::new();
+    for path in paths {
+        let mut source = serde_json::Map::new();
+        source.insert("path".to_string(), Value::String(path.clone()));
+        let mut args = serde_json::Map::new();
+        args.insert("source".to_string(), Value::Object(source));
+        if let Some(fid) = folder_id {
+            args.insert("folderId".to_string(), Value::String(fid.to_string()));
+        }
+        let result = executor.execute(
+            "import_media",
+            Value::Object(args),
+            &crate::agent::adapter_context(),
+        );
+        let text = result.content.into_iter().find_map(|b| match b {
+            palmier_tools::Block::Text(s) => Some(s),
+            palmier_tools::Block::Image { .. } => None,
+        });
+        if result.is_error {
+            tracing::warn!(
+                target: "app",
+                path = %path,
+                error = text.as_deref().unwrap_or("import_media failed"),
+                "import_media failed for path",
+            );
+            continue;
+        }
+        imported += 1;
+        if let Some(s) = text {
+            // The tool echoes a confirmation string; surface it as-is (or parsed JSON).
+            assets.push(serde_json::from_str::<Value>(&s).unwrap_or(Value::String(s)));
+        }
+    }
+    (imported, assets)
+}
+
+/// `editor_import_media` — import media into the shared library from the UI (File →
+/// Import Media / panel drop / Import button). When `paths` is `None`/empty, opens a
+/// native multi-select OPEN dialog (cancel ⇒ `{ "imported": 0 }`, no-op not error).
+/// Each chosen path imports through the SHARED executor's `import_media` tool, so the
+/// asset lands in the one library the UI + agent + MCP read.
+///
+/// After importing ≥1 asset, marks the project dirty and emits
+/// [`TIMELINE_CHANGED_EVENT`] so the Media panel refetches `editor_get_media`. Returns
+/// `{ "imported": <count>, "assets": [...] }`.
+#[tauri::command]
+pub fn editor_import_media<R: Runtime>(
+    app: AppHandle<R>,
+    agent: State<'_, AgentState>,
+    paths: Option<Vec<String>>,
+    folder_id: Option<String>,
+) -> Result<Value, String> {
+    // Resolve the paths to import: explicit (drag/drop, Import-with-paths) or, when
+    // none were supplied, a native multi-select OPEN dialog.
+    let paths: Vec<String> = match paths {
+        Some(p) if !p.is_empty() => p,
+        _ => prompt_import_files(&app),
+    };
+    if paths.is_empty() {
+        // User cancelled the dialog (or no paths) — no-op, not an error.
+        return Ok(json!({ "imported": 0, "assets": [] }));
+    }
+
+    let (imported, assets) = import_media_paths(&agent.executor, &paths, folder_id.as_deref());
+
+    if imported > 0 {
+        // The shared library changed → mark the active document dirty (so autosave
+        // persists the new asset) and notify every window so the Media panel refetches
+        // (`editor_get_media`). Logged-but-non-fatal on emit failure.
+        crate::project::mark_timeline_dirty(&app);
+        if let Err(err) = app.emit(TIMELINE_CHANGED_EVENT, ()) {
+            tracing::warn!(target: "app", error = %err, "failed to emit timeline://changed after import");
+        }
+    }
+    tracing::info!(target: "app", imported, "editor_import_media (shared executor)");
+    Ok(json!({ "imported": imported, "assets": assets }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,6 +707,47 @@ mod tests {
             .map(Vec::len)
             .unwrap_or(0);
         assert!(tracks_after > tracks_before, "add_clips created a track");
+    }
+
+    /// A minimal valid 1x1 PNG so `palmier_media::classify_path` + the metadata probe
+    /// accept it as a real importable image asset (same bytes the import unit tests use).
+    fn tiny_png() -> &'static [u8] {
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+    }
+
+    /// The import core (`import_media_paths`, factored so the dialog is bypassed with
+    /// explicit paths) runs `import_media` through the SHARED executor: a real generated
+    /// clip lands in the one media library (asset count rises) and the count is reported.
+    #[test]
+    fn import_media_paths_imports_into_shared_library() {
+        use std::fs;
+
+        let executor = Arc::new(ToolExecutor::new());
+
+        // Library starts empty.
+        let before = executor.with_state_ref(|s| s.library.assets.len());
+        assert_eq!(before, 0);
+
+        // Write a real PNG to a temp file the importer can probe.
+        let dir = std::env::temp_dir().join(format!("palmier-import-cmd-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("clip.png");
+        fs::write(&path, tiny_png()).unwrap();
+        let paths = vec![path.to_string_lossy().to_string()];
+
+        let (imported, assets) = import_media_paths(&executor, &paths, None);
+        assert_eq!(imported, 1, "one real clip imported");
+        assert_eq!(assets.len(), 1, "one confirmation echoed");
+
+        // The asset is now in the SHARED library the UI/agent/MCP read.
+        let after = executor.with_state_ref(|s| s.library.assets.len());
+        assert_eq!(after, before + 1, "library asset count increased");
+
+        // A bogus path imports nothing (and is not counted), proving the count is real.
+        let (none, _) = import_media_paths(&executor, &["/no/such/file.mp4".to_string()], None);
+        assert_eq!(none, 0, "nonexistent path imports nothing");
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

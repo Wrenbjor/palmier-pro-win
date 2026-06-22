@@ -160,6 +160,11 @@ fn main() {
             commands::editor_get_timeline,
             commands::editor_get_media,
             commands::editor_edit,
+            // User-facing media import (File → Import Media / panel drop / Import
+            // button). Opens a native file dialog when no paths are passed; imports each
+            // through the SAME shared executor `import_media` tool, then emits
+            // `timeline://changed` so the Media panel refetches.
+            commands::editor_import_media,
             // M2 boot integration — the in-app agent command surface (the panel's
             // agent_send/agent_cancel + agent_status/agent_set_pref seam). Tool
             // dispatch routes into the SAME shared executor the MCP server uses.

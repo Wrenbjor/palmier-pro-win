@@ -33,7 +33,7 @@ import type {
   MediaSnapshot,
   ViewMode,
 } from "./types";
-import { editorEdit, getMedia, inTauri } from "../editor/bridge";
+import { editorEdit, getMedia, importMedia, inTauri } from "../editor/bridge";
 import { adaptMedia } from "./adapt";
 
 /** Generate a local UUID-ish id (replaced by backend ids when commands land). */
@@ -115,28 +115,34 @@ export class MediaPanelController {
     });
   }
 
-  // --- Import / paste (E7 seam) ----------------------------------------------
+  // --- Import / paste ---------------------------------------------------------
 
   /**
-   * Import dropped/picked/pasted files as ONE undo step.
-   * TODO(E7): replace with
-   *   await invoke('import', { paths, into: currentFolderId });   // "Import Media"
-   *   this.loadMedia(adaptMedia(await invoke('get_media')));
-   * Native drop arrives via the Tauri `tauri://drag-drop` event (wired in E4-S12);
-   * the file picker via the `dialog` plugin; paste via clipboard + `arboard`.
+   * Import dropped/picked/pasted files into the current folder as ONE batch.
+   *
+   * Routes through the dedicated `editor_import_media` command (bridge `importMedia`),
+   * which imports each path through the SAME shared executor `import_media` tool the
+   * agent/MCP use (a directory path is imported recursively backend-side) and emits
+   * `timeline://changed` so the library refetches. We also refetch here so a drop
+   * without an active listener still updates. Best-effort: a failed import is logged
+   * by the bridge, not fatal.
    */
   async importPaths(paths: string[]): Promise<void> {
     if (!inTauri() || paths.length === 0) return;
-    // One `import_media` per path (a directory path is imported recursively backend-
-    // side). The backend mints the asset + emits `timeline://changed` after each, which
-    // refetches the library; we also refetch here so a drop without an active listener
-    // still updates. Best-effort: a failed import is logged by the bridge, not fatal.
-    const folderId = this.store.getState().currentFolderId;
-    for (const path of paths) {
-      const args: Record<string, unknown> = { source: { path } };
-      if (folderId) args.folderId = folderId;
-      await editorEdit("import_media", args);
-    }
+    const folderId = this.store.getState().currentFolderId ?? undefined;
+    await importMedia(paths, folderId);
+    await this.refreshMedia();
+  }
+
+  /**
+   * Open the native OS file picker (no paths) and import the chosen media into the
+   * current folder. Backs the panel's Import affordance / File → Import Media. The
+   * backend opens a multi-select dialog Rust-side; cancel is a no-op.
+   */
+  async importViaDialog(): Promise<void> {
+    if (!inTauri()) return;
+    const folderId = this.store.getState().currentFolderId ?? undefined;
+    await importMedia(undefined, folderId);
     await this.refreshMedia();
   }
 

@@ -62,6 +62,7 @@ export function MediaTab({ store, controller, fps = 30 }: MediaTabProps) {
         onFilterAI={(on) => store.setFilterAI(on)}
         onQuery={(q) => controller.search(q)}
         onNewFolder={() => controller.createFolder()}
+        onImport={() => void controller.importViaDialog()}
       />
 
       {searching && searchResults ? (

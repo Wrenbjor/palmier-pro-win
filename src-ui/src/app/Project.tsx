@@ -39,7 +39,7 @@ import {
 import { adaptTimeline } from "../editor/adapt";
 import { endFrame } from "../editor/geometry";
 import type { ClipView, TimelineView } from "../editor/types";
-import { getMedia, getTimeline, onTimelineChanged, editorEdit } from "../editor/bridge";
+import { getMedia, getTimeline, onTimelineChanged, editorEdit, importMedia } from "../editor/bridge";
 
 import {
   MediaPanel,
@@ -219,6 +219,14 @@ export default function Project({ projectId }: { projectId: string }) {
         const all: string[] = [];
         for (const track of tl.tracks) for (const c of track.clips) all.push(c.id);
         editor.store.setSelection(all);
+      },
+      // File → Import Media (Ctrl+I). No paths ⇒ Rust opens a native multi-select
+      // file dialog and imports the chosen files through the shared executor; the
+      // backend emits `timeline://changed` so the Media panel refetches automatically.
+      "import-media": () => {
+        void importMedia().catch((err) =>
+          console.debug("[menu] editor_import_media failed:", err),
+        );
       },
       // File → Save (Ctrl+S). Flushes the shared executor state to the bundle.
       save: () => {
